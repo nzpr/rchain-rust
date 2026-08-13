@@ -38,6 +38,43 @@ same canonicalization (`sort`) as Phase 0, and both state Law 1 (`sort` is idemp
 commutative) as a Phase 1 proof obligation. Coq is the home of the substitution metatheory (capture-
 avoiding de Bruijn substitution, α-equivalence); Lean 4 is the home of the algebraic/order laws.
 
+## Formal proof plan — rspace, rholang & Rosette
+
+The two Meredith-designed cores — the **rholang executor** (`rholang/`, the ρ-calculus interpreter)
+and **RSpace** (`rspace/`, the concurrent tuple space) — get the deepest machine-checked treatment, in
+both **Coq** and **Lean 4**, *before* their Rust is written (**proofs-first**). The **Rosette VM**
+(`rosette/`, `roscala/`) is also **in scope for the formalization** (Laws 12–13: actor atomicity,
+reflection), formalized in a later phase. Note this is independent of the *rewrite*, where
+`rosette`/`roscala` are deferred (orphaned). The split is by
+strength:
+
+| Tool | Laws | Scope |
+|------|------|-------|
+| **Coq** (Autosubst, de Bruijn) | 2–6 | ρ-calculus PL metatheory: α-equivalence, structural congruence `≡`, capture-avoiding substitution, reduction (comm), spatial matching, free variables |
+| **Lean 4** (Mathlib) | 1, 7–11 | order/algebra: canonicalization (`sort`), RSpace join commutativity, deterministic COMM, merge monoid, Merkle determinism, replay determinism |
+
+**Proofs-first policy**: the Rust rewrite (including `crypto`/`models`/…) is **paused** until Laws 1–11
+are proven; then `rspace`/`rholang` (and the rest) are ported against the verified spec.
+
+### Phase sequence
+
+- **P0** — full ADT in both tools; add Mathlib (Lean) and Autosubst (Coq); pin Meredith citations.
+- **P1** — Law 1 (canonicalization) in both tools — the shared linchpin.
+- **P2** — Coq: α-equivalence + substitution (Laws 2–3).
+- **P3** — Coq: reduction + matching + free variables (Laws 4–6).
+- **P4** — Lean: RSpace (Laws 7–11).
+- **P5** — reconcile, update status, resume the rewrite.
+
+### Meredith lineage (foundational references)
+
+- Meredith & Radestock, *A Reflective Higher-Order Calculus* (2005) — the ρ-calculus.
+- Meredith, *Higher Category Models of the π-Calculus* — the categorical semantics.
+- The RChain architecture / RSpace model.
+- In-repo executable semantics: `rholang/src/main/k/rholang/*.k` (`name-equivalence.k`,
+  `processes-semantics.k`, `sending-receiving.k`, `matching-function.k`, `free.k`).
+
+Per-law proof status lives in [`spec/INVENTORY.md`](spec/INVENTORY.md).
+
 ## What must be preserved
 
 The full table (with per-law formalization status and line-level source pointers) lives in
@@ -169,15 +206,16 @@ oracle tests and, where a formal law exists, a property test naming that law.
    `MessageMapSyntax.scala`.
 2. The `faultTolerance` field asserted in `integration-tests/test/test_dag_correctness.py` is not
    computed anywhere in this tree — its formula must be recovered or declared an open question.
-3. The Rosette VM (`rosette/`, `roscala/`) is **orphaned** — absent from `build.sbt`, imported by
-   nothing — so it is **deferred** from the rewrite until a runtime role is ever confirmed.
+3. **Rosette scope** — two independent decisions: (a) **formalization**: the Rosette VM is **in
+   scope** (Laws 12–13, actor atomicity + reflection, a later proof phase); (b) **rewrite**:
+   `rosette`/`roscala` are **deferred** — orphaned (absent from `build.sbt`, imported by nothing).
 
 ## Status
 
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
-- **Rewrite — in progress**: `sdk` (Stake + conflict resolution, Laws 14 & 17) and the foundational
-  core of `shared` (Base16, Serialize, DagOps, store traits) are ported under [`crates/`](crates/),
-  with 26 tests passing. Next: `crypto` → `graphz` → `models`, per the rewrite order above.
-- **Formalization phases 1–5** — Rholang → RSpace → Rosette → Casper → crypto/storage, in that
-  order (by invariant value), running in parallel with the rewrite.
+- **Rewrite — paused (proofs-first)**: `sdk` and the foundational `shared` core are ported under
+  [`crates/`](crates/). The rewrite is **paused** for the Meredith cores until Laws 1–11 are proven.
+- **Formalization — proofs-first**: Laws 1–11 (rholang + rspace) are being proven machine-checkably —
+  Coq for the ρ-calculus PL metatheory (Laws 2–6), Lean 4 for order/algebra (Laws 1, 7–11) — before
+  `rspace`/`rholang` are ported.
