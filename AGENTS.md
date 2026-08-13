@@ -116,6 +116,52 @@ the laws:
 
 These are the oracle. If the formalization and these tests disagree, reconcile them before writing Rust.
 
+## Module scoping & rewrite order
+
+The 15 components were scoped for a faithful Rust port and rated by difficulty and time. The
+**rewrite order is dependency-driven and easiest-first**; it deliberately differs from the
+*formalization* phases below (which rank by invariant value). Both run in parallel: laws are proven
+in phase order while code is ported in dependency order.
+
+### Ratings (main LOC → difficulty → est. person-days)
+
+| Module | Main LOC | Difficulty | Est. | Depends on | Note |
+|---|---|---|---|---|---|
+| `graphz` | 231 | Easy | ~1 | `shared` | trivial string builder |
+| `sdk` | 678 | Easy | ~3 | — | **root leaf**; Laws 14, 17 |
+| `regex` | 2,398 | Easy | ~3–5 | — | orphaned; pure FSM/regex |
+| `crypto` | 1,431 | Easy | ~5–8 | `shared` | 1:1 crate mappings |
+| `rspace-bench` | (bench) | Easy | ~3–5 | rspace/rholang/models | gated |
+| `block-storage` | 1,074 | Medium | ~7 | shared/models/sdk | finalizer + monotonicity |
+| `shared` | 3,092 | Easy–Med | ~10–15 | `sdk` | foundational; LMDB FFI |
+| `models` | 4,252 | Medium | ~12–18 | shared/crypto | bit-exact sorter |
+| `comm` | 3,366 | Hard | ~15 | shared/crypto/models | lock-free buffers, gRPC/TLS |
+| `rspace` | 6,840 | Hard | ~20–30 | shared/crypto | concurrency, Merkle, replay |
+| `node` | 7,456 | Medium | ~30–45 | casper/comm/crypto/rholang | glue |
+| `rholang` | 9,372 | Hard | ~30–45 | models/rspace/shared/crypto | interpreter, gas, matcher |
+| `casper` | 9,916 | Hard | ~50 | everything | central hub |
+| `roscala` | 4,533 | Hard | ~25–40 | — | **orphaned — defer** |
+| `rosette` (C++) | ~50k | Hard | ~80–150 | — | **orphaned — skip** |
+
+Total in-scope (non-orphaned): roughly **200–220 person-days**.
+
+### Rewrite order (bottom-up)
+
+`sdk` (and `regex`, in parallel) → `shared` → `crypto` + `graphz` → `models` → `block-storage` +
+`rspace` + `comm` → `rholang` → `casper` → `node` → `rspace-bench`. **Defer** `roscala`/`rosette`.
+
+### Rust layout
+
+A Cargo workspace at [`crates/`](crates/) with one crate per module (`crates/sdk`, `crates/crypto`,
+`crates/rspace`, …), mirroring the sbt dependency graph. Each crate carries `#[cfg(test)]` ported
+oracle tests and, where a formal law exists, a property test naming that law.
+
+### Findings
+
+- **`rosette`/`roscala` are orphaned** (absent from `build.sbt`, imported by nothing) — deferred.
+- **Hoist `Blake2b256Hash`** out of `rspace` into `crypto`/`shared` so `models` stops depending on
+  `rspace` (`models/.../ByteStringSyntax.scala`, `FringeData.scala`, `BlockMetadata.scala`).
+
 ## Open questions
 
 1. `casper/src/main/resources/casper.tla` models only the genesis **bootstrap ceremony**, not the
@@ -123,12 +169,15 @@ These are the oracle. If the formalization and these tests disagree, reconcile t
    `MessageMapSyntax.scala`.
 2. The `faultTolerance` field asserted in `integration-tests/test/test_dag_correctness.py` is not
    computed anywhere in this tree — its formula must be recovered or declared an open question.
-3. The Rosette VM is **in scope** but its exact runtime role should be confirmed before Phase 3.
+3. The Rosette VM (`rosette/`, `roscala/`) is **orphaned** — absent from `build.sbt`, imported by
+   nothing — so it is **deferred** from the rewrite until a runtime role is ever confirmed.
 
 ## Status
 
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
-- **Phase 1 — execution core** (Rholang reduction, substitution, spatial matching, canonicalization):
-  highest value, next.
-- **Phases 2–5** — RSpace → Rosette → Casper → crypto/storage, in that order.
+- **Rewrite — started**: the `sdk` module is ported to [`crates/sdk`](crates/sdk) (Stake + conflict
+  resolution, Laws 14 & 17), with the Scala oracle tests ported and passing. Next: `regex` →
+  `shared` → `crypto`, per the rewrite order above.
+- **Formalization phases 1–5** — Rholang → RSpace → Rosette → Casper → crypto/storage, in that
+  order (by invariant value), running in parallel with the rewrite.
