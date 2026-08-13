@@ -36,12 +36,14 @@ inductive Ground where
   | bool (b : Bool)
   | int  (n : Int)
   | str  (s : String)
+deriving BEq, Ord
 
 /-- Variables, represented as de Bruijn levels (bound/free) or a wildcard. -/
 inductive Var where
   | bound (level : Nat)  -- bound_var
   | free  (level : Nat)  -- free_var
   | wildcard             -- `_`
+deriving BEq, Ord
 
 /-- A process: the flattened `Par` ADT. `par` is the commutative parallel composition `|`. -/
 inductive Proc where
@@ -53,5 +55,6 @@ inductive Proc where
   | new      : Nat → Proc → Proc                  -- new binds `n` fresh unforgeable names
   | match    : Proc → Proc → Proc → Proc          -- match target { pat => body }
   | par      : Proc → Proc → Proc                 -- p | q
+deriving BEq, Ord
 
 end Rchain
