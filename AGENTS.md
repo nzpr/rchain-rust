@@ -176,8 +176,8 @@ oracle tests and, where a formal law exists, a property test naming that law.
 
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
-- **Rewrite — started**: the `sdk` module is ported to [`crates/sdk`](crates/sdk) (Stake + conflict
-  resolution, Laws 14 & 17), with the Scala oracle tests ported and passing. Next: `regex` →
-  `shared` → `crypto`, per the rewrite order above.
+- **Rewrite — in progress**: `sdk` (Stake + conflict resolution, Laws 14 & 17) and the foundational
+  core of `shared` (Base16, Serialize, DagOps, store traits) are ported under [`crates/`](crates/),
+  with 26 tests passing. Next: `crypto` → `graphz` → `models`, per the rewrite order above.
 - **Formalization phases 1–5** — Rholang → RSpace → Rosette → Casper → crypto/storage, in that
   order (by invariant value), running in parallel with the rewrite.

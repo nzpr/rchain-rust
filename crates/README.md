@@ -10,9 +10,9 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 
 | Crate | Source module | Status |
 |-------|---------------|--------|
-| `sdk` | `sdk/` | **in progress** (root leaf; Laws 14 & 17) |
-| `regex` | `regex/` | next (orphaned leaf, pure algorithm) |
-| `shared` | `shared/` | pending |
+| `sdk` | `sdk/` | **done** (root leaf; Laws 14 & 17) |
+| `shared` | `shared/` | **core done** (Base16/Serialize/DagOps/store); LMDB FFI deferred |
+| `regex` | `regex/` | orphaned leaf, pure algorithm (deferred — off critical path) |
 | `crypto` | `crypto/` | pending |
 | `graphz` | `graphz/` | pending |
 | `models` | `models/` | pending |
