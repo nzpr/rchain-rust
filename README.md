@@ -13,6 +13,18 @@ content delivery.
 tutorials and documentation, project planning information, events calendar,
 and information for how to engage with this project.
 
+## Rust rewrite & formal specification
+
+This node is being rewritten in **Rust**, absorbing both the Scala/JVM code and the C++ Rosette VM.
+The motivation is **memory safety and memory bloat** — not a correctness repair, since the existing
+logic is broadly sound. The rewrite is therefore a faithful port: every mathematical invariant is
+preserved exactly, never "improved" upon.
+
+- **[AGENTS.md](AGENTS.md)** — the authoritative intent + formal specification (read before writing Rust).
+- **[spec/](spec/)** — the Lean 4 formalization (algebraic/order laws, canonicalization, merge monoids).
+- **[spec/coq/](spec/coq/)** — the Coq formalization (substitution / α-equivalence metatheory).
+- **[spec/INVENTORY.md](spec/INVENTORY.md)** — the 19-law invariant catalog; each law gates the Rust port via property + differential tests.
+
 ## Note on the use of this software
 This code has not yet completed a security review. We strongly recommend that you do not use it in production or to transfer items of material value. We take no responsibility for any loss you may incur through the use of this code.
 
