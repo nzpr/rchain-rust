@@ -10,3 +10,16 @@ pub mod base16;
 pub mod dag;
 pub mod serialize;
 pub mod store;
+
+#[cfg(feature = "tokio")]
+pub mod compression;
+#[cfg(feature = "tokio")]
+pub mod log;
+#[cfg(feature = "tokio")]
+pub mod metrics;
+#[cfg(feature = "tokio")]
+pub mod monixable;
+#[cfg(feature = "tokio")]
+pub mod store_manager;
+#[cfg(feature = "tokio")]
+pub mod typed_store;

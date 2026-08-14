@@ -15,10 +15,10 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `regex` | `regex/` | orphaned leaf, pure algorithm (deferred — off critical path) |
 | `crypto` | `crypto/` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519) |
 | `graphz` | `graphz/` | **done** (DOT builder) |
-| `models` | `models/` | **core done** (rholang AST + Law 1 sorter); wire serialization + Casper types deferred |
-| `block-storage` | `block-storage/` | pending |
+| `models` | `models/` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer) |
+| `block-storage` | `block-storage/` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
 | `rspace` | `rspace/` | pending |
-| `comm` | `comm/` | pending |
+| `comm` | `comm/` | **core done** (PeerNode/PeerTable/buffers/Chunker/StreamHandler/ProtocolHelper); gRPC/TLS transport deferred |
 | `rholang` | `rholang/` | pending |
 | `casper` | `casper/` | pending |
 | `node` | `node/` | pending |

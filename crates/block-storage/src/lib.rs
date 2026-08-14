@@ -6,8 +6,10 @@
 //! identity order-independent). The finalizer core is pure and generic (`M: Ord`, `S: Ord`), so it
 //! has no async or serialization dependencies.
 //!
-//! Deferred to later phases: the store glue (`BlockStore`/`ApprovedStore`/`codecs`) and the
-//! concrete `BlockDagStorage` implementation (which is casper-owned in Scala).
+//! The store glue (`BlockStore`/`ApprovedStore`) lives in [`block_store`]/[`approved_store`]; the
+//! concrete `BlockDagStorage` implementation is casper-owned in Scala and remains deferred.
 
+pub mod approved_store;
+pub mod block_store;
 pub mod dag;
 pub mod errors;

@@ -8,9 +8,12 @@
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
 
+use prost::Message as _;
+
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 
 use crate::block_hash::BlockHash;
+use crate::proto::casper::FringeDataProto;
 
 /// Fringe data (fringe identity + rejected deploy/block/sender data).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +40,39 @@ impl FringeData {
         let parts: Vec<&[u8]> = fringe.iter().map(|h| h.as_bytes() as &[u8]).collect();
         Blake2b256Hash::create_many(&parts)
     }
+
+    pub fn from_proto(b: &FringeDataProto) -> Self {
+        FringeData {
+            fringe_hash: Blake2b256Hash::from_byte_array(&b.fringe_hash),
+            fringe: b.fringe.iter().map(|f| BlockHash::from_slice(f)).collect(),
+            fringe_diff: b.fringe_diff.iter().map(|f| BlockHash::from_slice(f)).collect(),
+            state_hash: Blake2b256Hash::from_byte_array(&b.state_hash),
+            rejected_deploys: b.rejected_deploys.iter().cloned().collect(),
+            rejected_blocks: b.rejected_blocks.iter().map(|f| BlockHash::from_slice(f)).collect(),
+            rejected_senders: b.rejected_senders.iter().cloned().collect(),
+        }
+    }
+
+    pub fn to_proto(&self) -> FringeDataProto {
+        FringeDataProto {
+            fringe_hash: self.fringe_hash.as_bytes().to_vec(),
+            fringe: self.fringe.iter().map(|f| f.as_bytes().to_vec()).collect(),
+            fringe_diff: self.fringe_diff.iter().map(|f| f.as_bytes().to_vec()).collect(),
+            state_hash: self.state_hash.as_bytes().to_vec(),
+            rejected_deploys: self.rejected_deploys.iter().cloned().collect(),
+            rejected_blocks: self.rejected_blocks.iter().map(|f| f.as_bytes().to_vec()).collect(),
+            rejected_senders: self.rejected_senders.iter().cloned().collect(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let proto = FringeDataProto::decode(bytes).map_err(|e| e.to_string())?;
+        Ok(FringeData::from_proto(&proto))
+    }
 }
 
 #[cfg(test)]
@@ -61,5 +97,20 @@ mod tests {
             Blake2b256Hash::create_many(&parts)
         };
         assert_eq!(FringeData::fringe_hash_of(&fringe), expected);
+    }
+
+    #[test]
+    fn fringe_data_round_trips() {
+        let fd = FringeData {
+            fringe_hash: Blake2b256Hash::from_bytes([1u8; 32]),
+            fringe: [hash(2), hash(1)].into_iter().collect(),
+            fringe_diff: [hash(3)].into_iter().collect(),
+            state_hash: Blake2b256Hash::from_bytes([4u8; 32]),
+            rejected_deploys: [vec![1u8]].into_iter().collect(),
+            rejected_blocks: [hash(5)].into_iter().collect(),
+            rejected_senders: [vec![2u8]].into_iter().collect(),
+        };
+        let decoded = FringeData::from_bytes(&fd.to_bytes()).unwrap();
+        assert_eq!(decoded, fd);
     }
 }
