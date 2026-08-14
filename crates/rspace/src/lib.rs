@@ -9,6 +9,8 @@
 pub mod concurrent;
 pub mod hashing;
 pub mod history;
+pub mod hot_store_action;
+pub mod hot_store_trie_action;
 pub mod internal;
 pub mod merger;
 pub mod serializers;
