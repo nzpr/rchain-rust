@@ -88,10 +88,19 @@ pub struct ProduceCandidate<C, P, A, K> {
 }
 
 /// A row of data and waiting continuations at a channel (port of `Row`).
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Row<P, A, K> {
     pub data: Vec<Datum<A>>,
     pub wks: Vec<WaitingContinuation<P, K>>,
+}
+
+impl<P, A, K> Default for Row<P, A, K> {
+    fn default() -> Self {
+        Row {
+            data: Vec::new(),
+            wks: Vec::new(),
+        }
+    }
 }
 
 /// A multi-map whose values form a multiset (port of `MultisetMultiMap`).

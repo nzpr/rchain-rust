@@ -6,13 +6,20 @@
 //! over channel/pattern/datum/continuation types `C/P/A/K` (via `Serialize`) plus a `Match<P, A>`
 //! typeclass.
 
+pub mod checkpoint;
 pub mod concurrent;
 pub mod hashing;
 pub mod history;
+pub mod hot_store;
 pub mod hot_store_action;
 pub mod hot_store_trie_action;
+pub mod i_replay_space;
+pub mod i_space;
 pub mod internal;
+pub mod match_;
 pub mod merger;
 pub mod serializers;
+pub mod space_matcher;
 pub mod trace;
+pub mod tuple_space;
 pub mod util;
