@@ -50,6 +50,11 @@ message Protocol {
   }
 }
 
+service TransportLayer {
+  rpc Send (TLRequest) returns (TLResponse) {}
+  rpc Stream (stream Chunk) returns (TLResponse) {}
+}
+
 message TLRequest {
   Protocol protocol = 1;
 }

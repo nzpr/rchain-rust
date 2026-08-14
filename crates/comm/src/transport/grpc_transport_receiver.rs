@@ -1,0 +1,224 @@
+//! Server-side gRPC transport receiver (the `TransportLayer` service).
+//!
+//! Mirrors `comm/src/main/scala/coop/rchain/comm/transport/GrpcTransportReceiver.scala`. The per-peer
+//! `LimitedBufferObservable` dispatch queues are simplified to a direct spawned dispatch; the
+//! streamed-message circuit breaker and `PacketOps` cache round-trip are preserved.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use rchain_models::comm::protocol::transport_layer_server;
+use rchain_models::comm::protocol::{
+    tl_response, Ack, Chunk, InternalServerError, Protocol, TlRequest, TlResponse,
+};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
+use tokio_stream::wrappers::TcpListenerStream;
+use tonic::{Request, Response, Status, Streaming};
+
+use crate::peer_node::PeerNode;
+use crate::rp::protocol_helper;
+use crate::transport::chunker::Blob;
+use crate::transport::communication_response::CommunicationResponse;
+use crate::transport::packet_ops::{self, PacketCache};
+use crate::transport::stream_handler::{self, Circuit, StreamError, Streamed};
+
+/// A boxed `Send` future (helper alias for handler closures).
+pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// An incoming TLS connection, implementing tonic's `Connected`.
+struct TlsIo(tokio_rustls::server::TlsStream<tokio::net::TcpStream>);
+
+impl tonic::transport::server::Connected for TlsIo {
+    type ConnectInfo = ();
+    fn connect_info(&self) -> Self::ConnectInfo {}
+}
+
+impl AsyncRead for TlsIo {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TlsIo {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+fn ack(local: &PeerNode, network_id: &str) -> TlResponse {
+    TlResponse {
+        payload: Some(tl_response::Payload::Ack(Ack {
+            header: Some(protocol_helper::header(local, network_id)),
+        })),
+    }
+}
+
+fn internal_server_error(msg: &str) -> TlResponse {
+    TlResponse {
+        payload: Some(tl_response::Payload::InternalServerError(InternalServerError {
+            error: protocol_helper::to_protocol_bytes(msg),
+        })),
+    }
+}
+
+fn stream_error_message(error: &StreamError) -> String {
+    match error {
+        StreamError::WrongNetworkId => "Could not receive stream! Wrong network id.".to_string(),
+        StreamError::MaxSizeReached => "Max message size was reached.".to_string(),
+        StreamError::NotFullMessage(s) => {
+            format!("Received not full stream message, will not process. {s}")
+        }
+        StreamError::Unexpected(t) => format!("Could not receive stream! {t}"),
+    }
+}
+
+/// The inbound gRPC `TransportLayer` service (port of the `RoutingGrpcMonix.TransportLayer` impl).
+pub struct GrpcTransportReceiver {
+    local: PeerNode,
+    network_id: String,
+    max_stream_message_size: i64,
+    dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
+    handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
+}
+
+#[async_trait]
+impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
+    async fn send(
+        &self,
+        request: Request<TlRequest>,
+    ) -> Result<Response<TlResponse>, Status> {
+        let protocol = request
+            .into_inner()
+            .protocol
+            .ok_or_else(|| Status::invalid_argument("missing protocol"))?;
+
+        // SslSessionServerInterceptor equivalent: reject wrong-network senders.
+        if let Some(header) = &protocol.header {
+            if header.network_id != self.network_id {
+                let nid = if header.network_id.is_empty() {
+                    "<empty>"
+                } else {
+                    &header.network_id
+                };
+                return Err(Status::permission_denied(format!(
+                    "Wrong network id '{nid}'. This node runs on network '{}'",
+                    self.network_id
+                )));
+            }
+        }
+
+        let dispatch = self.dispatch.clone();
+        tokio::spawn(async move {
+            let _ = (dispatch)(protocol).await;
+        });
+        Ok(Response::new(ack(&self.local, &self.network_id)))
+    }
+
+    async fn stream(
+        &self,
+        request: Request<Streaming<Chunk>>,
+    ) -> Result<Response<TlResponse>, Status> {
+        let mut incoming = request.into_inner();
+        let mut chunks = Vec::new();
+        while let Some(chunk) = incoming.message().await? {
+            chunks.push(chunk);
+        }
+
+        let mut cache = PacketCache::new();
+        let key = packet_ops::create_cache_entry("packet_send/", &mut cache);
+        let init = Streamed::new(key);
+
+        let network_id = self.network_id.clone();
+        let max_stream_message_size = self.max_stream_message_size;
+        let breaker = move |streamed: &Streamed| {
+            if let Some(header) = &streamed.header {
+                if header.network_id != network_id {
+                    return Circuit::Opened(StreamError::WrongNetworkId);
+                }
+            }
+            if streamed.read_so_far > max_stream_message_size {
+                return Circuit::Opened(StreamError::MaxSizeReached);
+            }
+            Circuit::Closed
+        };
+
+        let collected = stream_handler::collect(&init, &chunks, &breaker, &mut cache)
+            .and_then(|stmd| stream_handler::to_result(&stmd));
+
+        match collected {
+            Ok(msg) => match stream_handler::restore(&msg, &mut cache) {
+                Ok(blob) => {
+                    let handle = self.handle_streamed.clone();
+                    tokio::spawn(async move {
+                        (handle)(blob).await;
+                    });
+                    Ok(Response::new(ack(&self.local, &self.network_id)))
+                }
+                Err(e) => Ok(Response::new(internal_server_error(&e))),
+            },
+            Err(e) => Ok(Response::new(internal_server_error(&stream_error_message(&e)))),
+        }
+    }
+}
+
+/// Bind a mutual-TLS listener and serve the transport receiver.
+pub async fn serve(
+    local: PeerNode,
+    network_id: String,
+    port: u16,
+    tls: Arc<rustls::ServerConfig>,
+    max_stream_message_size: i64,
+    dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
+    handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
+) -> Result<(), String> {
+    let listener = TcpListener::bind(("0.0.0.0", port))
+        .await
+        .map_err(|e| e.to_string())?;
+    let acceptor = TlsAcceptor::from(tls);
+    let incoming = TcpListenerStream::new(listener).filter_map(move |conn| {
+        let acceptor = acceptor.clone();
+        async move {
+            match conn {
+                Ok(tcp) => match acceptor.accept(tcp).await {
+                    Ok(tls) => Some(Ok::<_, std::io::Error>(TlsIo(tls))),
+                    Err(_) => None,
+                },
+                Err(_) => None,
+            }
+        }
+    });
+
+    let service = GrpcTransportReceiver {
+        local,
+        network_id,
+        max_stream_message_size,
+        dispatch,
+        handle_streamed,
+    };
+
+    tonic::transport::Server::builder()
+        .add_service(transport_layer_server::TransportLayerServer::new(service))
+        .serve_with_incoming(incoming)
+        .await
+        .map_err(|e| e.to_string())
+}

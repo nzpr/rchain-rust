@@ -1,9 +1,10 @@
 //! Faithful Rust port of the RChain `comm` module (peer-to-peer networking).
 //!
-//! Mirrors `comm/src/main/scala/coop/rchain/comm/`. This phase ports the pure core — peer identity,
-//! the Kademlia `PeerTable` (XOR distance / bucket routing), the lock-free message buffers, and the
-//! transport/rp configuration. The gRPC/TLS transport and the rp `Connect`/`HandleMessages` layers
-//! land in the next phase.
+//! Mirrors `comm/src/main/scala/coop/rchain/comm/`. This crate ports the full networking stack:
+//! peer identity, the Kademlia `PeerTable` + gRPC discovery RPC, the gRPC/TLS `TransportLayer`
+//! (client/server/receiver with mutual TLS and node-id trust), the message buffers/`PacketOps`/
+//! `StreamHandler`, and the rp `Connect`/`HandleMessages` layers. UPnP/WhoAmI external-IP discovery
+//! is deferred (peripheral, off the transport critical path).
 
 pub mod discovery;
 pub mod errors;

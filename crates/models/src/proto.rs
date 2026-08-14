@@ -8,6 +8,10 @@ pub mod routing {
     include!(concat!(env!("OUT_DIR"), "/routing.rs"));
 }
 
+pub mod discovery {
+    include!(concat!(env!("OUT_DIR"), "/coop.rchain.comm.discovery.rs"));
+}
+
 pub(crate) mod casper {
     #![allow(dead_code)] // not all generated wire types are used until casper/comm land
     include!(concat!(env!("OUT_DIR"), "/casper.rs"));

@@ -45,7 +45,7 @@ impl std::fmt::Display for NodeIdentifier {
 }
 
 /// A network endpoint (host + tcp/udp ports).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub host: String,
     pub tcp_port: i32,
@@ -53,7 +53,7 @@ pub struct Endpoint {
 }
 
 /// A peer node (identifier + endpoint).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PeerNode {
     pub id: NodeIdentifier,
     pub endpoint: Endpoint,

@@ -18,7 +18,7 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `models` | `models/` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer) |
 | `block-storage` | `block-storage/` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
 | `rspace` | `rspace/` | pending |
-| `comm` | `comm/` | **core done** (PeerNode/PeerTable/buffers/Chunker/StreamHandler/ProtocolHelper); gRPC/TLS transport deferred |
+| `comm` | `comm/` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages); UPnP/WhoAmI deferred |
 | `rholang` | `rholang/` | pending |
 | `casper` | `casper/` | pending |
 | `node` | `node/` | pending |

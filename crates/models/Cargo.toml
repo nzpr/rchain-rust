@@ -8,8 +8,10 @@ description = "Faithful Rust port of the RChain models module (rholang AST + can
 num-bigint = "0.4"
 num-traits = "0.2"
 prost = "0.13"
+tonic = "0.12"
 rchain-crypto = { path = "../crypto" }
 rchain-shared = { path = "../shared" }
 
 [build-dependencies]
 prost-build = "0.13"
+tonic-build = "0.12"
