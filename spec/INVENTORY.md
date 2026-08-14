@@ -3,6 +3,11 @@
 The catalog of mathematical invariants the Rust rewrite must preserve. Each row links a law to its
 source-of-truth location, its Lean formalization, and its Rust test gate.
 
+**Type system.** The port's own type discipline — the ρ-calculus embedded as the base sort of a
+Calculus of Constructions, with no silent partiality — is specified in [`TYPE-SYSTEM.md`](TYPE-SYSTEM.md),
+guided by `Rchain/Rho.lean` and `Rchain/Ty.lean`. It is **not** a new law and does not pre-empt Laws
+1–19 below.
+
 **Status legend**
 
 - **stated** — theorem statement exists in Lean (Phase 0), proof is a later obligation
@@ -15,7 +20,7 @@ source-of-truth location, its Lean formalization, and its Rust test gate.
 
 | # | Layer | Law | Source of truth | Lean | Status |
 |---|-------|-----|-----------------|------|--------|
-| 1 | Rholang | `Par`/`ESet`/`EMap` are commutative; canonicalization to a total order is **idempotent** (`sort(sort p) = sort p`); `sort(p\|q) = sort(q\|p)` | `models/src/main/scala/coop/rchain/models/rholang/sorter/ScoreTree.scala`, `ordering.scala`, `SortedParHashSet.scala` | `Rchain/Sort.lean` (`sort_idempotent`, `sort_par_comm`) | **stated** |
+| 1 | Rholang | `Par`/`ESet`/`EMap` are commutative; canonicalization to a total order is **idempotent** (`sort(sort p) = sort p`); `sort(p\|q) = sort(q\|p)` | `models/src/main/scala/coop/rchain/models/rholang/sorter/ScoreTree.scala`, `ordering.scala`, `SortedParHashSet.scala` | `Rchain/Sort.lean` (`sortPar_idempotent`, `sortPar_comm`) | **admitted** (flat ADT + comparator defs + leaf laws + `sortList` proven; total-order bundle + sort + Law 1 are residual axioms — see `spec/M2-HANDOFF.md`) |
 | 2 | Rholang | **α/name equivalence** = par order + `\| Nil` + top-level arithmetic + α + added eval/quote | `rholang/src/main/k/rholang/name-equivalence.k:1-14`, `rholang/reference_doc/normalization_process/README.md` | `Rchain/Sort.lean` | Phase 1 |
 | 3 | Rholang | **Capture-avoiding de Bruijn substitution**; `sort(subst t) = subst(sort t)` | `rholang/src/main/scala/coop/rchain/rholang/interpreter/Substitute.scala`, `Env.scala` | `Rchain/Subst.lean` | Phase 1 |
 | 4 | Rholang | **Reduction (comm)**; first-match-wins; `new` yields fresh unforgeable names | `rholang/.../interpreter/Reduce.scala`, `rholang/src/main/k/rholang/*.k` | `Rchain/Reduce.lean` | Phase 1 |

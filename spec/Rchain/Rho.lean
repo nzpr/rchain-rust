@@ -45,4 +45,25 @@ theorem strCong_ident (p : Par) : StrCong (parMerge p nilPar) p := StrCong.ident
 theorem strCong_nil_left (p : Par) : StrCong (parMerge nilPar p) p :=
   StrCong.trans (StrCong.comm nilPar p) (StrCong.ident p)
 
+/-! ## Reduction (Law 4 core): COMM + congruence -/
+
+/-- A send on channel `chan` with data `data` (non-persistent). -/
+def sendPar (chan : Par) (data : List Par) : Par :=
+  Par.mk [Send.mk chan data false] [] [] [] [] [] [] []
+
+/-- A receive on channel `chan` with body `body` (single bind, non-persistent). -/
+def receivePar (chan : Par) (body : Par) : Par :=
+  Par.mk [] [Receive.mk [ReceiveBind.mk [chan] body 1] body false 1] [] [] [] [] [] []
+
+/-- Minimal reduction `⟶` (Law 4 core). COMM contracts a send/receive on the same channel to the
+    receive body; reduction is a congruence under `|`. The capture-avoiding substitution of the
+    sent data for the bound level — and replication (`!`/`!!` re-inserting the redex) and `new`
+    freshness — are Coq's Autosubst/α-equivalence obligations (`AGENTS.md`); the redex contraction
+    to the body is exactly the fact the closedness-preservation theorem in `Rchain.Ty` needs. -/
+inductive Reduce : Par → Par → Prop where
+  | comm (chan data body : Par) :
+      Reduce (parMerge (sendPar chan [data]) (receivePar chan body)) body
+  | parLeft {p p' q : Par} : Reduce p p' → Reduce (parMerge p q) (parMerge p' q)
+  | parRight {p q q' : Par} : Reduce q q' → Reduce (parMerge p q) (parMerge p q')
+
 end Rchain

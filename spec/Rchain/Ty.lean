@@ -287,7 +287,9 @@ theorem Closed_nil : Closed nilPar := by
 /-- Fundamental: closedness is a **monoid invariant** — `|` (parMerge) of two closed processes is
     closed, and conversely. -/
 theorem Closed_parMerge_iff (p q : Par) : Closed (parMerge p q) ↔ Closed p ∧ Closed q := by
-  cases p <;> cases q <;> simp [Closed, parMerge]
+  cases p <;> cases q
+  simp [Closed, parMerge, Bool.and_eq_true]
+  tauto
 
 theorem Closed_parMerge {p q : Par} (hp : Closed p) (hq : Closed q) : Closed (parMerge p q) :=
   (Closed_parMerge_iff p q).mpr ⟨hp, hq⟩
@@ -296,14 +298,15 @@ theorem Closed_parMerge {p q : Par} (hp : Closed p) (hq : Closed q) : Closed (pa
     the `≡` fragment of reduction). -/
 theorem strCong_closed_iff {p q : Par} : StrCong p q → (Closed p ↔ Closed q) := by
   intro h
-  induction h with
-  | refl => exact Iff.rfl
-  | symm ih => exact ih.symm
-  | trans ih₁ ih₂ => exact ih₁.trans ih₂
-  | comm => simp [Closed_parMerge_iff]
-  | assoc => simp [Closed_parMerge_iff]
-  | ident => simp [Closed_parMerge_iff, Closed_nil]
-  | par ih₁ ih₂ => simpa [Closed_parMerge_iff] using and_congr ih₁ ih₂
+  exact StrCong.rec (motive := fun {p q} _ => Closed p ↔ Closed q)
+    (fun _p => Iff.rfl)
+    (fun _h ih => ih.symm)
+    (fun _h₁ _h₂ ih₁ ih₂ => ih₁.trans ih₂)
+    (fun _p _q => by simp [Closed_parMerge_iff, and_comm])
+    (fun _p _q _r => by simp [Closed_parMerge_iff, and_assoc])
+    (fun _p => by simp [Closed_parMerge_iff, Closed_nil])
+    (fun _h₁ _h₂ ih₁ ih₂ => by simpa [Closed_parMerge_iff] using and_congr ih₁ ih₂)
+    h
 
 theorem strCong_closed {p q : Par} (h : StrCong p q) (hp : Closed p) : Closed q :=
   (strCong_closed_iff h).mp hp
@@ -334,5 +337,81 @@ theorem TotalOn_comp {f g : Par → Par} (hf : TotalOn f) (hg : TotalOn g) :
     TotalOn (fun p => g (f p)) := by
   intro p hp
   exact hg (f p) (hf p hp)
+
+/-! ## Substitution (minimal) and the full sort judgment -/
+
+/-- A simultaneous substitution: a term for each variable (de Bruijn level). -/
+abbrev Subst := Var → Par
+
+/-- Substitute a single expression occurrence: a free variable `evar (free _)` is rewritten to the
+    substituted term's expressions; every other expression is left in place. This is the *minimal*
+    substitution the type-system fundamentals need — it is visibly sort-preserving because it never
+    touches `sends`/`receives`/`news`/`matches`. Deep capture-avoiding de Bruijn substitution is
+    Coq's Autosubst obligation (`AGENTS.md`). -/
+def substExpr (σ : Subst) : Expr → List Expr
+  | Expr.evar v =>
+      match v with
+      | .free _ => (σ v).exprs
+      | .bound _ => [Expr.evar v]
+      | .wildcard => [Expr.evar v]
+  | e => [e]
+
+def substListExpr (σ : Subst) : List Expr → List Expr
+  | [] => []
+  | e :: es => substExpr σ e ++ substListExpr σ es
+
+/-- Minimal substitution `subst σ p`: only the top-level `exprs` field is rewritten. -/
+def subst (σ : Subst) (p : Par) : Par :=
+  Par.mk p.sends p.receives p.news (substListExpr σ p.exprs) p.matches p.unforgeables p.bundles p.connectives
+
+/-- `HasSort t s` — term `t` is classified as sort `s` (the unique structural process/name sort).
+    The context `Γ` classifies variable occurrences via `HasVarSort`; `HasSort` is the structural
+    half of the `Γ ⊢ t : s` judgment, and `Closed` is the well-scopedness refinement. -/
+def HasSort (t : Par) (s : PSort) : Prop := classify t = s
+
+instance HasSort_decidable (t : Par) (s : PSort) : Decidable (HasSort t s) := by
+  unfold HasSort; infer_instance
+
+/-- Fundamental 1: sort classification is functional (a term has at most one sort). -/
+theorem HasSort_functional {t : Par} {s s' : PSort} (h : HasSort t s) (h' : HasSort t s') : s = s' := by
+  unfold HasSort at h h'
+  rw [h] at h'
+  exact h'
+
+/-- Fundamental 3 (structural half): substitution preserves the structural sort. -/
+theorem subst_classify (σ : Subst) (p : Par) : classify (subst σ p) = classify p := by
+  simp [classify, isPureName, subst]
+
+/-- Fundamental 3: substitution preserves sort (`HasSort t s → HasSort (subst σ t) s`). -/
+theorem subst_preserves_sort (σ : Subst) {t : Par} {s : PSort} (h : HasSort t s) : HasSort (subst σ t) s := by
+  unfold HasSort at h ⊢
+  rw [subst_classify σ t, h]
+
+/-! ## Reduction preserves closedness (Fundamental 4) -/
+
+/-- The boolean `closed` checker agrees with the `Closed` predicate. -/
+@[simp] theorem closed_eq_Closed (p : Par) : closed p = true ↔ Closed p := by
+  cases p
+  simp [closed, Closed, Bool.and_eq_true]
+  tauto
+
+/-- `receivePar chan body` is closed iff `chan` and `body` are closed. -/
+theorem Closed_receivePar_iff (chan body : Par) : Closed (receivePar chan body) ↔ Closed chan ∧ Closed body := by
+  cases chan <;> cases body
+  simp [Closed, receivePar, closedListReceive, closedReceive, closedListReceiveBind, closedReceiveBind, closedListPar, Bool.and_eq_true, and_assoc, and_left_comm]
+
+/-- Fundamental 4: reduction preserves closedness (COMM never introduces free variables). -/
+theorem reduce_closed {p p' : Par} (h : Reduce p p') (hp : Closed p) : Closed p' := by
+  exact Reduce.rec (motive := fun {p p'} _ => Closed p → Closed p')
+    (fun chan data body hp =>
+      have hboth := (Closed_parMerge_iff (sendPar chan [data]) (receivePar chan body)).mp hp
+      (Closed_receivePar_iff chan body).mp hboth.2 |>.2)
+    (fun {p p' q} _h ih hp =>
+      have hboth := (Closed_parMerge_iff p q).mp hp
+      (Closed_parMerge_iff p' q).mpr ⟨ih hboth.1, hboth.2⟩)
+    (fun {p q q'} _h ih hp =>
+      have hboth := (Closed_parMerge_iff p q).mp hp
+      (Closed_parMerge_iff p q').mpr ⟨hboth.1, ih hboth.2⟩)
+    h hp
 
 end Rchain

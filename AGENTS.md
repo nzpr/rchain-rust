@@ -32,6 +32,12 @@ For any component you are about to write in Rust:
 | **Lean 4** (primary) | algebraic/order laws, canonicalization, merge monoids, consensus arithmetic | [`spec/`](spec/) | `cd spec && lake build` |
 | **Coq** | substitution, α-equivalence, and programming-language metatheory (Autosubst in Phase 1) | [`spec/coq/`](spec/coq/) | `make -C spec/coq` |
 | **Inventory** | the 19 laws, each with source-of-truth + formalization status | [`spec/INVENTORY.md`](spec/INVENTORY.md) | — |
+| **Type system** | the port's own type discipline: ρ-calculus as the base sort of a Calculus of Constructions, no silent partiality | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md), `Rchain/Rho.lean`, `Rchain/Ty.lean` | `cd spec && lake build` |
+
+The **type-system spec** ([`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md)) overlaps the Lean/Coq split
+deliberately: Lean 4 proves the six fundamentals over the flat `Par` (sort classification, `≡`,
+minimal substitution, minimal COMM reduction, canonicalization, totality); Coq keeps the deep
+Autosubst α-equivalence reconciliation. It is a hardening of the port, not a new law.
 
 The Lean 4 and Coq tracks are deliberately parallel: both define the same core `Proc` syntax and the
 same canonicalization (`sort`) as Phase 0, and both state Law 1 (`sort` is idempotent and `par`
