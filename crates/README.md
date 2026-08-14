@@ -13,9 +13,9 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `sdk` | `sdk/` | **done** (root leaf; Laws 14 & 17) |
 | `shared` | `shared/` | **core done** (Base16/Serialize/DagOps/store); LMDB FFI deferred |
 | `regex` | `regex/` | orphaned leaf, pure algorithm (deferred — off critical path) |
-| `crypto` | `crypto/` | pending |
-| `graphz` | `graphz/` | pending |
-| `models` | `models/` | pending |
+| `crypto` | `crypto/` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519) |
+| `graphz` | `graphz/` | **done** (DOT builder) |
+| `models` | `models/` | **core done** (rholang AST + Law 1 sorter); wire serialization + Casper types deferred |
 | `block-storage` | `block-storage/` | pending |
 | `rspace` | `rspace/` | pending |
 | `comm` | `comm/` | pending |

@@ -1,0 +1,79 @@
+//! A block hash.
+//!
+//! Mirrors `models/src/main/scala/coop/rchain/models/BlockHash.scala`.
+
+use rchain_shared::base16;
+
+/// The length of a `BlockHash` in bytes.
+pub const LENGTH: usize = 32;
+
+/// A 32-byte block hash.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct BlockHash([u8; LENGTH]);
+
+impl BlockHash {
+    /// Wrap a 32-byte array.
+    pub fn new(bytes: [u8; LENGTH]) -> Self {
+        Self(bytes)
+    }
+
+    /// Wrap a 32-byte slice (panics if not exactly [`LENGTH`] bytes).
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        assert_eq!(bytes.len(), LENGTH, "expected {LENGTH} bytes");
+        let mut arr = [0u8; LENGTH];
+        arr.copy_from_slice(bytes);
+        Self(arr)
+    }
+
+    /// The underlying 32 bytes.
+    pub fn as_bytes(&self) -> &[u8; LENGTH] {
+        &self.0
+    }
+
+    /// Hex-encode the hash.
+    pub fn to_hex(&self) -> String {
+        base16::encode(&self.0)
+    }
+
+    /// Parse a full 32-byte hex string (panics if it decodes to a different length).
+    pub fn from_hex(s: &str) -> Self {
+        Self::from_slice(&base16::unsafe_decode(s))
+    }
+
+    /// Whether the hash begins with `prefix` (used by `DagRepresentation.find`).
+    pub fn starts_with(&self, prefix: &[u8]) -> bool {
+        self.0.starts_with(prefix)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_round_trips() {
+        let h = BlockHash::from_slice(&[0xab; 32]);
+        assert_eq!(BlockHash::from_hex(&h.to_hex()), h);
+    }
+
+    #[test]
+    fn length_is_32() {
+        assert_eq!(LENGTH, 32);
+    }
+
+    #[test]
+    fn orders_lexicographically() {
+        let a = BlockHash::new([0u8; 32]);
+        let b = BlockHash::new([1u8; 32]);
+        assert!(a < b);
+    }
+
+    #[test]
+    fn starts_with_prefix() {
+        let mut bytes = [0u8; 32];
+        bytes[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        let h = BlockHash::new(bytes);
+        assert!(h.starts_with(&[0xde, 0xad]));
+        assert!(!h.starts_with(&[0xde, 0xae]));
+    }
+}
