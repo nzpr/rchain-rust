@@ -75,7 +75,7 @@ pub struct ConsumeCandidate<C, A> {
     pub channel: C,
     pub datum: Datum<A>,
     pub removed_datum: A,
-    pub datum_index: usize,
+    pub datum_index: i64,
 }
 
 /// A matched continuation candidate during produce (port of `ProduceCandidate`).

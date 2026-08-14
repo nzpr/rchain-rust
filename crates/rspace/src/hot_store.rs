@@ -51,7 +51,7 @@ pub trait HotStore<C, P, A, K>: Send + Sync {
 
     async fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
     async fn put_datum(&self, channel: &C, datum: Datum<A>);
-    async fn remove_datum(&self, channel: &C, index: usize);
+    async fn remove_datum(&self, channel: &C, index: i64);
 
     async fn get_joins(&self, channel: &C) -> Vec<Vec<C>>;
     async fn put_join(&self, channel: &C, join: &[C]);
@@ -198,7 +198,7 @@ where
         cur.insert(0, datum);
     }
 
-    async fn remove_datum(&self, channel: &C, index: usize) {
+    async fn remove_datum(&self, channel: &C, index: i64) {
         let mut state = self.state.lock().await;
         let from_base = if state.data.contains_key(channel) {
             Vec::new()
@@ -206,8 +206,8 @@ where
             self.reader_base.get_data(channel).await
         };
         let cur = state.data.entry(channel.clone()).or_insert(from_base);
-        if index < cur.len() {
-            *cur = remove_index(cur, index);
+        if index >= 0 && (index as usize) < cur.len() {
+            *cur = remove_index(cur, index as usize);
         }
     }
 

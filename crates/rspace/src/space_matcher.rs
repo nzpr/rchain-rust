@@ -10,15 +10,15 @@ use crate::match_::Match;
 /// Search data for a match with a pattern (port of `findMatchingDataCandidate`).
 pub fn find_matching_data_candidate<C, P, A>(
     channel: &C,
-    data: &[(Datum<A>, usize)],
+    data: &[(Datum<A>, i64)],
     pattern: &P,
     m: &dyn Match<P, A>,
-) -> Option<(ConsumeCandidate<C, A>, Vec<(Datum<A>, usize)>)>
+) -> Option<(ConsumeCandidate<C, A>, Vec<(Datum<A>, i64)>)>
 where
     C: Clone,
     A: Clone,
 {
-    let mut prefix: Vec<(Datum<A>, usize)> = Vec::new();
+    let mut prefix: Vec<(Datum<A>, i64)> = Vec::new();
     let mut remaining = data;
     loop {
         match remaining.first() {
@@ -56,7 +56,7 @@ where
 /// Iterate (channel, pattern) pairs looking for matching data (port of `extractDataCandidates`).
 pub fn extract_data_candidates<C, P, A>(
     channel_pattern_pairs: &[(C, P)],
-    channel_to_indexed_data: &BTreeMap<C, Vec<(Datum<A>, usize)>>,
+    channel_to_indexed_data: &BTreeMap<C, Vec<(Datum<A>, i64)>>,
     m: &dyn Match<P, A>,
 ) -> Vec<Option<ConsumeCandidate<C, A>>>
 where
@@ -88,7 +88,7 @@ where
 pub fn extract_first_match<C, P, A, K>(
     channels: &[C],
     match_candidates: &[(WaitingContinuation<P, K>, usize)],
-    channel_to_indexed_data: &BTreeMap<C, Vec<(Datum<A>, usize)>>,
+    channel_to_indexed_data: &BTreeMap<C, Vec<(Datum<A>, i64)>>,
     m: &dyn Match<P, A>,
 ) -> Option<ProduceCandidate<C, P, A, K>>
 where
@@ -113,4 +113,44 @@ where
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+    use crate::trace::event::Produce;
+
+    struct EqMatch;
+    impl Match<i32, i32> for EqMatch {
+        fn get(&self, p: &i32, a: &i32) -> Option<i32> {
+            if p == a { Some(*a) } else { None }
+        }
+    }
+
+    fn datum(a: i32) -> Datum<i32> {
+        Datum {
+            a,
+            persist: false,
+            source: Produce::from_hash(
+                Blake2b256Hash::from_bytes([0; 32]),
+                Blake2b256Hash::from_bytes([0; 32]),
+                false,
+            ),
+        }
+    }
+
+    #[test]
+    fn find_matching_data_candidate_finds_first_match() {
+        let data = vec![(datum(1), 0), (datum(2), 1)];
+        let result = find_matching_data_candidate(&0i32, &data, &2, &EqMatch).unwrap();
+        assert_eq!(result.0.datum.a, 2);
+        assert_eq!(result.0.datum_index, 1);
+    }
+
+    #[test]
+    fn find_matching_data_candidate_none_when_no_match() {
+        let data = vec![(datum(1), 0)];
+        assert!(find_matching_data_candidate(&0i32, &data, &99, &EqMatch).is_none());
+    }
 }

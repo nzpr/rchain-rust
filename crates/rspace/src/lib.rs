@@ -18,6 +18,8 @@ pub mod i_space;
 pub mod internal;
 pub mod match_;
 pub mod merger;
+pub mod replay_rspace;
+pub mod rspace;
 pub mod serializers;
 pub mod space_matcher;
 pub mod trace;

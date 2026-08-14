@@ -17,7 +17,7 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `graphz` | `graphz/` | **done** (DOT builder) |
 | `models` | `models/` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer) |
 | `block-storage` | `block-storage/` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
-| `rspace` | `rspace/` | pending |
+| `rspace` | `rspace/` | **done** (hashing/radix-tree/history/merger + play/replay engine); state/exporters + reporting deferred |
 | `comm` | `comm/` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages); UPnP/WhoAmI deferred |
 | `rholang` | `rholang/` | pending |
 | `casper` | `casper/` | pending |
