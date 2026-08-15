@@ -158,7 +158,7 @@ impl<T: Clone> BoundMapChain<T> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FreeMap<T> {
     next_level: i32,
-    level_bindings: BTreeMap<String, FreeContext<T>>,
+    pub level_bindings: BTreeMap<String, FreeContext<T>>,
     pub wildcards: Vec<SourcePosition>,
     pub connectives: Vec<(Connective, SourcePosition)>,
 }

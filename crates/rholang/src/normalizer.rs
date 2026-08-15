@@ -9,12 +9,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use num_bigint::BigInt;
 
 use rchain_models::ast::{
-    AlwaysEqual, Connective, ConnectiveBody, Expr, Match, MatchCase, New, Par, Receive, ReceiveBind,
-    Send, Var, VarRef,
+    AlwaysEqual, Bundle, Connective, ConnectiveBody, Expr, Match, MatchCase, New, Par, Receive,
+    ReceiveBind, Send, Var, VarRef,
 };
 use rchain_models::par_ops::{
-    from_expr, par_concat, prepend_connective, prepend_expr, prepend_match, prepend_new,
-    prepend_receive, prepend_send, single_connective,
+    from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
+    prepend_new, prepend_receive, prepend_send, single_bundle, single_connective,
 };
 
 use crate::compiler::{
@@ -22,8 +22,8 @@ use crate::compiler::{
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
-    BoolLiteral, Case, Ground, Name, NameDecl, NameRemainder, Proc, ProcRemainder, ProcVar,
-    Send as SendKind, SimpleType, VarRefKind,
+    BoolLiteral, Bundle as BundleKind, Case, Ground, Name, NameDecl, NameRemainder, Proc,
+    ProcRemainder, ProcVar, Send as SendKind, SimpleType, VarRefKind,
 };
 
 fn pos() -> SourcePosition {
@@ -214,6 +214,7 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
         Proc::PContr(name, formals, remainder, body) => {
             normalize_contr(name, formals, remainder, body, input)
         }
+        Proc::PBundle(kind, body) => normalize_bundle(kind, body, input),
         _ => Err(defer("process")),
     }
 }
@@ -932,6 +933,54 @@ fn normalize_if(
     Ok(ProcVisitOutputs {
         par: prepend_match(&input_par, m),
         free_map: false_result.free_map,
+    })
+}
+
+/// Normalize a bundle (port of `PBundleNormalizer.normalize`).
+fn normalize_bundle(
+    kind: &BundleKind,
+    body: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let bound_map_chain = input.bound_map_chain.clone();
+    let target = normalize_proc(
+        body,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain,
+            free_map: input.free_map.clone(),
+        },
+    )?;
+
+    let (write_flag, read_flag) = match kind {
+        BundleKind::BundleReadWrite => (true, true),
+        BundleKind::BundleRead => (false, true),
+        BundleKind::BundleWrite => (true, false),
+        BundleKind::BundleEquiv => (false, false),
+    };
+    let outermost = Bundle {
+        body: Box::new(target.par.clone()),
+        write_flag,
+        read_flag,
+    };
+
+    if !target.par.connectives.is_empty() {
+        return Err(RholangError::UnexpectedBundleContent(
+            "Illegal top level connective in bundle.".to_string(),
+        ));
+    }
+    if !target.free_map.wildcards.is_empty() || !target.free_map.level_bindings.is_empty() {
+        return Err(RholangError::UnexpectedBundleContent(
+            "Bundle's content must not have free variables or wildcards.".to_string(),
+        ));
+    }
+    let new_bundle = match single_bundle(&target.par) {
+        Some(single) => outermost.merge(single),
+        None => outermost,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_bundle(&input.par, new_bundle),
+        free_map: input.free_map,
     })
 }
 
