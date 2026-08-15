@@ -17,6 +17,7 @@ use crate::hot_store::{HotStore, InMemHotStore};
 use crate::i_space::ISpace;
 use crate::internal::{ConsumeCandidate, Datum, Install, ProduceCandidate, Row, WaitingContinuation};
 use crate::match_::Match;
+use crate::replay_rspace::ReplayRSpace;
 use crate::space_matcher::{extract_data_candidates, extract_first_match};
 use crate::trace::event::{Comm, Consume, Event, Produce};
 use crate::trace::Log;
@@ -59,6 +60,18 @@ where
             lock_f: Arc::new(TwoStepLock::new()),
             matcher,
         }
+    }
+
+    /// Create both the play and replay spaces over the same store (port of
+    /// `RSpace.createWithReplay`).
+    pub fn create_with_replay(
+        history_repository: Arc<HistoryRepository<C, P, A, K>>,
+        store: Arc<dyn HotStore<C, P, A, K>>,
+        matcher: Arc<dyn Match<P, A>>,
+    ) -> (Arc<RSpace<C, P, A, K>>, ReplayRSpace<C, P, A, K>) {
+        let play = Arc::new(RSpace::new(history_repository, store, matcher));
+        let replay = ReplayRSpace::new(play.clone());
+        (play, replay)
     }
 
     pub(crate) fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, usize> {

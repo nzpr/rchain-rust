@@ -9,4 +9,5 @@ pub mod dag;
 pub mod event_converter;
 pub mod merging;
 pub mod proto_util;
+pub mod rholang;
 pub mod validate;

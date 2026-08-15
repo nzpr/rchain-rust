@@ -10,6 +10,7 @@ pub mod contract_call;
 pub mod dispatch;
 pub mod env;
 pub mod errors;
+pub mod evaluate_result;
 pub mod matcher;
 pub mod pretty_printer;
 pub mod reduce;
