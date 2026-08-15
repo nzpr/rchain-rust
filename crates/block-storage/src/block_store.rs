@@ -92,6 +92,6 @@ mod tests {
         let store = create(&kvm).await;
         let b = block();
         store.put(&[(b.block_hash, b.clone())]).await;
-        assert_eq!(store.get(&[b.block_hash]).await, vec![Some(b)]);
+        assert_eq!(store.get(&[b.block_hash]).await.unwrap(), vec![Some(b)]);
     }
 }

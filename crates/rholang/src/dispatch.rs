@@ -29,20 +29,24 @@ pub fn build_env(data_list: &[ListParWithRandom]) -> Env<Par> {
 ///
 /// `eval` is set after construction to break the reducer↔dispatcher cycle.
 pub struct RholangAndScalaDispatcher {
-    dispatch_table: BTreeMap<i64, ScalaBodyFn>,
+    dispatch_table: RefCell<BTreeMap<i64, ScalaBodyFn>>,
     eval: RefCell<Option<EvalBodyFn>>,
 }
 
 impl RholangAndScalaDispatcher {
     pub fn new(dispatch_table: BTreeMap<i64, ScalaBodyFn>) -> Self {
         RholangAndScalaDispatcher {
-            dispatch_table,
+            dispatch_table: RefCell::new(dispatch_table),
             eval: RefCell::new(None),
         }
     }
 
     pub fn set_eval(&self, eval: EvalBodyFn) {
         *self.eval.borrow_mut() = Some(eval);
+    }
+
+    pub fn set_dispatch_table(&self, table: BTreeMap<i64, ScalaBodyFn>) {
+        *self.dispatch_table.borrow_mut() = table;
     }
 }
 
@@ -62,12 +66,15 @@ impl Dispatch for RholangAndScalaDispatcher {
                 let f = eval.as_ref().expect("dispatcher eval not set");
                 f(&pwr.body, &env, &merged)
             }
-            TaggedContinuation::ScalaBodyRef(r) => match self.dispatch_table.get(r) {
-                Some(f) => f(data_list),
-                None => Err(RholangError::ReduceError(format!(
-                    "dispatch: no function for {r}"
-                ))),
-            },
+            TaggedContinuation::ScalaBodyRef(r) => {
+                let table = self.dispatch_table.borrow();
+                match table.get(r) {
+                    Some(f) => f(data_list),
+                    None => Err(RholangError::ReduceError(format!(
+                        "dispatch: no function for {r}"
+                    ))),
+                }
+            }
             TaggedContinuation::Empty => Ok(()),
         }
     }

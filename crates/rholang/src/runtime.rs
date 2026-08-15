@@ -1,12 +1,14 @@
 //! The rholang runtime façade (port of `RhoRuntime.scala`, core).
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
-use rchain_models::ast::Par;
+use rchain_models::ast::{Bundle, Expr, Par, Var};
+use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_rspace::checkpoint::Checkpoint;
 use rchain_rspace::errors::RSpaceError;
@@ -21,6 +23,7 @@ use crate::env::Env;
 use crate::errors::RholangError;
 use crate::reduce::DebruijnInterpreter;
 use crate::storage::{ChargingRSpace, RhoHistoryRepository};
+use crate::system_processes::{BlockData, FixedChannels, SystemProcesses};
 
 /// The concrete rspace type the runtime operates on.
 pub type RhoSpace = Arc<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>;
@@ -51,13 +54,48 @@ pub fn setup_reducer(
     reducer
 }
 
-/// The rholang runtime (port of `RhoRuntime`). `evaluate` (parse+run) and system processes are
-/// deferred; `inj`, checkpointing, and tuplespace reads are provided.
+/// The rholang runtime (port of `RhoRuntime`). `evaluate` (parse+run) is deferred; `inj`,
+/// checkpointing, and tuplespace reads are provided.
 pub struct RhoRuntime {
     reducer: Rc<RhoReducer>,
     space: RhoSpace,
     cost: Rc<CostAccounting>,
     _history: RhoHistoryRepository,
+}
+
+/// A write-only bundle over `channel` (port of `Bundle(channel, writeFlag = true)`).
+fn write_bundle(channel: Par) -> Par {
+    Par {
+        bundles: vec![Bundle {
+            body: Box::new(channel),
+            write_flag: true,
+            read_flag: false,
+        }],
+        ..Par::default()
+    }
+}
+
+/// Install each system-contract definition as a persistent join on its fixed channel (port of
+/// `RhoRuntime.introduceSystemProcesses`).
+fn install_system_processes(
+    space: &RhoSpace,
+    runtime: &tokio::runtime::Runtime,
+    proc_defs: &[(Par, i32, i64)],
+) -> Result<(), RholangError> {
+    for (name, arity, body_ref) in proc_defs {
+        let patterns = vec![BindPattern {
+            patterns: (0..*arity)
+                .map(|i| from_expr(Expr::EVar(Box::new(Var::FreeVar(i)))))
+                .collect(),
+            remainder: None,
+            free_count: *arity,
+        }];
+        let continuation = TaggedContinuation::ScalaBodyRef(*body_ref);
+        runtime
+            .block_on(space.install(&[name.clone()], &patterns, continuation))
+            .map_err(|e| RholangError::ReduceError(e.to_string()))?;
+    }
+    Ok(())
 }
 
 impl RhoRuntime {
@@ -72,8 +110,51 @@ impl RhoRuntime {
                 .enable_all()
                 .build()?,
         );
-        let charging_space = ChargingRSpace::new(space.clone(), runtime);
-        let reducer = setup_reducer(charging_space, cost.clone(), mergeable_tag_name);
+        let charging_space = ChargingRSpace::new(space.clone(), runtime.clone());
+        let block_data = Rc::new(RefCell::new(BlockData::empty()));
+
+        // Build the dispatcher (empty), then the system processes, then wire them together.
+        let dispatcher = Rc::new(RholangAndScalaDispatcher::new(BTreeMap::new()));
+        let system_processes = SystemProcesses::new(charging_space.clone(), dispatcher.clone(), block_data);
+
+        let mut dispatch_table = BTreeMap::new();
+        let mut urn_map = BTreeMap::new();
+        let mut proc_defs: Vec<(Par, i32, i64)> = Vec::new();
+        for d in system_processes.definitions() {
+            dispatch_table.insert(d.body_ref, d.handler);
+            urn_map.insert(d.urn, write_bundle(d.fixed_channel.clone()));
+            proc_defs.push((d.fixed_channel, d.arity, d.body_ref));
+        }
+        // The registry bootstrap channels (port of `basicProcesses`).
+        urn_map.insert(
+            "rho:registry:lookup".to_string(),
+            write_bundle(FixedChannels::reg_lookup()),
+        );
+        urn_map.insert(
+            "rho:registry:insertArbitrary".to_string(),
+            write_bundle(FixedChannels::reg_insert_random()),
+        );
+        urn_map.insert(
+            "rho:registry:insertSigned:secp256k1".to_string(),
+            write_bundle(FixedChannels::reg_insert_signed()),
+        );
+
+        dispatcher.set_dispatch_table(dispatch_table);
+        install_system_processes(&space, &runtime, &proc_defs)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        let reducer = Rc::new(DebruijnInterpreter::new(
+            charging_space,
+            dispatcher.clone(),
+            urn_map,
+            mergeable_tag_name,
+        ));
+        let reducer_for_eval = reducer.clone();
+        let cost_for_eval = cost.clone();
+        dispatcher.set_eval(Box::new(move |par, env, rand| {
+            reducer_for_eval.eval(par, env, rand, cost_for_eval.as_ref())
+        }));
+
         Ok(RhoRuntime {
             reducer,
             space,

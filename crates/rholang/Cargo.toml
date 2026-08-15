@@ -10,6 +10,7 @@ num-traits = "0.2"
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
 rchain-rspace = { path = "../rspace" }
+rchain-shared = { path = "../shared" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies]

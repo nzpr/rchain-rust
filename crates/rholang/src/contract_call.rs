@@ -10,6 +10,7 @@ use crate::reduce::{Dispatch, Tuplespace};
 /// Unapplies a message sent to a system contract, returning the producer and the message content
 /// (port of `ContractCall`). The producer is separated into [`ContractCall::produce`] plus the
 /// recovered random state, so callers can send a reply without capturing the store.
+#[derive(Clone)]
 pub struct ContractCall<T: Tuplespace, D: Dispatch> {
     space: T,
     dispatcher: D,

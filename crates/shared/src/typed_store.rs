@@ -24,11 +24,11 @@ pub type SharedStore = Arc<tokio::sync::Mutex<Box<dyn KeyValueStore + Send + Syn
 /// A typed key-value store (port of `KeyValueTypedStore[F, K, V]`).
 #[async_trait]
 pub trait KeyValueTypedStore<K, V>: Send + Sync {
-    async fn get(&self, keys: &[K]) -> Vec<Option<V>>;
+    async fn get(&self, keys: &[K]) -> Result<Vec<Option<V>>, String>;
     async fn put(&self, pairs: &[(K, V)]);
     async fn delete(&self, keys: &[K]) -> usize;
     async fn contains(&self, keys: &[K]) -> Vec<bool>;
-    async fn to_map(&self) -> BTreeMap<K, V>;
+    async fn to_map(&self) -> Result<BTreeMap<K, V>, String>;
 }
 
 /// A typed store over a byte store with key/value codecs (port of `KeyValueTypedStoreCodec`).
@@ -54,14 +54,14 @@ where
     K: Clone + Ord + Send + Sync,
     V: Clone + Send + Sync,
 {
-    async fn get(&self, keys: &[K]) -> Vec<Option<V>> {
+    async fn get(&self, keys: &[K]) -> Result<Vec<Option<V>>, String> {
         let encoded: Vec<Vec<u8>> = keys.iter().map(|k| self.k_codec.encode(k)).collect();
         let raw = {
             let store = self.store.lock().await;
             store.get(&encoded)
         };
         raw.into_iter()
-            .map(|opt| opt.map(|bytes| self.v_codec.decode(&bytes).expect("decode value")))
+            .map(|opt| opt.map(|bytes| self.v_codec.decode(&bytes)).transpose())
             .collect()
     }
 
@@ -89,17 +89,16 @@ where
         raw.into_iter().map(|opt| opt.is_some()).collect()
     }
 
-    async fn to_map(&self) -> BTreeMap<K, V> {
+    async fn to_map(&self) -> Result<BTreeMap<K, V>, String> {
         let raw = {
             let store = self.store.lock().await;
             store.entries()
         };
         raw.into_iter()
             .map(|(k, v)| {
-                (
-                    self.k_codec.decode(&k).expect("decode key"),
-                    self.v_codec.decode(&v).expect("decode value"),
-                )
+                let k = self.k_codec.decode(&k)?;
+                let v = self.v_codec.decode(&v)?;
+                Ok((k, v))
             })
             .collect()
     }
@@ -167,10 +166,10 @@ mod tests {
             Arc::new(I64Codec),
         );
         codec.put(&[("a".to_string(), 1), ("b".to_string(), 2)]).await;
-        let vals = codec.get(&["a".to_string(), "b".to_string(), "c".to_string()]).await;
+        let vals = codec.get(&["a".to_string(), "b".to_string(), "c".to_string()]).await.unwrap();
         assert_eq!(vals, vec![Some(1), Some(2), None]);
         assert_eq!(codec.contains(&["a".to_string(), "c".to_string()]).await, vec![true, false]);
         assert_eq!(codec.delete(&["a".to_string(), "c".to_string()]).await, 1);
-        assert_eq!(codec.to_map().await, BTreeMap::from([("b".to_string(), 2)]));
+        assert_eq!(codec.to_map().await.unwrap(), BTreeMap::from([("b".to_string(), 2)]));
     }
 }

@@ -121,9 +121,11 @@ impl RadixTreeImpl {
     }
 
     async fn load_node_from_store(&self, node_ptr: Blake2b256Hash) -> Option<Node> {
+        // `BytesCodec` cannot fail to decode, so the store error is unreachable.
         self.store
             .get(&[node_ptr])
             .await
+            .ok()?
             .into_iter()
             .next()
             .flatten()
@@ -193,7 +195,7 @@ impl RadixTreeImpl {
             .filter(|(_, &p)| p)
             .map(|((k, _), _)| *k)
             .collect();
-        let existing_values = self.store.get(&existing_keys).await;
+        let existing_values = self.store.get(&existing_keys).await?;
         let cache_map: HashMap<Blake2b256Hash, Vec<u8>> = kv_pairs.iter().cloned().collect();
         for (k, existing) in existing_keys.iter().zip(existing_values.iter()) {
             let cached = cache_map
