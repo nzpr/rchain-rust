@@ -12,7 +12,7 @@ use num_bigint::BigInt;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{
     AlwaysEqual, Bundle, EList, ETuple, Expr, GPrivate, GUnforgeable, Match, MatchCase, New, Par,
-    ParMap, Receive, ReceiveBind, Send, Var,
+    ParMap, ParSet, Receive, ReceiveBind, Send, Var,
 };
 use rchain_models::par_ops::{from_expr, par_concat, single_bundle, single_expr, typ};
 use rchain_models::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
@@ -606,6 +606,56 @@ pub fn eval_expr(par: &Par, env: &Env<Par>, cost: &CostAccounting) -> Result<Par
     Ok(result)
 }
 
+fn check_arity(method: &str, expected: usize, actual: usize) -> Result<(), RholangError> {
+    if actual != expected {
+        Err(RholangError::MethodArgumentNumberMismatch {
+            method: method.to_string(),
+            expected: expected as i32,
+            actual: actual as i32,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+fn make_tuple(k: Par, v: Par) -> Par {
+    from_expr(Expr::ETuple(ETuple {
+        ps: vec![k, v],
+        locally_free: AlwaysEqual(vec![]),
+        connective_used: false,
+    }))
+}
+
+fn unapply_tuple2(p: &Par) -> Option<(Par, Par)> {
+    match single_expr(p) {
+        Some(Expr::ETuple(ETuple { ps, .. })) if ps.len() == 2 => {
+            Some((ps[0].clone(), ps[1].clone()))
+        }
+        _ => None,
+    }
+}
+
+fn method_not_defined(method: &str, expr: &Expr) -> RholangError {
+    RholangError::MethodNotDefined {
+        method: method.to_string(),
+        other_type: typ(expr).to_string(),
+    }
+}
+
 fn eval_method(
     method: &str,
     target: &Par,
@@ -615,16 +665,9 @@ fn eval_method(
 ) -> Result<Par, RholangError> {
     match method {
         "nth" => {
-            if args.len() != 1 {
-                return Err(RholangError::MethodArgumentNumberMismatch {
-                    method: "nth".to_string(),
-                    expected: 1,
-                    actual: args.len() as i32,
-                });
-            }
+            check_arity("nth", 1, args.len())?;
             cost.charge(Costs::nth_method_call_cost())?;
-            let nth_raw = eval_to_long(&args[0], env, cost)?;
-            let nth = restrict_to_int(nth_raw)?;
+            let nth = restrict_to_int(eval_to_long(&args[0], env, cost)?)?;
             let v = eval_single_expr(target, env, cost)?;
             match v {
                 Expr::EList(EList { ps, .. }) | Expr::ETuple(ETuple { ps, .. }) => {
@@ -641,19 +684,14 @@ fn eval_method(
                         )))
                     }
                 }
-                _ => Err(RholangError::ReduceError(
-                    "Error: nth applied to something that wasn't a list or tuple.".to_string(),
-                )),
+                other => Err(RholangError::ReduceError(format!(
+                    "Error: nth applied to something that wasn't a list or tuple. ({})",
+                    typ(&other)
+                ))),
             }
         }
         "toInt" => {
-            if !args.is_empty() {
-                return Err(RholangError::MethodArgumentNumberMismatch {
-                    method: "toInt".to_string(),
-                    expected: 0,
-                    actual: args.len() as i32,
-                });
-            }
+            check_arity("toInt", 0, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
             match base {
                 Expr::GInt(v) => Ok(from_expr(Expr::GInt(v))),
@@ -675,20 +713,11 @@ fn eval_method(
                     })?;
                     Ok(from_expr(Expr::GInt(v)))
                 }
-                other => Err(RholangError::MethodNotDefined {
-                    method: "toInt".to_string(),
-                    other_type: typ(&other).to_string(),
-                }),
+                other => Err(method_not_defined("toInt", &other)),
             }
         }
         "toBigInt" => {
-            if !args.is_empty() {
-                return Err(RholangError::MethodArgumentNumberMismatch {
-                    method: "toBigInt".to_string(),
-                    expected: 0,
-                    actual: args.len() as i32,
-                });
-            }
+            check_arity("toBigInt", 0, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
             match base {
                 Expr::GBigInt(v) => Ok(from_expr(Expr::GBigInt(v))),
@@ -705,10 +734,372 @@ fn eval_method(
                     })?;
                     Ok(from_expr(Expr::GBigInt(v)))
                 }
-                other => Err(RholangError::MethodNotDefined {
-                    method: "toBigInt".to_string(),
-                    other_type: typ(&other).to_string(),
-                }),
+                other => Err(method_not_defined("toBigInt", &other)),
+            }
+        }
+        "hexToBytes" => {
+            check_arity("hexToBytes", 0, args.len())?;
+            match eval_single_expr(target, env, cost)? {
+                Expr::GString(s) => {
+                    cost.charge(Costs::hex_to_bytes_cost(&s))?;
+                    let bytes = hex_decode(&s).ok_or_else(|| {
+                        RholangError::ReduceError(
+                            "Error: exception was thrown when decoding input string to hexadecimal"
+                                .to_string(),
+                        )
+                    })?;
+                    Ok(from_expr(Expr::GByteArray(bytes)))
+                }
+                other => Err(method_not_defined("hexToBytes", &other)),
+            }
+        }
+        "bytesToHex" => {
+            check_arity("bytesToHex", 0, args.len())?;
+            match eval_single_expr(target, env, cost)? {
+                Expr::GByteArray(bytes) => {
+                    cost.charge(Costs::bytes_to_hex_cost(&bytes))?;
+                    Ok(from_expr(Expr::GString(hex_encode(&bytes))))
+                }
+                other => Err(method_not_defined("bytesToHex", &other)),
+            }
+        }
+        "toUtf8Bytes" => {
+            check_arity("toUtf8Bytes", 0, args.len())?;
+            match eval_single_expr(target, env, cost)? {
+                Expr::GString(s) => {
+                    cost.charge(Costs::hex_to_bytes_cost(&s))?;
+                    Ok(from_expr(Expr::GByteArray(s.into_bytes())))
+                }
+                other => Err(method_not_defined("toUtf8Bytes", &other)),
+            }
+        }
+        "union" => {
+            check_arity("union", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let other = eval_single_expr(&args[0], env, cost)?;
+            match (&base, &other) {
+                (Expr::ESet(b), Expr::ESet(o)) => {
+                    cost.charge(Costs::union_cost(o.ps.len() as i64))?;
+                    let mut ps = b.ps.clone();
+                    ps.extend(o.ps.clone());
+                    let mut s = par_set(ps);
+                    s.connective_used = b.connective_used || o.connective_used;
+                    s.locally_free =
+                        AlwaysEqual(union_free(b.locally_free.0.clone(), o.locally_free.0.clone()));
+                    s.remainder = None;
+                    Ok(from_expr(Expr::ESet(s)))
+                }
+                (Expr::EMap(b), Expr::EMap(o)) => {
+                    cost.charge(Costs::union_cost(o.kvs.len() as i64))?;
+                    let mut kvs = b.kvs.clone();
+                    kvs.extend(o.kvs.clone());
+                    let mut m = par_map(kvs);
+                    m.connective_used = b.connective_used || o.connective_used;
+                    m.locally_free =
+                        AlwaysEqual(union_free(b.locally_free.0.clone(), o.locally_free.0.clone()));
+                    m.remainder = None;
+                    Ok(from_expr(Expr::EMap(m)))
+                }
+                (o, _) => Err(method_not_defined("union", o)),
+            }
+        }
+        "diff" => {
+            check_arity("diff", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let other = eval_single_expr(&args[0], env, cost)?;
+            match (&base, &other) {
+                (Expr::ESet(b), Expr::ESet(o)) => {
+                    cost.charge(Costs::diff_cost(o.ps.len() as i64))?;
+                    let ps: Vec<Par> = b.ps.iter().filter(|p| !o.ps.contains(p)).cloned().collect();
+                    Ok(from_expr(Expr::ESet(par_set(ps))))
+                }
+                (Expr::EMap(b), Expr::EMap(o)) => {
+                    cost.charge(Costs::diff_cost(o.kvs.len() as i64))?;
+                    let kvs: Vec<(Par, Par)> = b
+                        .kvs
+                        .iter()
+                        .filter(|(k, _)| !o.kvs.iter().any(|(ok, _)| ok == k))
+                        .cloned()
+                        .collect();
+                    Ok(from_expr(Expr::EMap(par_map(kvs))))
+                }
+                (o, _) => Err(method_not_defined("diff", o)),
+            }
+        }
+        "add" => {
+            check_arity("add", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let element = eval_expr(&args[0], env, cost)?;
+            cost.charge(Costs::add_cost())?;
+            match base {
+                Expr::ESet(b) => {
+                    let element_conn = element.connective_used;
+                    let element_lf = element.locally_free.0.clone();
+                    let mut ps = b.ps.clone();
+                    ps.push(element);
+                    let mut s = par_set(ps);
+                    s.connective_used = b.connective_used || element_conn;
+                    s.locally_free =
+                        AlwaysEqual(union_free(b.locally_free.0.clone(), element_lf));
+                    s.remainder = None;
+                    Ok(from_expr(Expr::ESet(s)))
+                }
+                other => Err(method_not_defined("add", &other)),
+            }
+        }
+        "delete" => {
+            check_arity("delete", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let element = eval_expr(&args[0], env, cost)?;
+            cost.charge(Costs::remove_cost())?;
+            match base {
+                Expr::ESet(b) => {
+                    let ps: Vec<Par> = b.ps.iter().filter(|p| *p != &element).cloned().collect();
+                    Ok(from_expr(Expr::ESet(par_set(ps))))
+                }
+                Expr::EMap(b) => {
+                    let kvs: Vec<(Par, Par)> = b
+                        .kvs
+                        .iter()
+                        .filter(|(k, _)| k != &element)
+                        .cloned()
+                        .collect();
+                    Ok(from_expr(Expr::EMap(par_map(kvs))))
+                }
+                other => Err(method_not_defined("delete", &other)),
+            }
+        }
+        "contains" => {
+            check_arity("contains", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let element = eval_expr(&args[0], env, cost)?;
+            cost.charge(Costs::lookup_cost())?;
+            match base {
+                Expr::ESet(b) => Ok(from_expr(Expr::GBool(b.ps.contains(&element)))),
+                Expr::EMap(b) => Ok(from_expr(Expr::GBool(
+                    b.kvs.iter().any(|(k, _)| k == &element),
+                ))),
+                other => Err(method_not_defined("contains", &other)),
+            }
+        }
+        "get" => {
+            check_arity("get", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let key = eval_expr(&args[0], env, cost)?;
+            cost.charge(Costs::lookup_cost())?;
+            match base {
+                Expr::EMap(b) => Ok(b
+                    .kvs
+                    .iter()
+                    .find(|(k, _)| k == &key)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default()),
+                other => Err(method_not_defined("get", &other)),
+            }
+        }
+        "getOrElse" => {
+            check_arity("getOrElse", 2, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let key = eval_expr(&args[0], env, cost)?;
+            let default = eval_expr(&args[1], env, cost)?;
+            cost.charge(Costs::lookup_cost())?;
+            match base {
+                Expr::EMap(b) => Ok(b
+                    .kvs
+                    .iter()
+                    .find(|(k, _)| k == &key)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or(default)),
+                other => Err(method_not_defined("getOrElse", &other)),
+            }
+        }
+        "set" => {
+            check_arity("set", 2, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let key = eval_expr(&args[0], env, cost)?;
+            let value = eval_expr(&args[1], env, cost)?;
+            cost.charge(Costs::add_cost())?;
+            match base {
+                Expr::EMap(b) => {
+                    let mut kvs = b.kvs.clone();
+                    if let Some(slot) = kvs.iter_mut().find(|(k, _)| k == &key) {
+                        slot.1 = value;
+                    } else {
+                        kvs.push((key, value));
+                    }
+                    Ok(from_expr(Expr::EMap(par_map(kvs))))
+                }
+                other => Err(method_not_defined("set", &other)),
+            }
+        }
+        "keys" => {
+            check_arity("keys", 0, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            cost.charge(Costs::keys_method_cost())?;
+            match base {
+                Expr::EMap(b) => {
+                    let keys: Vec<Par> = b.kvs.iter().map(|(k, _)| k.clone()).collect();
+                    Ok(from_expr(Expr::ESet(par_set(keys))))
+                }
+                other => Err(method_not_defined("keys", &other)),
+            }
+        }
+        "size" => {
+            check_arity("size", 0, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let size = match &base {
+                Expr::EMap(b) => b.kvs.len(),
+                Expr::ESet(b) => b.ps.len(),
+                other => return Err(method_not_defined("size", other)),
+            };
+            cost.charge(Costs::size_method_cost(size as i64))?;
+            Ok(from_expr(Expr::GInt(size as i64)))
+        }
+        "length" => {
+            check_arity("length", 0, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            cost.charge(Costs::length_method_cost())?;
+            let n = match &base {
+                Expr::GString(s) => s.len(),
+                Expr::GByteArray(b) => b.len(),
+                Expr::EList(EList { ps, .. }) => ps.len(),
+                other => return Err(method_not_defined("length", other)),
+            };
+            Ok(from_expr(Expr::GInt(n as i64)))
+        }
+        "slice" => {
+            check_arity("slice", 2, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let from = restrict_to_int(eval_to_long(&args[0], env, cost)?)?;
+            let until = restrict_to_int(eval_to_long(&args[1], env, cost)?)?;
+            cost.charge(Costs::slice_cost(until as i64))?;
+            match base {
+                Expr::GString(s) => Ok(from_expr(Expr::GString(
+                    s.chars().skip(from).take(until - from).collect(),
+                ))),
+                Expr::GByteArray(b) => Ok(from_expr(Expr::GByteArray(
+                    b.into_iter().skip(from).take(until - from).collect(),
+                ))),
+                Expr::EList(EList { ps, locally_free, connective_used, remainder }) => {
+                    Ok(from_expr(Expr::EList(EList {
+                        ps: ps.into_iter().skip(from).take(until - from).collect(),
+                        locally_free,
+                        connective_used,
+                        remainder,
+                    })))
+                }
+                other => Err(method_not_defined("slice", &other)),
+            }
+        }
+        "take" => {
+            check_arity("take", 1, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            let n = restrict_to_int(eval_to_long(&args[0], env, cost)?)?;
+            cost.charge(Costs::take_cost(n as i64))?;
+            match base {
+                Expr::EList(EList { ps, locally_free, connective_used, remainder }) => {
+                    Ok(from_expr(Expr::EList(EList {
+                        ps: ps.into_iter().take(n).collect(),
+                        locally_free,
+                        connective_used,
+                        remainder,
+                    })))
+                }
+                other => Err(method_not_defined("take", &other)),
+            }
+        }
+        "toList" => {
+            check_arity("toList", 0, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            match base {
+                Expr::EList(_) => Ok(target.clone()),
+                Expr::ETuple(_) => Ok(target.clone()),
+                Expr::ESet(b) => {
+                    cost.charge(Costs::to_list_cost(b.ps.len() as i64))?;
+                    Ok(from_expr(Expr::EList(EList {
+                        ps: b.ps,
+                        locally_free: AlwaysEqual(vec![]),
+                        connective_used: false,
+                        ..Default::default()
+                    })))
+                }
+                Expr::EMap(b) => {
+                    cost.charge(Costs::to_list_cost(b.kvs.len() as i64))?;
+                    let ps: Vec<Par> = b
+                        .kvs
+                        .iter()
+                        .map(|(k, v)| make_tuple(k.clone(), v.clone()))
+                        .collect();
+                    Ok(from_expr(Expr::EList(EList {
+                        ps,
+                        locally_free: AlwaysEqual(vec![]),
+                        connective_used: false,
+                        ..Default::default()
+                    })))
+                }
+                other => Err(method_not_defined("toList", &other)),
+            }
+        }
+        "toSet" => {
+            check_arity("toSet", 0, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            match base {
+                Expr::ESet(_) => Ok(target.clone()),
+                Expr::EMap(b) => {
+                    let ps: Vec<Par> = b
+                        .kvs
+                        .iter()
+                        .map(|(k, v)| make_tuple(k.clone(), v.clone()))
+                        .collect();
+                    Ok(from_expr(Expr::ESet(par_set(ps))))
+                }
+                Expr::EList(EList { ps, connective_used, remainder, .. }) => {
+                    Ok(from_expr(Expr::ESet(ParSet {
+                        ps: par_set(ps).ps,
+                        connective_used,
+                        locally_free: AlwaysEqual(vec![]),
+                        remainder,
+                    })))
+                }
+                other => Err(method_not_defined("toSet", &other)),
+            }
+        }
+        "toMap" => {
+            check_arity("toMap", 0, args.len())?;
+            let base = eval_single_expr(target, env, cost)?;
+            match base {
+                Expr::EMap(_) => Ok(target.clone()),
+                Expr::ESet(b) => {
+                    let mut kvs = Vec::new();
+                    for p in b.ps {
+                        match unapply_tuple2(&p) {
+                            Some(kv) => kvs.push(kv),
+                            None => {
+                                return Err(method_not_defined(
+                                    "toMap",
+                                    &Expr::ESet(ParSet::default()),
+                                ))
+                            }
+                        }
+                    }
+                    Ok(from_expr(Expr::EMap(par_map(kvs))))
+                }
+                Expr::EList(EList { ps, .. }) => {
+                    let mut kvs = Vec::new();
+                    for p in ps {
+                        match unapply_tuple2(&p) {
+                            Some(kv) => kvs.push(kv),
+                            None => {
+                                return Err(method_not_defined(
+                                    "toMap",
+                                    &Expr::EList(EList::default()),
+                                ))
+                            }
+                        }
+                    }
+                    Ok(from_expr(Expr::EMap(par_map(kvs))))
+                }
+                other => Err(method_not_defined("toMap", &other)),
             }
         }
         _ => Err(RholangError::ReduceError(format!(
@@ -1277,5 +1668,34 @@ mod tests {
         assert_eq!(produced[0].0.exprs, vec![Expr::GInt(1)]);
         assert_eq!(produced[0].1.pars, vec![from_expr(Expr::GInt(2))]);
         assert!(!produced[0].2);
+    }
+
+    #[test]
+    fn byte_methods_round_trip() {
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let e = Env::new();
+        let target = from_expr(Expr::GString("ab".to_string()));
+        let bytes = eval_method("toUtf8Bytes", &target, &[], &e, &cost).unwrap();
+        let hex = eval_method("bytesToHex", &bytes, &[], &e, &cost).unwrap();
+        assert_eq!(hex, from_expr(Expr::GString("6162".to_string())));
+    }
+
+    #[test]
+    fn set_union() {
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let e = Env::new();
+        let s1 = from_expr(Expr::ESet(par_set(vec![
+            from_expr(Expr::GInt(1)),
+            from_expr(Expr::GInt(2)),
+        ])));
+        let s2 = from_expr(Expr::ESet(par_set(vec![
+            from_expr(Expr::GInt(2)),
+            from_expr(Expr::GInt(3)),
+        ])));
+        let result = eval_method("union", &s1, &[s2], &e, &cost).unwrap();
+        match single_expr(&result).unwrap() {
+            Expr::ESet(set) => assert_eq!(set.ps.len(), 3),
+            _ => panic!("expected a set"),
+        }
     }
 }
