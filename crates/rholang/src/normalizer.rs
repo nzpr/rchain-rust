@@ -14,7 +14,7 @@ use crate::compiler::{
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
-    BoolLiteral, Ground, Name, Proc, ProcVar, SimpleType, VarRefKind,
+    BoolLiteral, Ground, Name, NameRemainder, Proc, ProcRemainder, ProcVar, SimpleType, VarRefKind,
 };
 
 fn pos() -> SourcePosition {
@@ -185,7 +185,7 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
         Proc::PLte(l, r) => binary_exp(l, r, input, Expr::ELte),
         Proc::PGt(l, r) => binary_exp(l, r, input, Expr::EGt),
         Proc::PGte(l, r) => binary_exp(l, r, input, Expr::EGte),
-        Proc::PMatches(l, r) => binary_exp(l, r, input, Expr::EMatches),
+        Proc::PMatches(l, r) => normalize_pmatches(l, r, input),
         Proc::PEq(l, r) => binary_exp(l, r, input, Expr::EEq),
         Proc::PNeq(l, r) => binary_exp(l, r, input, Expr::ENeq),
         Proc::PAnd(l, r) => binary_exp(l, r, input, Expr::EAnd),
@@ -464,6 +464,83 @@ fn binary_exp(
         ),
         free_map: right.free_map,
     })
+}
+
+/// Normalize a `matches` expression: the pattern's free variables are discarded (port of
+/// `PMatchesNormalizer`).
+fn normalize_pmatches(
+    l: &Proc,
+    r: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let bound_map_chain = input.bound_map_chain.clone();
+    let left = normalize_proc(
+        l,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: bound_map_chain.clone(),
+            free_map: input.free_map.clone(),
+        },
+    )?;
+    let right = normalize_proc(
+        r,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: bound_map_chain.push(),
+            free_map: FreeMap::empty(),
+        },
+    )?;
+    Ok(ProcVisitOutputs {
+        par: prepend_expr(
+            &input.par,
+            Expr::EMatches(Box::new(left.par), Box::new(right.par)),
+            input.bound_map_chain.depth(),
+        ),
+        free_map: left.free_map,
+    })
+}
+
+/// Handle a remainder proc-var (port of `RemainderNormalizeMatcher.handleProcVar`).
+fn handle_proc_var(
+    pv: &ProcVar,
+    known_free: FreeMap<VarSort>,
+) -> Result<(Option<Var>, FreeMap<VarSort>), RholangError> {
+    match pv {
+        ProcVar::ProcVarWildcard => Ok((Some(Var::Wildcard), known_free.add_wildcard(pos()))),
+        ProcVar::ProcVarVar(var) => match known_free.get(var) {
+            None => {
+                let free_map = known_free.put(&(var.clone(), VarSort::ProcSort, pos()));
+                Ok((Some(Var::FreeVar(known_free.next_level())), free_map))
+            }
+            Some(fc) => Err(RholangError::UnexpectedReuseOfProcContextFree {
+                var_name: var.clone(),
+                first_use: fc.source_position,
+                second_use: pos(),
+            }),
+        },
+    }
+}
+
+/// Normalize a proc remainder (port of `RemainderNormalizeMatcher.normalizeMatchProc`).
+pub fn normalize_remainder_proc(
+    r: &ProcRemainder,
+    known_free: FreeMap<VarSort>,
+) -> Result<(Option<Var>, FreeMap<VarSort>), RholangError> {
+    match r {
+        ProcRemainder::ProcRemainderEmpty => Ok((None, known_free)),
+        ProcRemainder::ProcRemainderVar(pv) => handle_proc_var(pv, known_free),
+    }
+}
+
+/// Normalize a name remainder (port of `RemainderNormalizeMatcher.normalizeMatchName`).
+pub fn normalize_remainder_name(
+    r: &NameRemainder,
+    known_free: FreeMap<VarSort>,
+) -> Result<(Option<Var>, FreeMap<VarSort>), RholangError> {
+    match r {
+        NameRemainder::NameRemainderEmpty => Ok((None, known_free)),
+        NameRemainder::NameRemainderVar(pv) => handle_proc_var(pv, known_free),
+    }
 }
 
 #[cfg(test)]
