@@ -207,6 +207,28 @@ impl RhoRuntime {
         self.space.get_waiting_continuations(channels).await
     }
 
+    /// Read all `Par`s at a channel (port of `getDataPar`).
+    pub async fn get_data_par(&self, channel: &Par) -> Result<Vec<Par>, RSpaceError> {
+        let data = self.space.get_data(channel).await?;
+        Ok(data.into_iter().flat_map(|d| d.a.pars).collect())
+    }
+
+    /// Read the waiting `ParBody` continuations as `(patterns, body)` (port of
+    /// `getContinuationPar`).
+    pub async fn get_continuation_par(
+        &self,
+        channels: &[Par],
+    ) -> Result<Vec<(Vec<BindPattern>, Par)>, RSpaceError> {
+        let conts = self.space.get_waiting_continuations(channels).await?;
+        Ok(conts
+            .into_iter()
+            .filter_map(|wc| match wc.continuation {
+                TaggedContinuation::ParBody(pwr) => Some((wc.patterns, pwr.body)),
+                _ => None,
+            })
+            .collect())
+    }
+
     /// Consume the result at a channel with a pattern (port of `consumeResult`).
     pub async fn consume_result(
         &self,
