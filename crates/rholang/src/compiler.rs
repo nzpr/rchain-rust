@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use rchain_models::ast::Connective;
+use rchain_models::ast::{Connective, Expr, Par};
 
 use crate::errors::SourcePosition;
 
@@ -257,6 +257,56 @@ impl<T: Clone> FreeMap<T> {
     pub fn count_no_wildcards(&self) -> i32 {
         self.next_level
     }
+}
+
+/// The sort of a name/process variable (port of `VarSort`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum VarSort {
+    ProcSort,
+    NameSort,
+}
+
+/// Input data to the process normalizer (port of `ProcVisitInputs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcVisitInputs {
+    pub par: Par,
+    pub bound_map_chain: BoundMapChain<VarSort>,
+    pub free_map: FreeMap<VarSort>,
+}
+
+/// Output of the process normalizer (port of `ProcVisitOutputs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcVisitOutputs {
+    pub par: Par,
+    pub free_map: FreeMap<VarSort>,
+}
+
+/// Input data to the name normalizer (port of `NameVisitInputs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameVisitInputs {
+    pub bound_map_chain: BoundMapChain<VarSort>,
+    pub free_map: FreeMap<VarSort>,
+}
+
+/// Output of the name normalizer (port of `NameVisitOutputs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameVisitOutputs {
+    pub par: Par,
+    pub free_map: FreeMap<VarSort>,
+}
+
+/// Input data to the collection normalizer (port of `CollectVisitInputs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectVisitInputs {
+    pub bound_map_chain: BoundMapChain<VarSort>,
+    pub free_map: FreeMap<VarSort>,
+}
+
+/// Output of the collection normalizer (port of `CollectVisitOutputs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectVisitOutputs {
+    pub expr: Expr,
+    pub free_map: FreeMap<VarSort>,
 }
 
 #[cfg(test)]
