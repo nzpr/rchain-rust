@@ -6,7 +6,8 @@
 //! - `bool(8)` = a single byte (`0x01`/`0x00`); `bool` (1 bit) and `uint2` (2 bits) are bit-packed
 //!   MSB-first via [`BitWriter`]/[`BitReader`].
 //!
-//! NOTE: the exact scodec bit/value conventions are pending differential testing against Scala.
+//! The bit/value conventions are pinned by the differential tests in `testdata/differential/
+//! scodec.tsv` (Scala ground truth).
 
 use rchain_shared::serialize::Serialize;
 
@@ -81,9 +82,9 @@ impl BitWriter {
     }
 
     pub fn write_bytes(&mut self, data: &[u8]) {
-        assert_eq!(self.bit_len % 8, 0, "must be byte-aligned");
-        self.bytes.extend_from_slice(data);
-        self.bit_len += data.len() * 8;
+        for &b in data {
+            self.write_bits(b as u64, 8);
+        }
     }
 
     pub fn finish(self) -> Vec<u8> {
@@ -124,13 +125,6 @@ impl<'a> BitReader<'a> {
         }
         out
     }
-
-    pub fn read_bytes_aligned(&mut self, n: usize) -> Vec<u8> {
-        assert_eq!(self.bit_pos % 8, 0, "must be byte-aligned");
-        let start = self.bit_pos / 8;
-        self.bit_pos += n * 8;
-        self.bytes[start..start + n].to_vec()
-    }
 }
 
 fn write_size_head(w: &mut BitWriter, bytes: &[u8]) {
@@ -140,7 +134,7 @@ fn write_size_head(w: &mut BitWriter, bytes: &[u8]) {
 
 fn read_size_head(r: &mut BitReader) -> Vec<u8> {
     let len = r.read_bits(64) as usize;
-    r.read_bytes_aligned(len)
+    r.read_bytes_bits(len)
 }
 
 fn encode_produce(w: &mut BitWriter, produce: &Produce) {
@@ -190,10 +184,10 @@ where
 
 fn read_produce(r: &mut BitReader) -> Produce {
     let channels_hash = rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(
-        &r.read_bytes_aligned(32),
+        &r.read_bytes_bits(32),
     );
     let hash = rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(
-        &r.read_bytes_aligned(32),
+        &r.read_bytes_bits(32),
     );
     let persistent = r.read_bit() != 0;
     Produce::from_hash(channels_hash, hash, persistent)
@@ -205,12 +199,12 @@ fn read_consume(r: &mut BitReader) -> Consume {
     for _ in 0..count {
         channels_hashes.push(
             rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(
-                &r.read_bytes_aligned(32),
+                &r.read_bytes_bits(32),
             ),
         );
     }
     let hash = rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(
-        &r.read_bytes_aligned(32),
+        &r.read_bytes_bits(32),
     );
     let persistent = r.read_bit() != 0;
     Consume::from_hash(channels_hashes, hash, persistent)
@@ -404,4 +398,146 @@ pub struct WaitingContinuationB<P, K> {
 pub struct JoinsB<C> {
     pub decoded: Vec<C>,
     pub raw: Vec<u8>,
+}
+
+/// Differential tests against the Scala `ScodecSerialize` codecs. Golden vectors are captured in
+/// `testdata/differential/scodec.tsv`. Both the byte-aligned codecs and the bit-packed
+/// `encode_datums`/`encode_continuations` (scodec `bool`/`uint2` at bit granularity) are covered.
+#[cfg(test)]
+mod differential {
+    use super::*;
+    use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+    use rchain_shared::base16;
+    use rchain_shared::serialize::Serialize;
+    use std::collections::BTreeSet;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct ByteChannel(Vec<u8>);
+    impl Serialize<ByteChannel> for ByteChannel {
+        fn encode(a: &ByteChannel) -> Vec<u8> {
+            a.0.clone()
+        }
+        fn decode(bytes: &[u8]) -> Result<ByteChannel, String> {
+            Ok(ByteChannel(bytes.to_vec()))
+        }
+    }
+
+    fn load(case: &str) -> String {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/testdata/differential/scodec.tsv"
+        );
+        let data = std::fs::read_to_string(path).unwrap();
+        for line in data.lines() {
+            if let Some((id, hex)) = line.split_once('\t') {
+                if id == case {
+                    return hex.to_string();
+                }
+            }
+        }
+        panic!("missing differential case: {case}");
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        base16::encode(bytes)
+    }
+
+    #[test]
+    fn differential_size_head_and_bool() {
+        assert_eq!(hex(&size_head(&[0x01, 0x02])), load("size_head_0102"));
+        assert_eq!(hex(&size_head(&[])), load("size_head_empty"));
+        assert_eq!(hex(&bool8(true)), load("bool8_true"));
+        assert_eq!(hex(&bool8(false)), load("bool8_false"));
+    }
+
+    #[test]
+    fn differential_seq_byte_vectors() {
+        assert_eq!(
+            hex(&encode_seq_byte_vectors(&[vec![0x01], vec![0x02, 0x03]])),
+            load("seq_bv_2")
+        );
+        assert_eq!(hex(&encode_seq_byte_vectors(&[])), load("seq_bv_0"));
+    }
+
+    #[test]
+    fn differential_binary_variants_sort() {
+        let unsorted = [vec![0x02], vec![0x01]];
+        assert_eq!(
+            hex(&encode_datums_binary(&unsorted)),
+            load("datums_binary_unsorted")
+        );
+        assert_eq!(
+            hex(&encode_continuations_binary(&unsorted)),
+            load("cont_binary_unsorted")
+        );
+        assert_eq!(
+            hex(&encode_joins_binary(&unsorted)),
+            load("joins_binary_unsorted")
+        );
+    }
+
+    #[test]
+    fn differential_joins() {
+        let joins = vec![
+            vec![ByteChannel(vec![0x02]), ByteChannel(vec![0x01])],
+            vec![ByteChannel(vec![0x03])],
+        ];
+        assert_eq!(hex(&encode_joins(&joins)), load("joins_nested"));
+    }
+
+    fn h32(v: u8) -> Blake2b256Hash {
+        Blake2b256Hash::from_bytes([v; 32])
+    }
+
+    #[test]
+    fn differential_datums_round_trip_and_match_scala() {
+        let datum = Datum {
+            a: ByteChannel(vec![]),
+            persist: false,
+            source: Produce::from_hash(h32(0xaa), h32(0xbb), false),
+        };
+        let bytes = encode_datums(&[datum.clone()]);
+        assert_eq!(hex(&bytes), load("datum_1"));
+        assert_eq!(decode_datums::<ByteChannel>(&bytes).unwrap(), vec![datum]);
+
+        let datum = Datum {
+            a: ByteChannel(vec![0x01, 0x02]),
+            persist: true,
+            source: Produce::from_hash(h32(0xcc), h32(0xdd), true),
+        };
+        let bytes = encode_datums(&[datum.clone()]);
+        assert_eq!(hex(&bytes), load("datum_2"));
+        assert_eq!(decode_datums::<ByteChannel>(&bytes).unwrap(), vec![datum]);
+    }
+
+    #[test]
+    fn differential_continuations_round_trip_and_match_scala() {
+        let wc = WaitingContinuation {
+            patterns: vec![ByteChannel(vec![0x03])],
+            continuation: ByteChannel(vec![0x04]),
+            persist: false,
+            peeks: BTreeSet::new(),
+            source: Consume::from_hash(vec![h32(0xee)], h32(0xff), false),
+        };
+        let bytes = encode_continuations(&[wc.clone()]);
+        assert_eq!(hex(&bytes), load("cont_1"));
+        assert_eq!(
+            decode_continuations::<ByteChannel, ByteChannel>(&bytes).unwrap(),
+            vec![wc]
+        );
+
+        let wc = WaitingContinuation {
+            patterns: vec![ByteChannel(vec![0x03]), ByteChannel(vec![0x04])],
+            continuation: ByteChannel(vec![0x05]),
+            persist: true,
+            peeks: [0usize, 2usize].into_iter().collect(),
+            source: Consume::from_hash(vec![h32(0xee), h32(0xdd)], h32(0xff), true),
+        };
+        let bytes = encode_continuations(&[wc.clone()]);
+        assert_eq!(hex(&bytes), load("cont_2"));
+        assert_eq!(
+            decode_continuations::<ByteChannel, ByteChannel>(&bytes).unwrap(),
+            vec![wc]
+        );
+    }
 }
