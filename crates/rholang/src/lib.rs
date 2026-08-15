@@ -5,5 +5,6 @@
 //! gas accounting, and the pure eval surface of `Reduce`) over a minimal in-memory `Tuplespace`.
 //! The parser/normalizer and runtime glue are deferred.
 
+pub mod accounting;
 pub mod env;
 pub mod errors;
