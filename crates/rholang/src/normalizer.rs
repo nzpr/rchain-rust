@@ -4,17 +4,23 @@
 //! These fold the concrete `Proc` AST into the de Bruijn `Par`. Source positions are placeholders
 //! until the lexer is ported; the structural processes (`PSend`/`PNew`/`PInput`/…) are deferred.
 
+use std::collections::BTreeSet;
+
 use num_bigint::BigInt;
 
-use rchain_models::ast::{Connective, ConnectiveBody, Expr, Par, Var, VarRef};
-use rchain_models::par_ops::{par_concat, prepend_connective, prepend_expr, single_connective};
+use rchain_models::ast::{AlwaysEqual, Connective, ConnectiveBody, Expr, Match, MatchCase, Par, Send, Var, VarRef};
+use rchain_models::par_ops::{
+    from_expr, par_concat, prepend_connective, prepend_expr, prepend_match, prepend_send,
+    single_connective,
+};
 
 use crate::compiler::{
     FreeMap, NameVisitInputs, NameVisitOutputs, ProcVisitInputs, ProcVisitOutputs, VarSort,
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
-    BoolLiteral, Ground, Name, NameRemainder, Proc, ProcRemainder, ProcVar, SimpleType, VarRefKind,
+    BoolLiteral, Ground, Name, NameRemainder, Proc, ProcRemainder, ProcVar, Send as SendKind,
+    SimpleType, VarRefKind,
 };
 
 fn pos() -> SourcePosition {
@@ -196,6 +202,10 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
         Proc::PConjunction(l, r) => normalize_conjunction(l, r, input),
         Proc::PDisjunction(l, r) => normalize_disjunction(l, r, input),
         Proc::PSimpleType(t) => normalize_simple_type(t, input),
+        Proc::PSend(name, send, data) => normalize_send(name, send, data, input),
+        Proc::PMethod(target, method, args) => normalize_method(target, method, args, input),
+        Proc::PIf(cond, body) => normalize_if(cond, body, &Proc::PNil, input),
+        Proc::PIfElse(cond, t, f) => normalize_if(cond, t, f, input),
         _ => Err(defer("process")),
     }
 }
@@ -541,6 +551,167 @@ pub fn normalize_remainder_name(
         NameRemainder::NameRemainderEmpty => Ok((None, known_free)),
         NameRemainder::NameRemainderVar(pv) => handle_proc_var(pv, known_free),
     }
+}
+
+fn union_free(a: &[i32], b: &[i32]) -> Vec<i32> {
+    let mut set: BTreeSet<i32> = a.iter().copied().collect();
+    set.extend(b.iter().copied());
+    set.into_iter().collect()
+}
+
+/// Normalize a send (port of `PSendNormalizer.normalize`).
+fn normalize_send(
+    name: &Name,
+    send: &SendKind,
+    data: &[Proc],
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let name_result = normalize_name(
+        name,
+        NameVisitInputs {
+            bound_map_chain: input.bound_map_chain.clone(),
+            free_map: input.free_map.clone(),
+        },
+    )?;
+
+    let mut data_pars: Vec<Par> = Vec::new();
+    let mut data_locally_free: Vec<i32> = Vec::new();
+    let mut data_connective_used = false;
+    let mut free_map = name_result.free_map.clone();
+    for e in data.iter().rev() {
+        let result = normalize_proc(
+            e,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map,
+            },
+        )?;
+        data_pars.insert(0, result.par.clone());
+        data_locally_free = union_free(&data_locally_free, &result.par.locally_free.0);
+        data_connective_used = data_connective_used || result.par.connective_used;
+        free_map = result.free_map;
+    }
+
+    let persistent = matches!(send, SendKind::SendMultiple);
+    let s = Send {
+        chan: Box::new(name_result.par.clone()),
+        data: data_pars,
+        persistent,
+        locally_free: AlwaysEqual(union_free(
+            &name_result.par.locally_free.0,
+            &data_locally_free,
+        )),
+        connective_used: name_result.par.connective_used || data_connective_used,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_send(&input.par, s),
+        free_map,
+    })
+}
+
+/// Normalize a method call (port of `PMethodNormalizer.normalize`).
+fn normalize_method(
+    target_proc: &Proc,
+    method: &str,
+    args: &[Proc],
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let target_result = normalize_proc(
+        target_proc,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: input.bound_map_chain.clone(),
+            free_map: input.free_map.clone(),
+        },
+    )?;
+    let target = target_result.par.clone();
+
+    let mut arg_pars: Vec<Par> = Vec::new();
+    let mut arg_locally_free: Vec<i32> = Vec::new();
+    let mut arg_connective_used = false;
+    let mut free_map = target_result.free_map.clone();
+    for e in args.iter().rev() {
+        let result = normalize_proc(
+            e,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map,
+            },
+        )?;
+        arg_pars.insert(0, result.par.clone());
+        arg_locally_free = union_free(&arg_locally_free, &result.par.locally_free.0);
+        arg_connective_used = arg_connective_used || result.par.connective_used;
+        free_map = result.free_map;
+    }
+
+    let expr = Expr::EMethod(rchain_models::ast::EMethod {
+        method_name: method.to_string(),
+        target: Box::new(target.clone()),
+        arguments: arg_pars,
+        locally_free: AlwaysEqual(union_free(&target.locally_free.0, &arg_locally_free)),
+        connective_used: target.connective_used || arg_connective_used,
+    });
+    Ok(ProcVisitOutputs {
+        par: prepend_expr(&input.par, expr, input.bound_map_chain.depth()),
+        free_map,
+    })
+}
+
+/// Normalize an `if`/`if-else` by desugaring to a `match` (port of `PIfNormalizer.normalize`).
+fn normalize_if(
+    value: &Proc,
+    true_body: &Proc,
+    false_body: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let input_par = input.par.clone();
+    let bound_map_chain = input.bound_map_chain.clone();
+    let target = normalize_proc(value, input)?;
+    let true_result = normalize_proc(
+        true_body,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: bound_map_chain.clone(),
+            free_map: target.free_map.clone(),
+        },
+    )?;
+    let false_result = normalize_proc(
+        false_body,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain,
+            free_map: true_result.free_map.clone(),
+        },
+    )?;
+
+    let m = Match {
+        target: Box::new(target.par.clone()),
+        cases: vec![
+            MatchCase {
+                pattern: Box::new(from_expr(Expr::GBool(true))),
+                source: Box::new(true_result.par.clone()),
+                free_count: 0,
+            },
+            MatchCase {
+                pattern: Box::new(from_expr(Expr::GBool(false))),
+                source: Box::new(false_result.par.clone()),
+                free_count: 0,
+            },
+        ],
+        locally_free: AlwaysEqual(union_free(
+            &union_free(&target.par.locally_free.0, &true_result.par.locally_free.0),
+            &false_result.par.locally_free.0,
+        )),
+        connective_used: target.par.connective_used
+            || true_result.par.connective_used
+            || false_result.par.connective_used,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_match(&input_par, m),
+        free_map: false_result.free_map,
+    })
 }
 
 #[cfg(test)]
