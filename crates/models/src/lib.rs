@@ -25,3 +25,4 @@ pub mod runtime;
 pub mod sorter;
 pub mod types;
 pub mod validator;
+pub mod wire;

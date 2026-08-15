@@ -16,3 +16,8 @@ pub(crate) mod casper {
     #![allow(dead_code)] // not all generated wire types are used until casper/comm land
     include!(concat!(env!("OUT_DIR"), "/casper.rs"));
 }
+
+pub(crate) mod rholang {
+    #![allow(dead_code)] // wire types for the rholang AST, bridged by crate::wire
+    include!(concat!(env!("OUT_DIR"), "/rholang.rs"));
+}
