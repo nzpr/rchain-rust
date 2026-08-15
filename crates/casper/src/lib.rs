@@ -4,4 +4,5 @@
 //! monotonicity, block numbering/content-addressing, merge determinism, height-map contiguity).
 
 pub mod block_status;
+pub mod merging;
 pub mod proto_util;

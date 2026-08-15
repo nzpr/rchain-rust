@@ -8,3 +8,4 @@ description = "Faithful Rust port of the RChain casper module (CBC-Casper consen
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
 rchain-block-storage = { path = "../block-storage" }
+rchain-rspace = { path = "../rspace" }
