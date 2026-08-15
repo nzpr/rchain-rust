@@ -1,0 +1,135 @@
+//! Block proto utilities (port of `util/ProtoUtil.scala`) — Law 16 content addressing.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::block_hash::BlockHash;
+use rchain_models::block_metadata::BlockMetadata;
+use rchain_models::casper::protocol::casper_message::{BlockMessage, RholangState};
+use rchain_models::validator::Validator;
+
+/// The maximum block number among the given metadata, or `-1` if empty (port of
+/// `maxBlockNumberMetadata`).
+pub fn max_block_number_metadata(blocks: &[BlockMetadata]) -> i64 {
+    blocks.iter().fold(-1, |acc, b| acc.max(b.block_num))
+}
+
+/// Create the hash of a `BlockMessage`; all fields except `sig` are included (port of `hashBlock`).
+///
+/// `block_hash` and `sig` are cleared before hashing. The Scala clears them to an *empty*
+/// `ByteString`; the fixed-width Rust `BlockHash` maps that to a zero-filled 32-byte value.
+pub fn hash_block(block: &BlockMessage) -> BlockHash {
+    let mut cleared = block.clone();
+    cleared.block_hash = BlockHash::new([0u8; 32]);
+    cleared.sig = Vec::new();
+    let bytes = cleared.to_bytes();
+    BlockHash::from_slice(Blake2b256Hash::create(&bytes).as_bytes())
+}
+
+/// Build an unsigned block, filling in its content-addressed hash (port of `unsignedBlockProto`).
+#[allow(clippy::too_many_arguments)]
+pub fn unsigned_block_proto(
+    version: i32,
+    shard_id: String,
+    block_number: i64,
+    sender: Validator,
+    seq_num: i64,
+    pre_state_hash: Vec<u8>,
+    post_state_hash: Vec<u8>,
+    justifications: Vec<BlockHash>,
+    bonds: BTreeMap<Validator, i64>,
+    rejected_deploys: BTreeSet<Vec<u8>>,
+    state: RholangState,
+) -> BlockMessage {
+    let block = BlockMessage {
+        version,
+        shard_id,
+        block_hash: BlockHash::new([0u8; 32]),
+        block_number,
+        sender,
+        seq_num,
+        pre_state_hash,
+        post_state_hash,
+        justifications,
+        bonds,
+        rejected_deploys,
+        rejected_blocks: BTreeSet::new(),
+        rejected_senders: BTreeSet::new(),
+        state,
+        sig_algorithm: "secp256k1".to_string(),
+        sig: Vec::new(),
+    };
+    let hash = hash_block(&block);
+    BlockMessage {
+        block_hash: hash,
+        ..block
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block() -> BlockMessage {
+        BlockMessage {
+            version: 1,
+            shard_id: "root".to_string(),
+            block_hash: BlockHash::new([0u8; 32]),
+            block_number: 0,
+            sender: Validator::new([0x11; 65]),
+            seq_num: 0,
+            pre_state_hash: vec![0x01],
+            post_state_hash: vec![0x02],
+            justifications: vec![],
+            bonds: BTreeMap::new(),
+            rejected_deploys: BTreeSet::new(),
+            rejected_blocks: BTreeSet::new(),
+            rejected_senders: BTreeSet::new(),
+            state: RholangState {
+                deploys: vec![],
+                system_deploys: vec![],
+            },
+            sig_algorithm: "secp256k1".to_string(),
+            sig: vec![],
+        }
+    }
+
+    #[test]
+    fn hash_block_is_deterministic_and_ignores_sig() {
+        let mut a = block();
+        a.sig = vec![0xaa, 0xbb];
+        let mut b = block();
+        b.sig = vec![0xcc];
+        assert_eq!(hash_block(&a), hash_block(&b));
+    }
+
+    #[test]
+    fn hash_block_changes_with_body() {
+        let mut a = block();
+        a.block_number = 1;
+        let b = block();
+        assert_ne!(hash_block(&a), hash_block(&b));
+    }
+
+    #[test]
+    fn max_block_number_folds() {
+        let mk = |n: i64| BlockMetadata {
+            block_num: n,
+            ..BlockMetadata {
+                block_hash: BlockHash::new([0u8; 32]),
+                block_num: n,
+                sender: Validator::new([0u8; 65]),
+                seq_num: 0,
+                justifications: BTreeSet::new(),
+                bonds_map: BTreeMap::new(),
+                validated: true,
+                validation_failed: false,
+                fringe: BTreeSet::new(),
+                fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+                member_of_fringe: None,
+            }
+        };
+        assert_eq!(max_block_number_metadata(&[mk(3), mk(7), mk(5)]), 7);
+        assert_eq!(max_block_number_metadata(&[]), -1);
+    }
+}
