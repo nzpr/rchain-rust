@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use rchain_models::ast::{Par, Var};
+
 /// A source position (port of `compiler.SourcePosition`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourcePosition {
@@ -51,10 +53,10 @@ pub enum RholangError {
     UnexpectedBundleContent(String),
     UnrecognizedNormalizerError(String),
     OutOfPhlogistonsError,
-    TopLevelWildcardsNotAllowedError(String),
-    TopLevelFreeVariablesNotAllowedError(String),
-    TopLevelLogicalConnectivesNotAllowedError(String),
-    SubstituteError(String),
+    TopLevelWildcardsNotAllowedError(Par),
+    TopLevelFreeVariablesNotAllowedError(Par),
+    TopLevelLogicalConnectivesNotAllowedError(Par),
+    SubstituteError { term: Var },
     PatternReceiveError(String),
     SetupError(String),
     UnrecognizedInterpreterError(String),
@@ -132,15 +134,15 @@ impl fmt::Display for RholangError {
             RholangError::UnrecognizedNormalizerError(m) => write!(f, "{m}"),
             RholangError::OutOfPhlogistonsError => write!(f, "Computation ran out of phlogistons."),
             RholangError::TopLevelWildcardsNotAllowedError(w) => {
-                write!(f, "Top level wildcards are not allowed: {w}.")
+                write!(f, "Top level wildcards are not allowed: {w:?}.")
             }
             RholangError::TopLevelFreeVariablesNotAllowedError(v) => {
-                write!(f, "Top level free variables are not allowed: {v}.")
+                write!(f, "Top level free variables are not allowed: {v:?}.")
             }
             RholangError::TopLevelLogicalConnectivesNotAllowedError(c) => {
-                write!(f, "Top level logical connectives are not allowed: {c}.")
+                write!(f, "Top level logical connectives are not allowed: {c:?}.")
             }
-            RholangError::SubstituteError(m) => write!(f, "{m}"),
+            RholangError::SubstituteError { term } => write!(f, "Illegal Substitution [{term:?}]"),
             RholangError::PatternReceiveError(c) => {
                 write!(f, "Invalid pattern in the receive: {c}. Only logical AND is allowed.")
             }

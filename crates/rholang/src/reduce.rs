@@ -183,7 +183,12 @@ fn interpolate(string: &str, pairs: &[(String, String)]) -> String {
             }
             None => {
                 let mut chars = current.chars();
-                result.push(chars.next().unwrap());
+                let c = match chars.next() {
+                    Some(c) => c,
+                    // Unreachable: `current` is non-empty by the loop guard.
+                    None => break,
+                };
+                result.push(c);
                 current = chars.as_str();
             }
         }

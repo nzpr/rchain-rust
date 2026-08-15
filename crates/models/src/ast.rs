@@ -31,8 +31,20 @@ impl<T> Hash for AlwaysEqual<T> {
     }
 }
 
+impl<T> PartialOrd for AlwaysEqual<T> {
+    fn partial_cmp(&self, _other: &Self) -> Option<std::cmp::Ordering> {
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
+impl<T> Ord for AlwaysEqual<T> {
+    fn cmp(&self, _other: &Self) -> std::cmp::Ordering {
+        std::cmp::Ordering::Equal
+    }
+}
+
 /// A variable (de Bruijn levels).
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub enum Var {
     BoundVar(i32),
     FreeVar(i32),
@@ -42,7 +54,7 @@ pub enum Var {
 }
 
 /// A `Par` — the top-level process, a flat record of eight list fields.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct Par {
     pub sends: Vec<Send>,
     pub receives: Vec<Receive>,
@@ -74,7 +86,7 @@ impl Par {
 }
 
 /// A send: `chan!(data)` (or `chan!!(data)` when persistent).
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct Send {
     pub chan: Box<Par>,
     pub data: Vec<Par>,
@@ -84,7 +96,7 @@ pub struct Send {
 }
 
 /// A receive bind: `patterns <- source`.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct ReceiveBind {
     pub patterns: Vec<Par>,
     pub source: Box<Par>,
@@ -93,7 +105,7 @@ pub struct ReceiveBind {
 }
 
 /// A receive: `for (binds) { body }`.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct Receive {
     pub binds: Vec<ReceiveBind>,
     pub body: Box<Par>,
@@ -105,7 +117,7 @@ pub struct Receive {
 }
 
 /// A `new x1, ..., xn in { p }`.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct New {
     pub bind_count: i32,
     pub p: Box<Par>,
@@ -115,7 +127,7 @@ pub struct New {
 }
 
 /// A match case: `pattern => source`.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct MatchCase {
     pub pattern: Box<Par>,
     pub source: Box<Par>,
@@ -123,7 +135,7 @@ pub struct MatchCase {
 }
 
 /// A `match target { cases }`.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct Match {
     pub target: Box<Par>,
     pub cases: Vec<MatchCase>,
@@ -132,7 +144,7 @@ pub struct Match {
 }
 
 /// A quoted/unquoted bundle.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct Bundle {
     pub body: Box<Par>,
     pub write_flag: bool,
@@ -151,7 +163,7 @@ impl Bundle {
 }
 
 /// An expression.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq)]
 pub enum Expr {
     GBool(bool),
     GInt(i64),
@@ -189,7 +201,7 @@ pub enum Expr {
 }
 
 /// A list expression.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct EList {
     pub ps: Vec<Par>,
     pub locally_free: AlwaysEqual<BitSet>,
@@ -198,7 +210,7 @@ pub struct EList {
 }
 
 /// A tuple expression.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct ETuple {
     pub ps: Vec<Par>,
     pub locally_free: AlwaysEqual<BitSet>,
@@ -206,7 +218,7 @@ pub struct ETuple {
 }
 
 /// A set expression (order-insensitive, deduplicated).
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct ParSet {
     pub ps: Vec<Par>,
     pub connective_used: bool,
@@ -215,7 +227,7 @@ pub struct ParSet {
 }
 
 /// A map expression (order-insensitive by key, last-write-wins).
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct ParMap {
     pub kvs: Vec<(Par, Par)>,
     pub connective_used: bool,
@@ -224,7 +236,7 @@ pub struct ParMap {
 }
 
 /// A method call: `target.methodName(arguments)`.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct EMethod {
     pub method_name: String,
     pub target: Box<Par>,
@@ -234,7 +246,7 @@ pub struct EMethod {
 }
 
 /// An unforgeable name.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub enum GUnforgeable {
     GPrivate(GPrivate),
     GDeployId(GDeployId),
@@ -244,23 +256,23 @@ pub enum GUnforgeable {
     Empty,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct GPrivate {
     pub id: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct GDeployId {
     pub sig: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct GDeployerId {
     pub public_key: Vec<u8>,
 }
 
 /// A logical connective.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub enum Connective {
     ConnAnd(ConnectiveBody),
     ConnOr(ConnectiveBody),
@@ -276,12 +288,12 @@ pub enum Connective {
     Empty,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct ConnectiveBody {
     pub ps: Vec<Par>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
 pub struct VarRef {
     pub index: i32,
     pub depth: i32,

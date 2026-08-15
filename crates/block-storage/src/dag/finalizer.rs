@@ -48,8 +48,8 @@ where
         Self { msg_map }
     }
 
-    fn msg(&self, id: &M) -> Message<M, S> {
-        self.msg_map.get(id).cloned().expect("message not found")
+    fn msg(&self, id: &M) -> Option<Message<M, S>> {
+        self.msg_map.get(id).cloned()
     }
 
     /// Iterate the sender's own parent chain (nearest to oldest), stopping at `finalized` messages.
@@ -58,7 +58,7 @@ where
         let mut next: Vec<Message<M, S>> = mv
             .parents
             .iter()
-            .map(|p| self.msg(p))
+            .filter_map(|p| self.msg(p))
             .filter(|x| x.sender == mv.sender && !finalized.contains(x))
             .collect();
         while let Some(m) = next.pop() {
@@ -66,7 +66,7 @@ where
             next = m
                 .parents
                 .iter()
-                .map(|p| self.msg(p))
+                .filter_map(|p| self.msg(p))
                 .filter(|x| x.sender == mv.sender && !finalized.contains(x))
                 .collect();
         }
@@ -87,7 +87,7 @@ where
             .collect();
         let mut candidates: Vec<Message<M, S>> = min_msgs
             .iter()
-            .flat_map(|x| x.parents.iter().map(|p| self.msg(p)))
+            .flat_map(|x| x.parents.iter().filter_map(|p| self.msg(p)))
             .collect();
         candidates.retain(|x| min_messages_map.contains_key(&x.sender));
         for m in candidates {
@@ -116,11 +116,12 @@ where
                     mv.parents.difference(&next_layer_ids).cloned().collect();
                 let mut see_min_msg: BTreeSet<S> = BTreeSet::new();
                 for p_id in &parents_of_parent {
-                    let p = self.msg(p_id);
-                    let mut self_msgs = vec![p.clone()];
-                    self_msgs.extend(self.self_parents(&p, finalized));
-                    if self_msgs.iter().any(|m| m.seen.contains(&min_msg.id)) {
-                        see_min_msg.insert(p.sender.clone());
+                    if let Some(p) = self.msg(p_id) {
+                        let mut self_msgs = vec![p.clone()];
+                        self_msgs.extend(self.self_parents(&p, finalized));
+                        if self_msgs.iter().any(|m| m.seen.contains(&min_msg.id)) {
+                            see_min_msg.insert(p.sender.clone());
+                        }
                     }
                 }
                 if !see_min_msg.is_empty() {

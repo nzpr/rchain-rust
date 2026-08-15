@@ -1,6 +1,8 @@
 //! Continuation dispatch (port of `dispatch.scala`).
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
@@ -24,17 +26,23 @@ pub fn build_env(data_list: &[ListParWithRandom]) -> Env<Par> {
 
 /// Dispatches a continuation: eval `ParBody`, invoke the built-in handler for `ScalaBodyRef`, or
 /// no-op for `Empty` (port of `RholangAndScalaDispatcher`).
+///
+/// `eval` is set after construction to break the reducer↔dispatcher cycle.
 pub struct RholangAndScalaDispatcher {
     dispatch_table: BTreeMap<i64, ScalaBodyFn>,
-    eval: EvalBodyFn,
+    eval: RefCell<Option<EvalBodyFn>>,
 }
 
 impl RholangAndScalaDispatcher {
-    pub fn new(dispatch_table: BTreeMap<i64, ScalaBodyFn>, eval: EvalBodyFn) -> Self {
+    pub fn new(dispatch_table: BTreeMap<i64, ScalaBodyFn>) -> Self {
         RholangAndScalaDispatcher {
             dispatch_table,
-            eval,
+            eval: RefCell::new(None),
         }
+    }
+
+    pub fn set_eval(&self, eval: EvalBodyFn) {
+        *self.eval.borrow_mut() = Some(eval);
     }
 }
 
@@ -50,7 +58,9 @@ impl Dispatch for RholangAndScalaDispatcher {
                 let mut randoms: Vec<Blake2b512Random> = vec![pwr.random_state.clone()];
                 randoms.extend(data_list.iter().map(|d| d.random_state.clone()));
                 let merged = Blake2b512Random::merge(&randoms);
-                (self.eval)(&pwr.body, &env, &merged)
+                let eval = self.eval.borrow();
+                let f = eval.as_ref().expect("dispatcher eval not set");
+                f(&pwr.body, &env, &merged)
             }
             TaggedContinuation::ScalaBodyRef(r) => match self.dispatch_table.get(r) {
                 Some(f) => f(data_list),
@@ -60,5 +70,15 @@ impl Dispatch for RholangAndScalaDispatcher {
             },
             TaggedContinuation::Empty => Ok(()),
         }
+    }
+}
+
+impl Dispatch for Rc<RholangAndScalaDispatcher> {
+    fn dispatch(
+        &self,
+        continuation: &TaggedContinuation,
+        data_list: &[ListParWithRandom],
+    ) -> Result<(), RholangError> {
+        self.as_ref().dispatch(continuation, data_list)
     }
 }

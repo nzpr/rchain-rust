@@ -11,6 +11,8 @@ pub enum StorageError {
     TopoSortFragmentParameterError { start_block_number: i64, end_block_number: i64 },
     /// LZ4 block-message decompression failed.
     DecompressionError,
+    /// The latest-messages set was empty when a new message was created.
+    EmptyLatestMessages,
 }
 
 impl fmt::Display for StorageError {
@@ -24,6 +26,7 @@ impl fmt::Display for StorageError {
                 "topo-sort fragment parameter error: start {start_block_number}, end {end_block_number}"
             ),
             StorageError::DecompressionError => write!(f, "block message decompression failed"),
+            StorageError::EmptyLatestMessages => write!(f, "empty latest messages"),
         }
     }
 }

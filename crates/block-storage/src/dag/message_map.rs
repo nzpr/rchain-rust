@@ -6,12 +6,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::finalizer::Message;
 
-fn msg_at<M, S>(msg_map: &BTreeMap<M, Message<M, S>>, id: &M) -> Message<M, S>
+fn msg_at<M, S>(msg_map: &BTreeMap<M, Message<M, S>>, id: &M) -> Option<Message<M, S>>
 where
     M: Ord + Clone,
     S: Clone,
 {
-    msg_map.get(id).cloned().expect("message not found")
+    msg_map.get(id).cloned()
 }
 
 /// The slice of messages between `upper_bound` and `lower_bound` (including upper-bound messages).
@@ -26,11 +26,11 @@ where
 {
     let upper_seen: BTreeSet<Message<M, S>> = upper_bound
         .iter()
-        .flat_map(|m| m.seen.iter().map(|id| msg_at(msg_map, id)))
+        .flat_map(|m| m.seen.iter().filter_map(|id| msg_at(msg_map, id)))
         .collect();
     let lower_seen: BTreeSet<Message<M, S>> = lower_bound
         .iter()
-        .flat_map(|m| m.seen.iter().map(|id| msg_at(msg_map, id)))
+        .flat_map(|m| m.seen.iter().filter_map(|id| msg_at(msg_map, id)))
         .collect();
     upper_seen.difference(&lower_seen).cloned().collect()
 }
@@ -42,7 +42,7 @@ where
 {
     j.fringe
         .iter()
-        .map(|id| msg_at(msg_map, id).height)
+        .filter_map(|id| msg_at(msg_map, id)).map(|m| m.height)
         .max()
         .unwrap_or(-1)
 }
@@ -57,7 +57,7 @@ where
     S: Ord + Clone,
 {
     match justifications.iter().max_by_key(|j| fringe_height(msg_map, j)) {
-        Some(j) => j.fringe.iter().map(|id| msg_at(msg_map, id)).collect(),
+        Some(j) => j.fringe.iter().filter_map(|id| msg_at(msg_map, id)).collect(),
         None => BTreeSet::new(),
     }
 }
@@ -72,7 +72,7 @@ where
     S: Ord + Clone,
 {
     match msgs.iter().min_by_key(|j| fringe_height(msg_map, j)) {
-        Some(j) => j.fringe.iter().map(|id| msg_at(msg_map, id)).collect(),
+        Some(j) => j.fringe.iter().filter_map(|id| msg_at(msg_map, id)).collect(),
         None => BTreeSet::new(),
     }
 }
@@ -99,7 +99,7 @@ where
     let children: BTreeSet<Message<M, S>> = final_fringe
         .iter()
         .flat_map(|id| child_map.get(id).into_iter().flatten())
-        .map(|id| msg_at(msg_map, id))
+        .filter_map(|id| msg_at(msg_map, id))
         .collect();
     lowest_fringe(msg_map, &children)
 }

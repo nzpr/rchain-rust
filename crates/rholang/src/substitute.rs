@@ -34,9 +34,7 @@ fn maybe_substitute_var(
                 Some(par) => Ok(Ok(par)),
                 None => Ok(Err(var.clone())),
             },
-            _ => Err(RholangError::SubstituteError(format!(
-                "Illegal Substitution [{var:?}]"
-            ))),
+            _ => Err(RholangError::SubstituteError { term: var.clone() }),
         }
     }
 }

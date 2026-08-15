@@ -10,4 +10,8 @@ num-traits = "0.2"
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
 rchain-rspace = { path = "../rspace" }
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

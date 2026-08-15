@@ -7,6 +7,7 @@ use std::hash::Hash;
 
 use super::finalizer::{Finalizer, Message};
 use super::message_map;
+use crate::errors::StorageError;
 
 /// The set of latest messages and the full message map.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,7 +93,11 @@ where
     }
 
     /// Create a new message for `creator` and insert it.
-    pub fn create_msg_and_update_sender<F>(&self, creator: &S, gen_msg_id: F) -> (Self, Message<M, S>)
+    pub fn create_msg_and_update_sender<F>(
+        &self,
+        creator: &S,
+        gen_msg_id: F,
+    ) -> Result<(Self, Message<M, S>), StorageError>
     where
         F: FnOnce(&S, i64) -> M,
     {
@@ -101,7 +106,7 @@ where
             .iter()
             .map(|m| m.height)
             .max()
-            .expect("empty latest messages");
+            .ok_or(StorageError::EmptyLatestMessages)?;
         let new_height = max_height + 1;
         let seq_num = self
             .latest_msgs
@@ -115,7 +120,7 @@ where
             .latest_msgs
             .iter()
             .next()
-            .expect("empty latest messages")
+            .ok_or(StorageError::EmptyLatestMessages)?
             .bonds_map
             .clone();
 
@@ -128,7 +133,7 @@ where
             bonds_map,
             &justifications,
         );
-        (self.insert_msg(&new_msg), new_msg)
+        Ok((self.insert_msg(&new_msg), new_msg))
     }
 
     /// The latest fringe, using the latest messages as parents.

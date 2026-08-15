@@ -87,13 +87,18 @@ impl Match<BindPattern, ListParWithRandom> for RhoMatch {
 /// The charging tuplespace bridge: adapts the async rspace to the sync rholang `Tuplespace` (port
 /// of `ChargingRSpace`). Gas charging for storage/events is deferred; this delegates produce/consume
 /// and converts the result.
+#[derive(Clone)]
 pub struct ChargingRSpace {
     space: RhoTuplespace,
+    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl ChargingRSpace {
-    pub fn new(space: RhoTuplespace) -> Self {
-        ChargingRSpace { space }
+    /// Wrap `space`, driving its async produce/consume through `runtime` (the sync-over-async
+    /// bridge). The runtime is shared (`Arc`) so the reducer and system-process `ContractCall` can
+    /// operate on the same underlying space, and so installation can `block_on` the same handle.
+    pub fn new(space: RhoTuplespace, runtime: Arc<tokio::runtime::Runtime>) -> Self {
+        ChargingRSpace { space, runtime }
     }
 }
 
@@ -104,7 +109,8 @@ impl ReduceTuplespace for ChargingRSpace {
         data: ListParWithRandom,
         persist: bool,
     ) -> Result<Application, RholangError> {
-        let result = tokio::runtime::Handle::current()
+        let result = self
+            .runtime
             .block_on(self.space.produce(channel.clone(), data, persist))
             .map_err(|e| RholangError::ReduceError(e.to_string()))?;
         Ok(to_application(result))
@@ -118,11 +124,15 @@ impl ReduceTuplespace for ChargingRSpace {
         persist: bool,
         peeks: &BTreeSet<usize>,
     ) -> Result<Application, RholangError> {
-        let result = tokio::runtime::Handle::current()
-            .block_on(
-                self.space
-                    .consume(channels, patterns, continuation, persist, peeks.clone()),
-            )
+        let result = self
+            .runtime
+            .block_on(self.space.consume(
+                channels,
+                patterns,
+                continuation,
+                persist,
+                peeks.clone(),
+            ))
             .map_err(|e| RholangError::ReduceError(e.to_string()))?;
         Ok(to_application(result))
     }
