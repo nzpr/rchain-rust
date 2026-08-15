@@ -1,0 +1,8 @@
+[package]
+name = "rchain-regex"
+version = "0.1.0"
+edition = "2021"
+description = "Faithful Rust port of the RChain regex module (finite-state machine + regex + path matching)."
+
+[dependencies]
+fancy-regex = "0.13"

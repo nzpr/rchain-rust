@@ -12,7 +12,7 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 |-------|---------------|--------|
 | `sdk` | `sdk/` | **done** (root leaf; Laws 14 & 17) |
 | `shared` | `shared/` | **core done** (Base16/Serialize/DagOps/store); LMDB FFI deferred |
-| `regex` | `regex/` | orphaned leaf, pure algorithm (deferred — off critical path) |
+| `regex` | `regex/` | **done** (FSM engine + regex AST/parser + path-to-regex tokenizer) |
 | `crypto` | `crypto/` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519) |
 | `graphz` | `graphz/` | **done** (DOT builder) |
 | `models` | `models/` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer) |
