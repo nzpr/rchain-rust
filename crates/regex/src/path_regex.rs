@@ -283,7 +283,7 @@ impl PathRegex {
                 .tokens
                 .last()
                 .and_then(|t| t.raw_part_char())
-                .map_or(false, |c| self.options.delimiters.contains(&c));
+                .is_some_and(|c| self.options.delimiters.contains(&c));
             let finish = if !is_end_delimited {
                 vec![format!("(?={}|{ends_with})", self.options.delimiter)]
             } else {
@@ -425,10 +425,10 @@ impl PathRegex {
                     delimiter: Some(delimiter),
                     optional: grp_modifier
                         .as_deref()
-                        .map_or(false, |m| m == "?" || m == "*"),
+                        .is_some_and(|m| m == "?" || m == "*"),
                     repeat: grp_modifier
                         .as_deref()
-                        .map_or(false, |m| m == "+" || m == "*"),
+                        .is_some_and(|m| m == "+" || m == "*"),
                     partial: prev.is_some() && next.is_some() && next != prev,
                     pattern: Some(pattern_group.map(|g| Self::escape_group(&g)).unwrap_or_else(
                         || {
@@ -520,6 +520,7 @@ fn rx_path_regex() -> &'static fancy_regex::Regex {
 mod tests {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn tok(
         name: Option<&str>,
         key: i32,

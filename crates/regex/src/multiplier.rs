@@ -295,7 +295,7 @@ fn is_java_ws(b: u8) -> bool {
 }
 
 fn is_digit(b: u8) -> bool {
-    (b'0'..=b'9').contains(&b)
+    b.is_ascii_digit()
 }
 
 /// Parse `^\{\s*(\d+)\s*(,\s*(\d+)?)?\s*\}` from the start of `cs`, returning the multiplier and

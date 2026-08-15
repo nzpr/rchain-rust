@@ -98,7 +98,7 @@ fn is_specials_block(c: char) -> bool {
 
 fn is_printable(c: char) -> bool {
     let cu = c as u32;
-    (cu >= 32 && cu <= 127) || (!is_iso_control(c) && !is_specials_block(c))
+    (32..=127).contains(&cu) || (!is_iso_control(c) && !is_specials_block(c))
 }
 
 fn single_char_to_string(c: char) -> String {
@@ -128,11 +128,15 @@ fn unknown_set_to_string(char_set: &BTreeSet<char>) -> String {
             0 => String::new(),
             1 => single_char_to_string(lst[0]),
             2 | 3 => lst.iter().map(|&c| single_char_to_string(c)).collect(),
-            _ => {
-                let start = single_char_to_string(*lst.last().unwrap());
-                let end = single_char_to_string(lst[0]);
-                format!("{start}-{end}")
-            }
+            _ => match (lst.first(), lst.last()) {
+                (Some(&first), Some(&last)) => {
+                    let start = single_char_to_string(last);
+                    let end = single_char_to_string(first);
+                    format!("{start}-{end}")
+                }
+                // Unreachable: this arm is only taken when `lst.len() >= 4`.
+                _ => String::new(),
+            },
         }
     }
 
@@ -170,7 +174,7 @@ impl CharClassPattern {
         CharClassPattern { char_set, negate }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_string(s: &str) -> Self {
         CharClassPattern::new(s.chars().collect(), false)
     }
 
@@ -330,11 +334,16 @@ impl fmt::Display for CharClassPattern {
                 String::new()
             }
         } else if self.char_set.len() == 1 {
-            let c = *self.char_set.iter().next().unwrap();
-            if self.negate {
-                format!("[^{}]", single_char_to_string(c))
-            } else {
-                single_char_to_string(c)
+            match self.char_set.iter().next() {
+                Some(&c) => {
+                    if self.negate {
+                        format!("[^{}]", single_char_to_string(c))
+                    } else {
+                        single_char_to_string(c)
+                    }
+                }
+                // Unreachable: this arm is only taken when `char_set.len() == 1`.
+                None => String::new(),
             }
         } else if let Some(letter) = known_class_letter(self) {
             format!("\\{letter}")
@@ -463,12 +472,12 @@ impl MultPattern {
             }
         }
 
-        match_multiplicand(s, 0).and_then(|(multiplicand, multiplicand_end)| {
+        match_multiplicand(s, 0).map(|(multiplicand, multiplicand_end)| {
             let (multiplier, multiplier_end) = Multiplier::try_parse(&s[multiplicand_end..]);
-            Some((
+            (
                 MultPattern::new(multiplicand, multiplier),
                 multiplicand_end + multiplier_end,
-            ))
+            )
         })
     }
 
@@ -1006,15 +1015,15 @@ fn parse_char_set_sequence(s: &str, start_index: usize, negate: bool) -> Option<
         range_state: RangeState::FirstSymbol,
     };
 
-    process_next_char(s, start_index, initial).and_then(|(state, end_index)| {
+    process_next_char(s, start_index, initial).map(|(state, end_index)| {
         if state.collected_union_classes.is_empty() {
-            Some((
+            (
                 RegexPattern::CharClass(CharClassPattern::new(
                     state.collected_chars.into_iter().collect(),
                     negate,
                 )),
                 end_index,
-            ))
+            )
         } else {
             let start = CharClassPattern::new(state.collected_chars.into_iter().collect(), false);
             let union = state
@@ -1022,7 +1031,7 @@ fn parse_char_set_sequence(s: &str, start_index: usize, negate: bool) -> Option<
                 .iter()
                 .fold(start, |acc, c| acc.union_char_class(c));
             let result = if negate { union.negated() } else { union };
-            Some((RegexPattern::CharClass(result), end_index))
+            (RegexPattern::CharClass(result), end_index)
         }
     })
 }
@@ -1032,11 +1041,11 @@ mod tests {
     use super::*;
 
     fn cc(s: &str) -> RegexPattern {
-        RegexPattern::CharClass(CharClassPattern::from_str(s))
+        RegexPattern::CharClass(CharClassPattern::from_string(s))
     }
 
     fn cc_neg(s: &str) -> RegexPattern {
-        RegexPattern::CharClass(CharClassPattern::from_str(s).negated())
+        RegexPattern::CharClass(CharClassPattern::from_string(s).negated())
     }
 
     fn mult(multiplicand: RegexPattern, multiplier: Multiplier) -> MultPattern {
@@ -1384,12 +1393,12 @@ mod tests {
         assert_eq!(cc("a").reversed(), cc("a"));
 
         let a_or_b = RegexPattern::Alt(AltPattern::from_char_classes(&[
-            CharClassPattern::from_str("a"),
-            CharClassPattern::from_str("b"),
+            CharClassPattern::from_string("a"),
+            CharClassPattern::from_string("b"),
         ]));
         let b_or_a = RegexPattern::Alt(AltPattern::from_char_classes(&[
-            CharClassPattern::from_str("b"),
-            CharClassPattern::from_str("a"),
+            CharClassPattern::from_string("b"),
+            CharClassPattern::from_string("a"),
         ]));
         assert_eq!(a_or_b.reversed(), a_or_b);
         assert_eq!(a_or_b.reversed(), b_or_a);
@@ -1413,8 +1422,8 @@ mod tests {
     #[test]
     fn alt_pattern_produces_good_fsm() {
         let fsm = RegexPattern::Alt(AltPattern::from_char_classes(&[
-            CharClassPattern::from_str("a"),
-            CharClassPattern::from_str("b"),
+            CharClassPattern::from_string("a"),
+            CharClassPattern::from_string("b"),
         ]))
         .to_fsm(None);
         assert!(fsm.accepts("a"));
@@ -1525,6 +1534,6 @@ mod tests {
         assert_eq!(parsed_cc_str("."), ".");
         assert_eq!(parsed_cc_str("\\["), "\\[");
         assert_eq!(parsed_cc_str("\\xFF"), "\\xFF");
-        assert_eq!(CharClassPattern::from_str("").to_string(), "");
+        assert_eq!(CharClassPattern::from_string("").to_string(), "");
     }
 }

@@ -221,7 +221,7 @@ impl Fsm {
                 .map(|(i, fsm)| {
                     fsm_states
                         .get(&(i as i32))
-                        .map_or(false, |&s| fsm.final_states.contains(&s))
+                        .is_some_and(|&s| fsm.final_states.contains(&s))
                 })
                 .collect();
             finality_test(&finality)
@@ -404,7 +404,7 @@ impl Fsm {
         let is_final = |states_set: &Vec<i32>| {
             !states_set
                 .first()
-                .map_or(false, |&x| self.final_states.contains(&x))
+                .is_some_and(|&x| self.final_states.contains(&x))
         };
 
         Fsm::crawl(&self.alphabet, res_initial, is_final, follow).reduced()
@@ -954,7 +954,7 @@ mod tests {
 
         let fsm_a = create_fsm_a();
         assert_eq!(Fsm::concatenate_many(&[fsm_a.clone(), fsm_a.clone(), fsm_a.clone()]).strings().collect::<Vec<_>>(), vec!["aaa".to_string()]);
-        assert_eq!(Fsm::concatenate_many(&[fsm_a.clone()]).strings().collect::<Vec<_>>(), vec!["a".to_string()]);
+        assert_eq!(Fsm::concatenate_many(std::slice::from_ref(&fsm_a)).strings().collect::<Vec<_>>(), vec!["a".to_string()]);
 
         let fsm_bab = Fsm::concatenate_many(&[create_fsm_b(), create_fsm_a(), create_fsm_b()]);
         assert_eq!(fsm_bab.strings().collect::<Vec<_>>(), vec!["bab".to_string()]);
