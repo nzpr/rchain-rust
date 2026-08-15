@@ -4,14 +4,17 @@
 //! These fold the concrete `Proc` AST into the de Bruijn `Par`. Source positions are placeholders
 //! until the lexer is ported; the structural processes (`PSend`/`PNew`/`PInput`/…) are deferred.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use num_bigint::BigInt;
 
-use rchain_models::ast::{AlwaysEqual, Connective, ConnectiveBody, Expr, Match, MatchCase, Par, Send, Var, VarRef};
+use rchain_models::ast::{
+    AlwaysEqual, Connective, ConnectiveBody, Expr, Match, MatchCase, New, Par, Receive, ReceiveBind,
+    Send, Var, VarRef,
+};
 use rchain_models::par_ops::{
-    from_expr, par_concat, prepend_connective, prepend_expr, prepend_match, prepend_send,
-    single_connective,
+    from_expr, par_concat, prepend_connective, prepend_expr, prepend_match, prepend_new,
+    prepend_receive, prepend_send, single_connective,
 };
 
 use crate::compiler::{
@@ -19,8 +22,8 @@ use crate::compiler::{
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
-    BoolLiteral, Ground, Name, NameRemainder, Proc, ProcRemainder, ProcVar, Send as SendKind,
-    SimpleType, VarRefKind,
+    BoolLiteral, Case, Ground, Name, NameDecl, NameRemainder, Proc, ProcRemainder, ProcVar,
+    Send as SendKind, SimpleType, VarRefKind,
 };
 
 fn pos() -> SourcePosition {
@@ -206,6 +209,11 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
         Proc::PMethod(target, method, args) => normalize_method(target, method, args, input),
         Proc::PIf(cond, body) => normalize_if(cond, body, &Proc::PNil, input),
         Proc::PIfElse(cond, t, f) => normalize_if(cond, t, f, input),
+        Proc::PNew(decls, body) => normalize_new(decls, body, input),
+        Proc::PMatch(target, cases) => normalize_match(target, cases, input),
+        Proc::PContr(name, formals, remainder, body) => {
+            normalize_contr(name, formals, remainder, body, input)
+        }
         _ => Err(defer("process")),
     }
 }
@@ -557,6 +565,219 @@ fn union_free(a: &[i32], b: &[i32]) -> Vec<i32> {
     let mut set: BTreeSet<i32> = a.iter().copied().collect();
     set.extend(b.iter().copied());
     set.into_iter().collect()
+}
+
+/// Keep levels `>= n` and shift them down by `n` (the Scala `BitSet.from(n).map(x => x - n)`).
+fn from_free(b: &[i32], n: i32) -> Vec<i32> {
+    b.iter().copied().filter(|&x| x >= n).map(|x| x - n).collect()
+}
+
+/// Normalize a `new` (port of `PNewNormalizer.normalize`).
+fn normalize_new(
+    decls: &[NameDecl],
+    body: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let mut tagged: Vec<(Option<String>, String, SourcePosition)> = Vec::new();
+    for d in decls {
+        match d {
+            NameDecl::NameDeclSimpl(var) => tagged.push((None, var.clone(), pos())),
+            NameDecl::NameDeclUrn(var, uri) => {
+                tagged.push((Some(strip_uri(uri)), var.clone(), pos()))
+            }
+        }
+    }
+    // None first, then uris lexicographically (matches the Scala sort).
+    tagged.sort_by_key(|row| row.0.clone());
+    let new_bindings: Vec<(String, VarSort, SourcePosition)> = tagged
+        .iter()
+        .map(|(_, var, p)| (var.clone(), VarSort::NameSort, p.clone()))
+        .collect();
+    let uris: Vec<String> = tagged.iter().filter_map(|(uri, _, _)| uri.clone()).collect();
+
+    let new_env = input.bound_map_chain.put_all(&new_bindings);
+    let new_count = new_env.count() - input.bound_map_chain.count();
+    let body_result = normalize_proc(
+        body,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: new_env,
+            free_map: input.free_map.clone(),
+        },
+    )?;
+
+    let n = New {
+        bind_count: new_count,
+        p: Box::new(body_result.par.clone()),
+        uri: uris,
+        injections: BTreeMap::new(),
+        locally_free: AlwaysEqual(from_free(&body_result.par.locally_free.0, new_count)),
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_new(&input.par, n),
+        free_map: body_result.free_map,
+    })
+}
+
+/// Normalize a `match` (port of `PMatchNormalizer.normalize`).
+fn normalize_match(
+    target: &Proc,
+    cases: &[Case],
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let bound_map_chain = input.bound_map_chain.clone();
+    let target_result = normalize_proc(
+        target,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: bound_map_chain.clone(),
+            free_map: input.free_map.clone(),
+        },
+    )?;
+
+    let mut match_cases: Vec<MatchCase> = Vec::new();
+    let mut locally_free: Vec<i32> = Vec::new();
+    let mut connective_used = false;
+    let mut free_map = target_result.free_map.clone();
+    for case in cases {
+        let (pattern, case_body) = (case.0.as_ref(), case.1.as_ref());
+        let pattern_result = normalize_proc(
+            pattern,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.push(),
+                free_map: FreeMap::empty(),
+            },
+        )?;
+        let case_env = input.bound_map_chain.absorb_free(&pattern_result.free_map);
+        let bound_count = pattern_result.free_map.count_no_wildcards();
+        let case_body_result = normalize_proc(
+            case_body,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: case_env,
+                free_map,
+            },
+        )?;
+        match_cases.insert(
+            0,
+            MatchCase {
+                pattern: Box::new(pattern_result.par.clone()),
+                source: Box::new(case_body_result.par.clone()),
+                free_count: bound_count,
+            },
+        );
+        locally_free = union_free(&locally_free, &pattern_result.par.locally_free.0);
+        locally_free = union_free(
+            &locally_free,
+            &from_free(&case_body_result.par.locally_free.0, bound_count),
+        );
+        connective_used = connective_used || case_body_result.par.connective_used;
+        free_map = case_body_result.free_map;
+    }
+
+    let m = Match {
+        target: Box::new(target_result.par.clone()),
+        cases: match_cases,
+        locally_free: AlwaysEqual(union_free(&locally_free, &target_result.par.locally_free.0)),
+        connective_used: connective_used || target_result.par.connective_used,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_match(&input.par, m),
+        free_map,
+    })
+}
+
+fn fail_on_invalid_connective(
+    input: &ProcVisitInputs,
+    name_res: &NameVisitOutputs,
+) -> Result<(), RholangError> {
+    if input.bound_map_chain.depth() == 0 {
+        for (conn, sp) in &name_res.free_map.connectives {
+            match conn {
+                Connective::ConnOr(_) => {
+                    return Err(RholangError::PatternReceiveError(format!(
+                        "\\/ (disjunction) at {sp}"
+                    )))
+                }
+                Connective::ConnNot(_) => {
+                    return Err(RholangError::PatternReceiveError(format!(
+                        "~ (negation) at {sp}"
+                    )))
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Normalize a contract (port of `PContrNormalizer.normalize`).
+fn normalize_contr(
+    name: &Name,
+    formals: &[Name],
+    remainder: &NameRemainder,
+    body: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let name_result = normalize_name(
+        name,
+        NameVisitInputs {
+            bound_map_chain: input.bound_map_chain.clone(),
+            free_map: input.free_map.clone(),
+        },
+    )?;
+
+    let mut formal_pars: Vec<Par> = Vec::new();
+    let mut formal_locally_free: Vec<i32> = Vec::new();
+    let mut free_map = FreeMap::<VarSort>::empty();
+    for n in formals {
+        let res = normalize_name(
+            n,
+            NameVisitInputs {
+                bound_map_chain: input.bound_map_chain.push(),
+                free_map,
+            },
+        )?;
+        fail_on_invalid_connective(&input, &res)?;
+        formal_pars.insert(0, res.par.clone());
+        formal_locally_free = union_free(&formal_locally_free, &res.par.locally_free.0);
+        free_map = res.free_map;
+    }
+
+    let (remainder_var, remainder_free_map) = normalize_remainder_name(remainder, free_map)?;
+    let new_env = input.bound_map_chain.absorb_free(&remainder_free_map);
+    let bound_count = remainder_free_map.count_no_wildcards();
+    let body_result = normalize_proc(
+        body,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: new_env,
+            free_map: name_result.free_map.clone(),
+        },
+    )?;
+
+    let receive = Receive {
+        binds: vec![ReceiveBind {
+            patterns: formal_pars,
+            source: Box::new(name_result.par.clone()),
+            remainder: remainder_var.map(Box::new),
+            free_count: bound_count,
+        }],
+        body: Box::new(body_result.par.clone()),
+        persistent: true,
+        peek: false,
+        bind_count: bound_count,
+        locally_free: AlwaysEqual(union_free(
+            &union_free(&name_result.par.locally_free.0, &formal_locally_free),
+            &from_free(&body_result.par.locally_free.0, bound_count),
+        )),
+        connective_used: name_result.par.connective_used || body_result.par.connective_used,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_receive(&input.par, receive),
+        free_map: body_result.free_map,
+    })
 }
 
 /// Normalize a send (port of `PSendNormalizer.normalize`).

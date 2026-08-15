@@ -159,8 +159,8 @@ impl<T: Clone> BoundMapChain<T> {
 pub struct FreeMap<T> {
     next_level: i32,
     level_bindings: BTreeMap<String, FreeContext<T>>,
-    wildcards: Vec<SourcePosition>,
-    connectives: Vec<(Connective, SourcePosition)>,
+    pub wildcards: Vec<SourcePosition>,
+    pub connectives: Vec<(Connective, SourcePosition)>,
 }
 
 impl<T: Clone> FreeMap<T> {
