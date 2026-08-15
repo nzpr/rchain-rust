@@ -756,6 +756,36 @@ pub fn sort_par_term(par: &Par) -> Par {
     sort_par(par).term
 }
 
+/// Canonicalize a single `Send` (the Scala `Sortable[Send].sortMatch(s).term`).
+pub fn sort_send_term(send: &Send) -> Send {
+    sort_send(send).term
+}
+
+/// Canonicalize a single `Receive` (the Scala `Sortable[Receive].sortMatch(r).term`).
+pub fn sort_receive_term(receive: &Receive) -> Receive {
+    sort_receive(receive).term
+}
+
+/// Canonicalize a single `New` (the Scala `Sortable[New].sortMatch(n).term`).
+pub fn sort_new_term(new: &New) -> New {
+    sort_new(new).term
+}
+
+/// Canonicalize a single `Match` (the Scala `Sortable[Match].sortMatch(m).term`).
+pub fn sort_match_term(m: &Match) -> Match {
+    sort_match(m).term
+}
+
+/// Canonicalize a single `Bundle` (the Scala `Sortable[Bundle].sortMatch(b).term`).
+pub fn sort_bundle_term(bundle: &Bundle) -> Bundle {
+    sort_bundle(bundle).term
+}
+
+/// Canonicalize a single `Expr` (the Scala `Sortable[Expr].sortMatch(e).term`).
+pub fn sort_expr_term(expr: &Expr) -> Expr {
+    sort_expr(expr).term
+}
+
 /// Sort a list of `Par`s by canonical score (the Scala `List[Par].sort`).
 pub fn sort_pars(pars: Vec<Par>) -> Vec<Par> {
     sort_scored(pars.iter().map(sort_par).collect())

@@ -47,6 +47,11 @@ impl<A: Clone> Env<A> {
         }
     }
 
+    /// The current shift offset (the Scala `env.shift`).
+    pub fn shift_amount(&self) -> i32 {
+        self.shift
+    }
+
     /// Build an environment from a sequence of values (the Scala `makeEnv`).
     pub fn make_env(values: impl IntoIterator<Item = A>) -> Self {
         let mut env = Env::new();

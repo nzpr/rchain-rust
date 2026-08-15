@@ -139,6 +139,17 @@ pub struct Bundle {
     pub read_flag: bool,
 }
 
+impl Bundle {
+    /// Merge bundle flags (port of `BundleOps.merge`): keep `other`'s body, AND the read/write flags.
+    pub fn merge(&self, other: &Bundle) -> Bundle {
+        Bundle {
+            body: other.body.clone(),
+            write_flag: self.write_flag && other.write_flag,
+            read_flag: self.read_flag && other.read_flag,
+        }
+    }
+}
+
 /// An expression.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {

@@ -18,8 +18,7 @@ fn union_free(a: &[i32], b: &[i32]) -> Vec<i32> {
 }
 
 /// The Scala `BitSet.until(n)` — keep only levels `< n`.
-#[allow(dead_code)] // used by the deferred normalizer (free-level decrement on binder entry)
-fn until_free(b: &[i32], n: i32) -> Vec<i32> {
+pub fn until_free(b: &[i32], n: i32) -> Vec<i32> {
     b.iter().copied().filter(|&x| x < n).collect()
 }
 
