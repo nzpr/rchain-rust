@@ -6,3 +6,4 @@
 pub mod block_status;
 pub mod merging;
 pub mod proto_util;
+pub mod validate;
