@@ -9,3 +9,5 @@ num-bigint = "0.4"
 num-traits = "0.2"
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
+rchain-rspace = { path = "../rspace" }
+tokio = { version = "1", features = ["rt"] }

@@ -12,4 +12,5 @@ pub mod env;
 pub mod errors;
 pub mod matcher;
 pub mod reduce;
+pub mod storage;
 pub mod substitute;

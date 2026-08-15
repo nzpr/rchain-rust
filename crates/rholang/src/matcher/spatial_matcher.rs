@@ -181,10 +181,11 @@ pub fn spatial_match(target: &Par, pattern: &Par, fm: &FreeMap) -> MResult {
         .collect();
 
     // scanRight((minRem, maxRem))((bounds, acc) => (bounds._1 + acc._1, bounds._2 + acc._2)).tail
-    let mut remainder_bounds: Vec<(ParCount, ParCount)> = vec![(min_rem, max_rem)];
+    let mut remainder_bounds: Vec<(ParCount, ParCount)> = vec![(min_rem.clone(), max_rem.clone())];
+    let mut acc = (min_rem, max_rem);
     for bounds in individual_bounds.iter().rev() {
-        let acc = remainder_bounds.last().unwrap();
-        remainder_bounds.push((bounds.0.add(&acc.0), bounds.1.add(&acc.1)));
+        acc = (bounds.0.add(&acc.0), bounds.1.add(&acc.1));
+        remainder_bounds.push(acc.clone());
     }
     remainder_bounds.reverse();
     remainder_bounds.remove(0);
@@ -533,7 +534,7 @@ fn spatial_match_pair(pair1: &(Par, Par), pair2: &(Par, Par), fm: &FreeMap) -> M
 }
 
 /// Match a list of targets against a list of patterns, capturing remainders (port of `foldMatch`).
-fn fold_match<T: MatchableTerm>(
+pub(crate) fn fold_match<T: MatchableTerm>(
     tlist: &[T],
     plist: &[T],
     remainder: Option<&Var>,
