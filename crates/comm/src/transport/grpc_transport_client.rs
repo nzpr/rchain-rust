@@ -20,7 +20,7 @@ use tokio_rustls::TlsConnector;
 use tonic::transport::{Channel, Endpoint};
 use tower::service_fn;
 
-use crate::errors::CommErr;
+use crate::errors::{CommErr, CommError};
 use crate::peer_node::PeerNode;
 use crate::transport::chunker::Blob;
 use crate::transport::grpc_transport;
@@ -58,20 +58,20 @@ impl GrpcTransportClient {
     }
 
     /// Create a TLS channel to `peer`, verifying the server cert against the peer's node id.
-    async fn create_channel(&self, peer: &PeerNode) -> Channel {
+    async fn create_channel(&self, peer: &PeerNode) -> Result<Channel, CommError> {
         let endpoint = Endpoint::from_shared(format!(
             "https://{}:{}",
             peer.endpoint.host, peer.endpoint.tcp_port
         ))
-        .expect("peer endpoint is a valid URI");
+        .map_err(|e| CommError::ParseError(e.to_string()))?;
 
         let connector = TlsConnector::from(self.tls.clone());
         let server_name = ServerName::try_from(peer.id.to_string())
-            .expect("node id hex is a valid DNS name");
+            .map_err(|e| CommError::ParseError(e.to_string()))?;
         let host = peer.endpoint.host.clone();
         let port = peer.endpoint.tcp_port as u16;
 
-        endpoint.connect_with_connector_lazy(service_fn(move |_: Uri| {
+        Ok(endpoint.connect_with_connector_lazy(service_fn(move |_: Uri| {
             let connector = connector.clone();
             let server_name = server_name.clone();
             let host = host.clone();
@@ -80,24 +80,24 @@ impl GrpcTransportClient {
                 let tls = connector.connect(server_name, tcp).await?;
                 Ok::<_, std::io::Error>(TokioIo::new(tls))
             }
-        }))
+        })))
     }
 
-    async fn get_channel(&self, peer: &PeerNode) -> Channel {
+    async fn get_channel(&self, peer: &PeerNode) -> Result<Channel, CommError> {
         let mut channels = self.channels.lock().await;
         if let Some(channel) = channels.get(peer) {
-            return channel.clone();
+            return Ok(channel.clone());
         }
-        let channel = self.create_channel(peer).await;
+        let channel = self.create_channel(peer).await?;
         channels.insert(peer.clone(), channel.clone());
-        channel
+        Ok(channel)
     }
 }
 
 #[async_trait]
 impl TransportLayer for GrpcTransportClient {
     async fn send(&self, peer: &PeerNode, msg: Protocol) -> CommErr<()> {
-        let channel = self.get_channel(peer).await;
+        let channel = self.get_channel(peer).await?;
         let mut client = TransportLayerClient::new(channel);
         grpc_transport::send(&mut client, peer, msg).await
     }
@@ -118,7 +118,10 @@ impl TransportLayer for GrpcTransportClient {
                 let peer = peer.clone();
                 let blob = blob.clone();
                 tokio::spawn(async move {
-                    let channel = this.get_channel(&peer).await;
+                    let channel = match this.get_channel(&peer).await {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
                     let mut client = TransportLayerClient::new(channel);
                     let _ = grpc_transport::stream(
                         &mut client,

@@ -18,7 +18,7 @@ pub trait History: Send + Sync {
     async fn read(&self, key: &KeySegment) -> Option<Blake2b256Hash>;
 
     /// Apply a batch of insert/update/delete actions (port of `process`).
-    async fn process(&self, actions: &[HistoryAction]) -> Arc<dyn History>;
+    async fn process(&self, actions: &[HistoryAction]) -> Result<Arc<dyn History>, String>;
 
     /// The current root hash (port of `root`).
     fn root(&self) -> Blake2b256Hash;

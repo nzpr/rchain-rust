@@ -7,6 +7,8 @@ use std::collections::BTreeSet;
 
 use async_trait::async_trait;
 
+use crate::errors::RSpaceError;
+
 /// A matched datum result (port of `Result`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Result<C, A> {
@@ -36,14 +38,19 @@ pub trait Tuplespace<C, P, A, K>: Send + Sync {
         continuation: K,
         persist: bool,
         peeks: BTreeSet<usize>,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>;
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, RSpaceError>;
 
     async fn produce(
         &self,
         channel: C,
         data: A,
         persist: bool,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>;
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, RSpaceError>;
 
-    async fn install(&self, channels: &[C], patterns: &[P], continuation: K) -> Option<(K, Vec<A>)>;
+    async fn install(
+        &self,
+        channels: &[C],
+        patterns: &[P],
+        continuation: K,
+    ) -> std::result::Result<Option<(K, Vec<A>)>, RSpaceError>;
 }

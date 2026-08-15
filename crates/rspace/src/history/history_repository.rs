@@ -168,7 +168,10 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         self.current_history.clone()
     }
 
-    pub async fn checkpoint(&self, actions: &[HotStoreAction<C, P, A, K>]) -> Arc<Self>
+    pub async fn checkpoint(
+        &self,
+        actions: &[HotStoreAction<C, P, A, K>],
+    ) -> Result<Arc<Self>, String>
     where
         C: Serialize<C> + Clone,
         P: Serialize<P> + Clone,
@@ -180,7 +183,10 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         self.do_checkpoint(&trie_actions).await
     }
 
-    pub async fn do_checkpoint(&self, trie_actions: &[HotStoreTrieAction<C, P, A, K>]) -> Arc<Self>
+    pub async fn do_checkpoint(
+        &self,
+        trie_actions: &[HotStoreTrieAction<C, P, A, K>],
+    ) -> Result<Arc<Self>, String>
     where
         C: Serialize<C> + Clone,
         P: Serialize<P> + Clone,
@@ -211,15 +217,15 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         }
 
         // Apply radix-history actions and commit the new root.
-        let new_history = self.current_history.process(&history_actions).await;
+        let new_history = self.current_history.process(&history_actions).await?;
         self.roots_repository.commit(new_history.root()).await;
 
-        Arc::new(HistoryRepository {
+        Ok(Arc::new(HistoryRepository {
             current_history: new_history,
             roots_repository: self.roots_repository.clone(),
             leaf_store: self.leaf_store.clone(),
             marker: PhantomData,
-        })
+        }))
     }
 
     pub async fn reset(&self, root: Blake2b256Hash) -> Result<Arc<Self>, String>

@@ -63,21 +63,22 @@ impl History for RadixHistory {
         self.impl_.read(&self.root_node, key).await
     }
 
-    async fn process(&self, actions: &[HistoryAction]) -> Arc<dyn History> {
+    async fn process(&self, actions: &[HistoryAction]) -> Result<Arc<dyn History>, String> {
         assert!(
             has_no_duplicates(actions),
             "Cannot process duplicate actions on one key."
         );
-        match self.impl_.save_and_commit(&self.root_node, actions).await {
-            Ok(Some((new_root_node, new_root_hash))) => {
-                self.impl_.clear_read_cache();
-                Arc::new(self.copy(new_root_hash, new_root_node, self.impl_.clone()))
-            }
-            Ok(None) => {
-                self.impl_.clear_read_cache();
-                Arc::new(self.copy(self.root_hash, self.root_node.clone(), self.impl_.clone()))
-            }
-            Err(e) => panic!("history commit failed: {e}"),
+        let result = self.impl_.save_and_commit(&self.root_node, actions).await?;
+        self.impl_.clear_read_cache();
+        match result {
+            Some((new_root_node, new_root_hash)) => Ok(Arc::new(
+                self.copy(new_root_hash, new_root_node, self.impl_.clone()),
+            )),
+            None => Ok(Arc::new(self.copy(
+                self.root_hash,
+                self.root_node.clone(),
+                self.impl_.clone(),
+            ))),
         }
     }
 

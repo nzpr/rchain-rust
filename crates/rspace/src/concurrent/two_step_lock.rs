@@ -7,6 +7,7 @@ use std::hash::Hash;
 
 use crate::concurrent::multi_lock::MultiLock;
 use crate::concurrent::BoxFuture;
+use crate::errors::RSpaceError;
 
 /// A two-phase lock (port of `TwoStepLock` / `ConcurrentTwoStepLockF`).
 pub struct TwoStepLock<K> {
@@ -30,16 +31,16 @@ where
     pub async fn acquire<'a, F>(
         &'a self,
         keys_a: &[K],
-        phase_two: BoxFuture<'a, Vec<K>>,
+        phase_two: BoxFuture<'a, std::result::Result<Vec<K>, RSpaceError>>,
         thunk: F,
-    ) -> F::Output
+    ) -> std::result::Result<F::Output, RSpaceError>
     where
         F: Future + Send + 'a,
     {
         self.phase_a
             .acquire(keys_a, async move {
-                let keys_b = phase_two.await;
-                self.phase_b.acquire(&keys_b, thunk).await
+                let keys_b = phase_two.await?;
+                Ok(self.phase_b.acquire(&keys_b, thunk).await)
             })
             .await
     }

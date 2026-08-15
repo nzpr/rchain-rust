@@ -26,8 +26,10 @@ pub fn node(n: &PeerNode) -> Node {
     n.to_node()
 }
 
-pub fn sender(proto: &Protocol) -> PeerNode {
-    PeerNode::from_node(proto.header.as_ref().expect("header").sender.as_ref().expect("sender"))
+pub fn sender(proto: &Protocol) -> CommErr<PeerNode> {
+    let header = proto.header.as_ref().ok_or(CommError::HeaderNotAvailable)?;
+    let sender = header.sender.as_ref().ok_or(CommError::SenderNotAvailable)?;
+    Ok(PeerNode::from_node(sender))
 }
 
 pub fn to_peer_node(n: &Node) -> PeerNode {
@@ -137,7 +139,7 @@ mod tests {
     #[test]
     fn handshake_round_trips() {
         let proto = protocol_handshake(&peer(), "testnet");
-        assert_eq!(sender(&proto), peer());
+        assert_eq!(sender(&proto), Ok(peer()));
         assert_eq!(to_protocol_handshake(&proto).unwrap().nonce, Vec::<u8>::new());
     }
 

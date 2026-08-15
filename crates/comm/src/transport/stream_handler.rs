@@ -78,7 +78,10 @@ pub fn collect(
     for chunk in chunks {
         match &chunk.content {
             Some(chunk::Content::Header(h)) => {
-                let sender = h.sender.as_ref().expect("chunk header sender");
+                let sender = h
+                    .sender
+                    .as_ref()
+                    .ok_or_else(|| StreamError::Unexpected("chunk header missing sender".to_string()))?;
                 stmd.header = Some(Header {
                     sender: PeerNode::from_node(sender),
                     type_id: h.type_id.clone(),

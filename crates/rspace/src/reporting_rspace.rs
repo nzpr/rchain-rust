@@ -122,7 +122,7 @@ where
         continuation: K,
         persist: bool,
         peeks: BTreeSet<usize>,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
         self.replay
             .consume(channels, patterns, continuation, persist, peeks)
             .await
@@ -133,11 +133,16 @@ where
         channel: C,
         data: A,
         persist: bool,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
         self.replay.produce(channel, data, persist).await
     }
 
-    async fn install(&self, channels: &[C], patterns: &[P], continuation: K) -> Option<(K, Vec<A>)> {
+    async fn install(
+        &self,
+        channels: &[C],
+        patterns: &[P],
+        continuation: K,
+    ) -> std::result::Result<Option<(K, Vec<A>)>, crate::errors::RSpaceError> {
         self.replay.install(channels, patterns, continuation).await
     }
 }
@@ -150,31 +155,34 @@ where
     A: Clone + Serialize<A> + Send + Sync + 'static,
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
-    async fn create_checkpoint(&self) -> crate::checkpoint::Checkpoint {
-        let checkpoint = self.replay.create_checkpoint().await;
+    async fn create_checkpoint(&self) -> std::result::Result<crate::checkpoint::Checkpoint, String> {
+        let checkpoint = self.replay.create_checkpoint().await?;
         crate::lock::wlock(&self.soft_report).clear();
         crate::lock::wlock(&self.report).clear();
-        checkpoint
+        Ok(checkpoint)
     }
 
-    async fn reset(&self, root: Blake2b256Hash) {
-        self.replay.reset(root).await;
+    async fn reset(&self, root: Blake2b256Hash) -> std::result::Result<(), String> {
+        self.replay.reset(root).await
     }
 
-    async fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
+    async fn get_data(&self, channel: &C) -> std::result::Result<Vec<Datum<A>>, crate::errors::RSpaceError> {
         self.replay.get_data(channel).await
     }
 
-    async fn get_waiting_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+    async fn get_waiting_continuations(
+        &self,
+        channels: &[C],
+    ) -> std::result::Result<Vec<WaitingContinuation<P, K>>, crate::errors::RSpaceError> {
         self.replay.get_waiting_continuations(channels).await
     }
 
-    async fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
+    async fn get_joins(&self, channel: &C) -> std::result::Result<Vec<Vec<C>>, crate::errors::RSpaceError> {
         self.replay.get_joins(channel).await
     }
 
-    async fn clear(&self) {
-        self.replay.clear().await;
+    async fn clear(&self) -> std::result::Result<(), String> {
+        self.replay.clear().await
     }
 
     async fn to_map(&self) -> std::collections::BTreeMap<Vec<C>, Row<P, A, K>> {
@@ -203,8 +211,8 @@ where
         self.replay.rig(log).await;
     }
 
-    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) {
-        self.replay.rig_and_reset(start_root, log).await;
+    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> std::result::Result<(), String> {
+        self.replay.rig_and_reset(start_root, log).await
     }
 
     async fn check_replay_data(&self) -> std::result::Result<(), ReplayException> {

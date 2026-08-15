@@ -157,12 +157,12 @@ where
         channels: &[C],
         patterns: &[P],
         comm: &Comm,
-    ) -> Option<Vec<ConsumeCandidate<C, A>>> {
+    ) -> std::result::Result<Option<Vec<ConsumeCandidate<C, A>>>, crate::errors::RSpaceError> {
         let store = self.space.current_store();
         let matcher = self.space.matcher();
         let mut channel_to_indexed_data: BTreeMap<C, Vec<(Datum<A>, i64)>> = BTreeMap::new();
         for c in channels {
-            let data_list = store.get_data(c).await;
+            let data_list = store.get_data(c).await?;
             let mut indexed = Vec::new();
             for (i, d) in data_list.into_iter().enumerate() {
                 if self.matches(comm, &d) {
@@ -180,7 +180,7 @@ where
             &channel_to_indexed_data,
             matcher.as_ref(),
         );
-        options.into_iter().collect()
+        Ok(options.into_iter().collect())
     }
 
     async fn get_comm_and_consume_candidates(
@@ -188,13 +188,13 @@ where
         channels: &[C],
         patterns: &[P],
         comms: &[Comm],
-    ) -> Option<(Comm, Vec<ConsumeCandidate<C, A>>)> {
+    ) -> std::result::Result<Option<(Comm, Vec<ConsumeCandidate<C, A>>)>, crate::errors::RSpaceError> {
         for comm in comms {
-            if let Some(candidates) = self.run_matcher_consume(channels, patterns, comm).await {
-                return Some((comm.clone(), candidates));
+            if let Some(candidates) = self.run_matcher_consume(channels, patterns, comm).await? {
+                return Ok(Some((comm.clone(), candidates)));
             }
         }
-        None
+        Ok(None)
     }
 
     async fn run_matcher_produce(
@@ -205,11 +205,11 @@ where
         comm: &Comm,
         produce_ref: &Produce,
         grouped_channels: &[Vec<C>],
-    ) -> Option<ProduceCandidate<C, P, A, K>> {
+    ) -> std::result::Result<Option<ProduceCandidate<C, P, A, K>>, crate::errors::RSpaceError> {
         let store = self.space.current_store();
         let matcher = self.space.matcher();
         for channels in grouped_channels {
-            let conts = store.get_continuations(channels).await;
+            let conts = store.get_continuations(channels).await?;
             let match_candidates: Vec<(WaitingContinuation<P, K>, usize)> = conts
                 .into_iter()
                 .enumerate()
@@ -219,7 +219,7 @@ where
 
             let mut channel_to_indexed_data: BTreeMap<C, Vec<(Datum<A>, i64)>> = BTreeMap::new();
             for c in channels {
-                let data_list = store.get_data(c).await;
+                let data_list = store.get_data(c).await?;
                 let mut all: Vec<(Datum<A>, i64)> = Vec::new();
                 if c == channel {
                     all.push((
@@ -252,10 +252,10 @@ where
                 &channel_to_indexed_data,
                 matcher.as_ref(),
             ) {
-                return Some(pc);
+                return Ok(Some(pc));
             }
         }
-        None
+        Ok(None)
     }
 
     async fn get_comm_or_produce_candidate(
@@ -266,16 +266,16 @@ where
         comms: &[Comm],
         produce_ref: &Produce,
         grouped_channels: &[Vec<C>],
-    ) -> Option<(Comm, ProduceCandidate<C, P, A, K>)> {
+    ) -> std::result::Result<Option<(Comm, ProduceCandidate<C, P, A, K>)>, crate::errors::RSpaceError> {
         for comm in comms {
             if let Some(pc) = self
                 .run_matcher_produce(channel, data, persist, comm, produce_ref, grouped_channels)
-                .await
+                .await?
             {
-                return Some((comm.clone(), pc));
+                return Ok(Some((comm.clone(), pc)));
             }
         }
-        None
+        Ok(None)
     }
 
     fn remove_bindings_for(&self, comm: &Comm) {
@@ -294,7 +294,7 @@ where
         persist: bool,
         peeks: BTreeSet<usize>,
         consume_ref: Consume,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
         let wk = WaitingContinuation {
             patterns: patterns.to_vec(),
             continuation,
@@ -302,17 +302,14 @@ where
             peeks: peeks.clone(),
             source: consume_ref.clone(),
         };
-        let comms = self
-            .replay_data
-            .read()
-            .unwrap()
+        let comms = crate::lock::rlock(&self.replay_data)
             .comms_for_consume(&consume_ref)
             .cloned();
         match comms {
             None => self.space.store_waiting_continuation(channels, wk).await,
             Some(comms) => match self
                 .get_comm_and_consume_candidates(channels, patterns, &comms)
-                .await
+                .await?
             {
                 None => self.space.store_waiting_continuation(channels, wk).await,
                 Some((_comm, data_candidates)) => {
@@ -323,7 +320,7 @@ where
                         comms.contains(&comm_ref),
                         "COMM Event was not contained in the trace"
                     );
-                    self.space.store_persistent_data(&data_candidates).await;
+                    self.space.store_persistent_data(&data_candidates).await?;
                     self.remove_bindings_for(&comm_ref);
                     self.space.wrap_result(channels, &wk, &data_candidates)
                 }
@@ -337,15 +334,12 @@ where
         data: A,
         persist: bool,
         produce_ref: Produce,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
-        let grouped_channels = self.space.current_store().get_joins(&channel).await;
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
+        let grouped_channels = self.space.current_store().get_joins(&channel).await?;
         if !persist {
             self.space.increment_produce_counter(&produce_ref);
         }
-        let comms = self
-            .replay_data
-            .read()
-            .unwrap()
+        let comms = crate::lock::rlock(&self.replay_data)
             .comms_for_produce(&produce_ref)
             .cloned();
         match comms {
@@ -359,7 +353,7 @@ where
                     &produce_ref,
                     &grouped_channels,
                 )
-                .await
+                .await?
             {
                 None => self.space.store_data(&channel, data, persist, produce_ref).await,
                 Some((_comm, pc)) => self.handle_match(pc, &comms).await,
@@ -371,7 +365,7 @@ where
         &self,
         pc: ProduceCandidate<C, P, A, K>,
         comms: &[Comm],
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
         let ProduceCandidate {
             channels,
             continuation: wk,
@@ -390,11 +384,11 @@ where
             let store = self.space.current_store();
             store
                 .remove_continuation(&channels, continuation_index)
-                .await;
+                .await?;
         }
         self.space
             .remove_matched_datum_and_join(&channels, &data_candidates)
-            .await;
+            .await?;
         self.remove_bindings_for(&comm_ref);
         self.space.wrap_result(&channels, &wk, &data_candidates)
     }
@@ -415,7 +409,7 @@ where
         continuation: K,
         persist: bool,
         peeks: BTreeSet<usize>,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
         assert!(!channels.is_empty(), "channels can't be empty");
         assert_eq!(
             channels.len(),
@@ -426,8 +420,8 @@ where
         let hashes: Vec<Blake2b256Hash> = channels.iter().map(hash_channel).collect();
         let thunk = self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
         self.lock_f
-            .acquire(&hashes, Box::pin(async { hashes.clone() }), thunk)
-            .await
+            .acquire(&hashes, Box::pin(async { Ok(hashes.clone()) }), thunk)
+            .await?
     }
 
     async fn produce(
@@ -435,27 +429,32 @@ where
         channel: C,
         data: A,
         persist: bool,
-    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+    ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
         let produce_ref = Produce::apply(&channel, &data, persist);
         let thunk = self.locked_produce(channel.clone(), data, persist, produce_ref);
         let phase_two = {
             let store = self.space.current_store();
             let channel = channel.clone();
             Box::pin(async move {
-                store
+                Ok(store
                     .get_joins(&channel)
-                    .await
+                    .await?
                     .into_iter()
                     .flatten()
                     .map(|c| hash_channel(&c))
-                    .collect()
+                    .collect())
             })
         };
         let hash = hash_channel(&channel);
-        self.lock_f.acquire(&[hash], phase_two, thunk).await
+        self.lock_f.acquire(&[hash], phase_two, thunk).await?
     }
 
-    async fn install(&self, channels: &[C], patterns: &[P], continuation: K) -> Option<(K, Vec<A>)> {
+    async fn install(
+        &self,
+        channels: &[C],
+        patterns: &[P],
+        continuation: K,
+    ) -> std::result::Result<Option<(K, Vec<A>)>, crate::errors::RSpaceError> {
         self.space.install(channels, patterns, continuation).await
     }
 }
@@ -468,31 +467,32 @@ where
     A: Clone + Serialize<A> + Send + Sync + 'static,
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
-    async fn create_checkpoint(&self) -> crate::checkpoint::Checkpoint {
-        self.check_replay_data()
-            .await
-            .expect("replay data must be empty at checkpoint");
+    async fn create_checkpoint(&self) -> std::result::Result<crate::checkpoint::Checkpoint, String> {
+        self.check_replay_data().await.map_err(|e| e.to_string())?;
         self.space.create_checkpoint().await
     }
 
-    async fn reset(&self, root: Blake2b256Hash) {
-        self.space.reset(root).await;
+    async fn reset(&self, root: Blake2b256Hash) -> std::result::Result<(), String> {
+        self.space.reset(root).await
     }
 
-    async fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
+    async fn get_data(&self, channel: &C) -> std::result::Result<Vec<Datum<A>>, crate::errors::RSpaceError> {
         self.space.get_data(channel).await
     }
 
-    async fn get_waiting_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+    async fn get_waiting_continuations(
+        &self,
+        channels: &[C],
+    ) -> std::result::Result<Vec<WaitingContinuation<P, K>>, crate::errors::RSpaceError> {
         self.space.get_waiting_continuations(channels).await
     }
 
-    async fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
+    async fn get_joins(&self, channel: &C) -> std::result::Result<Vec<Vec<C>>, crate::errors::RSpaceError> {
         self.space.get_joins(channel).await
     }
 
-    async fn clear(&self) {
-        self.space.clear().await;
+    async fn clear(&self) -> std::result::Result<(), String> {
+        self.space.clear().await
     }
 
     async fn to_map(&self) -> BTreeMap<Vec<C>, Row<P, A, K>> {
@@ -520,9 +520,9 @@ where
         *crate::lock::wlock(&self.replay_data) = Self::build_replay_data(&log);
     }
 
-    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) {
+    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> std::result::Result<(), String> {
         self.rig(log).await;
-        self.reset(start_root).await;
+        self.reset(start_root).await
     }
 
     async fn check_replay_data(&self) -> std::result::Result<(), ReplayException> {

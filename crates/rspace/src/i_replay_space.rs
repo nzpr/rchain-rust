@@ -14,7 +14,7 @@ use crate::util::ReplayException;
 pub trait IReplaySpace<C, P, A, K>: ISpace<C, P, A, K> {
     async fn rig(&self, log: Log);
 
-    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log);
+    async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) -> Result<(), String>;
 
     async fn check_replay_data(&self) -> Result<(), ReplayException>;
 }

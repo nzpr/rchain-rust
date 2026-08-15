@@ -10,6 +10,7 @@
 
 use rchain_shared::serialize::Serialize;
 
+use crate::errors::RSpaceError;
 use crate::internal::{Datum, WaitingContinuation};
 use crate::trace::event::{Consume, Produce};
 
@@ -215,17 +216,20 @@ fn read_consume(r: &mut BitReader) -> Consume {
     Consume::from_hash(channels_hashes, hash, persistent)
 }
 
-fn read_datum<A>(r: &mut BitReader) -> Datum<A>
+fn read_datum<A>(r: &mut BitReader) -> Result<Datum<A>, RSpaceError>
 where
     A: Serialize<A>,
 {
-    let a = <A as Serialize<A>>::decode(&read_size_head(r)).expect("decode datum");
+    let a = <A as Serialize<A>>::decode(&read_size_head(r))
+        .map_err(|_| RSpaceError::Codec("datum"))?;
     let persist = r.read_bit() != 0;
     let source = read_produce(r);
-    Datum { a, persist, source }
+    Ok(Datum { a, persist, source })
 }
 
-fn read_waiting_continuation<P, K>(r: &mut BitReader) -> WaitingContinuation<P, K>
+fn read_waiting_continuation<P, K>(
+    r: &mut BitReader,
+) -> Result<WaitingContinuation<P, K>, RSpaceError>
 where
     P: Serialize<P>,
     K: Serialize<K>,
@@ -233,9 +237,13 @@ where
     let pattern_count = r.read_bits(32) as usize;
     let mut patterns = Vec::with_capacity(pattern_count);
     for _ in 0..pattern_count {
-        patterns.push(<P as Serialize<P>>::decode(&read_size_head(r)).expect("decode pattern"));
+        patterns.push(
+            <P as Serialize<P>>::decode(&read_size_head(r))
+                .map_err(|_| RSpaceError::Codec("pattern"))?,
+        );
     }
-    let continuation = <K as Serialize<K>>::decode(&read_size_head(r)).expect("decode continuation");
+    let continuation = <K as Serialize<K>>::decode(&read_size_head(r))
+        .map_err(|_| RSpaceError::Codec("continuation"))?;
     let persist = r.read_bit() != 0;
     let peek_count = r.read_bits(32) as usize;
     let mut peeks = std::collections::BTreeSet::new();
@@ -243,13 +251,13 @@ where
         peeks.insert(r.read_bits(8) as usize);
     }
     let source = read_consume(r);
-    WaitingContinuation {
+    Ok(WaitingContinuation {
         patterns,
         continuation,
         persist,
         peeks,
         source,
-    }
+    })
 }
 
 /// Encode a list of data (port of `encodeDatums`).
@@ -337,7 +345,7 @@ fn decode_seq_byte_vectors(bytes: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// Decode a list of data (port of `decodeDatums`).
-pub fn decode_datums<A>(bytes: &[u8]) -> Vec<Datum<A>>
+pub fn decode_datums<A>(bytes: &[u8]) -> Result<Vec<Datum<A>>, RSpaceError>
 where
     A: Serialize<A>,
 {
@@ -348,7 +356,7 @@ where
 }
 
 /// Decode a list of continuations (port of `decodeContinuations`).
-pub fn decode_continuations<P, K>(bytes: &[u8]) -> Vec<WaitingContinuation<P, K>>
+pub fn decode_continuations<P, K>(bytes: &[u8]) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError>
 where
     P: Serialize<P>,
     K: Serialize<K>,
@@ -360,7 +368,7 @@ where
 }
 
 /// Decode a list of joins (port of `decodeJoins`).
-pub fn decode_joins<C>(bytes: &[u8]) -> Vec<Vec<C>>
+pub fn decode_joins<C>(bytes: &[u8]) -> Result<Vec<Vec<C>>, RSpaceError>
 where
     C: Serialize<C>,
 {
@@ -369,8 +377,10 @@ where
         .map(|join_bytes| {
             decode_seq_byte_vectors(&join_bytes)
                 .into_iter()
-                .map(|c| <C as Serialize<C>>::decode(&c).expect("decode channel"))
-                .collect()
+                .map(|c| {
+                    <C as Serialize<C>>::decode(&c).map_err(|_| RSpaceError::Codec("channel"))
+                })
+                .collect::<Result<Vec<C>, RSpaceError>>()
         })
         .collect()
 }

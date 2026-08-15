@@ -10,6 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::{Mutex, OnceCell};
 
+use crate::errors::RSpaceError;
 use crate::history::history_reader::HistoryReaderBase;
 use crate::hot_store_action::HotStoreAction;
 use crate::internal::{Datum, Row, WaitingContinuation};
@@ -62,19 +63,30 @@ impl<C, P, A, K> Default for HistoryStoreCache<C, P, A, K> {
 /// The hot store interface (port of `HotStore[F]`).
 #[async_trait]
 pub trait HotStore<C, P, A, K>: Send + Sync {
-    async fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>>;
-    async fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>);
+    async fn get_continuations(
+        &self,
+        channels: &[C],
+    ) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError>;
+    async fn put_continuation(
+        &self,
+        channels: &[C],
+        wc: WaitingContinuation<P, K>,
+    ) -> Result<(), RSpaceError>;
     async fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>);
-    async fn remove_continuation(&self, channels: &[C], index: usize);
+    async fn remove_continuation(
+        &self,
+        channels: &[C],
+        index: usize,
+    ) -> Result<(), RSpaceError>;
 
-    async fn get_data(&self, channel: &C) -> Vec<Datum<A>>;
-    async fn put_datum(&self, channel: &C, datum: Datum<A>);
-    async fn remove_datum(&self, channel: &C, index: i64);
+    async fn get_data(&self, channel: &C) -> Result<Vec<Datum<A>>, RSpaceError>;
+    async fn put_datum(&self, channel: &C, datum: Datum<A>) -> Result<(), RSpaceError>;
+    async fn remove_datum(&self, channel: &C, index: i64) -> Result<(), RSpaceError>;
 
-    async fn get_joins(&self, channel: &C) -> Vec<Vec<C>>;
-    async fn put_join(&self, channel: &C, join: &[C]);
+    async fn get_joins(&self, channel: &C) -> Result<Vec<Vec<C>>, RSpaceError>;
+    async fn put_join(&self, channel: &C, join: &[C]) -> Result<(), RSpaceError>;
     async fn install_join(&self, channel: &C, join: &[C]);
-    async fn remove_join(&self, channel: &C, join: &[C]);
+    async fn remove_join(&self, channel: &C, join: &[C]) -> Result<(), RSpaceError>;
 
     async fn changes(&self) -> Vec<HotStoreAction<C, P, A, K>>;
     async fn to_map(&self) -> BTreeMap<Vec<C>, Row<P, A, K>>;
@@ -114,7 +126,10 @@ where
         }
     }
 
-    async fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+    async fn get_cont_from_history_store(
+        &self,
+        channels: &[C],
+    ) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError> {
         let cell = {
             let mut cache = self.cache.lock().await;
             cache
@@ -125,15 +140,16 @@ where
         };
         let reader_base = self.reader_base.clone();
         let channels = channels.to_vec();
-        cell.get_or_try_init(|| async move {
-            Ok::<_, ()>(reader_base.get_continuations(&channels).await)
-        })
-        .await
-        .unwrap()
-        .clone()
+        let result = cell
+            .get_or_try_init(|| async move { reader_base.get_continuations(&channels).await })
+            .await?;
+        Ok(result.clone())
     }
 
-    async fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
+    async fn get_data_from_history_store(
+        &self,
+        channel: &C,
+    ) -> Result<Vec<Datum<A>>, RSpaceError> {
         let cell = {
             let mut cache = self.cache.lock().await;
             cache
@@ -144,13 +160,16 @@ where
         };
         let reader_base = self.reader_base.clone();
         let channel = channel.clone();
-        cell.get_or_try_init(|| async move { Ok::<_, ()>(reader_base.get_data(&channel).await) })
-            .await
-            .unwrap()
-            .clone()
+        let result = cell
+            .get_or_try_init(|| async move { reader_base.get_data(&channel).await })
+            .await?;
+        Ok(result.clone())
     }
 
-    async fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
+    async fn get_joins_from_history_store(
+        &self,
+        channel: &C,
+    ) -> Result<Vec<Vec<C>>, RSpaceError> {
         let cell = {
             let mut cache = self.cache.lock().await;
             cache
@@ -161,10 +180,10 @@ where
         };
         let reader_base = self.reader_base.clone();
         let channel = channel.clone();
-        cell.get_or_try_init(|| async move { Ok::<_, ()>(reader_base.get_joins(&channel).await) })
-            .await
-            .unwrap()
-            .clone()
+        let result = cell
+            .get_or_try_init(|| async move { reader_base.get_joins(&channel).await })
+            .await?;
+        Ok(result.clone())
     }
 }
 
@@ -176,10 +195,13 @@ where
     A: Clone + Send + Sync + 'static,
     K: Clone + Send + Sync + 'static,
 {
-    async fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
-        let from_history = self.get_cont_from_history_store(channels).await;
+    async fn get_continuations(
+        &self,
+        channels: &[C],
+    ) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError> {
+        let from_history = self.get_cont_from_history_store(channels).await?;
         let mut state = self.state.lock().await;
-        match state.continuations.get(channels) {
+        Ok(match state.continuations.get(channels) {
             Some(conts) => {
                 let mut out = Vec::new();
                 if let Some(installed) = state.installed_continuations.get(channels) {
@@ -199,17 +221,22 @@ where
                 out.extend(from_history);
                 out
             }
-        }
+        })
     }
 
-    async fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) {
-        let from_history = self.get_cont_from_history_store(channels).await;
+    async fn put_continuation(
+        &self,
+        channels: &[C],
+        wc: WaitingContinuation<P, K>,
+    ) -> Result<(), RSpaceError> {
+        let from_history = self.get_cont_from_history_store(channels).await?;
         let mut state = self.state.lock().await;
         let cur = state
             .continuations
             .entry(channels.to_vec())
             .or_insert(from_history);
         cur.insert(0, wc);
+        Ok(())
     }
 
     async fn install_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) {
@@ -219,13 +246,17 @@ where
             .insert(channels.to_vec(), wc);
     }
 
-    async fn remove_continuation(&self, channels: &[C], index: usize) {
-        let from_history = self.get_cont_from_history_store(channels).await;
+    async fn remove_continuation(
+        &self,
+        channels: &[C],
+        index: usize,
+    ) -> Result<(), RSpaceError> {
+        let from_history = self.get_cont_from_history_store(channels).await?;
         let mut state = self.state.lock().await;
         let is_installed = state.installed_continuations.contains_key(channels);
         if is_installed && index == 0 {
             // Attempted to remove the installed continuation — skip.
-            return;
+            return Ok(());
         }
         let removed_index = if is_installed { index - 1 } else { index };
         let cur = state
@@ -235,40 +266,43 @@ where
         if removed_index < cur.len() {
             *cur = remove_index(cur, removed_index);
         }
+        Ok(())
     }
 
-    async fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
-        let from_history = self.get_data_from_history_store(channel).await;
+    async fn get_data(&self, channel: &C) -> Result<Vec<Datum<A>>, RSpaceError> {
+        let from_history = self.get_data_from_history_store(channel).await?;
         let mut state = self.state.lock().await;
-        match state.data.get(channel) {
+        Ok(match state.data.get(channel) {
             Some(data) => data.clone(),
             None => {
                 state.data.insert(channel.clone(), from_history.clone());
                 from_history
             }
-        }
+        })
     }
 
-    async fn put_datum(&self, channel: &C, datum: Datum<A>) {
-        let from_history = self.get_data_from_history_store(channel).await;
+    async fn put_datum(&self, channel: &C, datum: Datum<A>) -> Result<(), RSpaceError> {
+        let from_history = self.get_data_from_history_store(channel).await?;
         let mut state = self.state.lock().await;
         let cur = state.data.entry(channel.clone()).or_insert(from_history);
         cur.insert(0, datum);
+        Ok(())
     }
 
-    async fn remove_datum(&self, channel: &C, index: i64) {
-        let from_history = self.get_data_from_history_store(channel).await;
+    async fn remove_datum(&self, channel: &C, index: i64) -> Result<(), RSpaceError> {
+        let from_history = self.get_data_from_history_store(channel).await?;
         let mut state = self.state.lock().await;
         let cur = state.data.entry(channel.clone()).or_insert(from_history);
         if index >= 0 && (index as usize) < cur.len() {
             *cur = remove_index(cur, index as usize);
         }
+        Ok(())
     }
 
-    async fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
-        let from_history = self.get_joins_from_history_store(channel).await;
+    async fn get_joins(&self, channel: &C) -> Result<Vec<Vec<C>>, RSpaceError> {
+        let from_history = self.get_joins_from_history_store(channel).await?;
         let mut state = self.state.lock().await;
-        match state.joins.get(channel) {
+        Ok(match state.joins.get(channel) {
             Some(joins) => {
                 let mut out = state.installed_joins.get(channel).cloned().unwrap_or_default();
                 out.extend(joins.clone());
@@ -280,16 +314,17 @@ where
                 out.extend(from_history);
                 out
             }
-        }
+        })
     }
 
-    async fn put_join(&self, channel: &C, join: &[C]) {
-        let from_history = self.get_joins_from_history_store(channel).await;
+    async fn put_join(&self, channel: &C, join: &[C]) -> Result<(), RSpaceError> {
+        let from_history = self.get_joins_from_history_store(channel).await?;
         let mut state = self.state.lock().await;
         let cur = state.joins.entry(channel.clone()).or_insert(from_history);
         if !cur.contains(&join.to_vec()) {
             cur.insert(0, join.to_vec());
         }
+        Ok(())
     }
 
     async fn install_join(&self, channel: &C, join: &[C]) {
@@ -300,13 +335,14 @@ where
         }
     }
 
-    async fn remove_join(&self, channel: &C, join: &[C]) {
-        let from_history = self.get_joins_from_history_store(channel).await;
+    async fn remove_join(&self, channel: &C, join: &[C]) -> Result<(), RSpaceError> {
+        let from_history = self.get_joins_from_history_store(channel).await?;
         let mut state = self.state.lock().await;
         let cur = state.joins.entry(channel.clone()).or_insert(from_history);
         if let Some(index) = cur.iter().position(|j| j == join) {
             *cur = remove_index(cur, index);
         }
+        Ok(())
     }
 
     async fn changes(&self) -> Vec<HotStoreAction<C, P, A, K>> {

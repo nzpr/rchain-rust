@@ -53,7 +53,10 @@ pub async fn handle<T: TransportLayer + ?Sized>(
     connections: &mut Vec<PeerNode>,
     routing_queue: &tokio::sync::mpsc::Sender<RoutingMessage>,
 ) -> CommunicationResponse {
-    let sender = protocol_helper::sender(&proto);
+    let sender = match protocol_helper::sender(&proto) {
+        Ok(s) => s,
+        Err(e) => return CommunicationResponse::not_handled(e),
+    };
     match proto.message {
         Some(protocol::Message::Heartbeat(_)) => {
             *connections = refresh_conn(connections, &sender);

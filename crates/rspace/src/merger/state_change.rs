@@ -77,13 +77,13 @@ impl StateChange {
         for history_pointer in produce_hashes {
             let start: Vec<Vec<u8>> = pre_state_reader
                 .get_data(history_pointer)
-                .await
+                .await.map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|d| d.raw)
                 .collect();
             let end: Vec<Vec<u8>> = post_state_reader
                 .get_data(history_pointer)
-                .await
+                .await.map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|d| d.raw)
                 .collect();
@@ -101,13 +101,13 @@ impl StateChange {
             let history_pointer = hash_hashes(&consume_channels);
             let start: Vec<Vec<u8>> = pre_state_reader
                 .get_continuations(history_pointer)
-                .await
+                .await.map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|wc| wc.raw)
                 .collect();
             let end: Vec<Vec<u8>> = post_state_reader
                 .get_continuations(history_pointer)
-                .await
+                .await.map_err(|e| e.to_string())?
                 .into_iter()
                 .map(|wc| wc.raw)
                 .collect();
@@ -118,8 +118,8 @@ impl StateChange {
 
             // Recover the serialized join body matching these consume channels.
             let history_pointer = consume_channels[0];
-            let pre = pre_state_reader.get_joins(history_pointer).await;
-            let post = post_state_reader.get_joins(history_pointer).await;
+            let pre = pre_state_reader.get_joins(history_pointer).await.map_err(|e| e.to_string())?;
+            let post = post_state_reader.get_joins(history_pointer).await.map_err(|e| e.to_string())?;
             let err_msg = "Tuple space inconsistency found: channel of consume does not contain \
                            join record corresponding to the consume channels."
                 .to_string();

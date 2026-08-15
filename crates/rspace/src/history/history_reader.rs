@@ -7,6 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 
+use crate::errors::RSpaceError;
 use crate::internal::{Datum, WaitingContinuation};
 use crate::serializers::scodec_serialize::{DatumB, JoinsB, WaitingContinuationB};
 
@@ -15,11 +16,14 @@ use crate::serializers::scodec_serialize::{DatumB, JoinsB, WaitingContinuationB}
 pub trait HistoryReader<C, P, A, K>: Send + Sync {
     fn root(&self) -> Blake2b256Hash;
 
-    async fn get_data(&self, key: Blake2b256Hash) -> Vec<Datum<A>>;
+    async fn get_data(&self, key: Blake2b256Hash) -> Result<Vec<Datum<A>>, RSpaceError>;
 
-    async fn get_continuations(&self, key: Blake2b256Hash) -> Vec<WaitingContinuation<P, K>>;
+    async fn get_continuations(
+        &self,
+        key: Blake2b256Hash,
+    ) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError>;
 
-    async fn get_joins(&self, key: Blake2b256Hash) -> Vec<Vec<C>>;
+    async fn get_joins(&self, key: Blake2b256Hash) -> Result<Vec<Vec<C>>, RSpaceError>;
 
     /// A reader that hashes channels internally (port of `base`).
     fn base(&self) -> Arc<dyn HistoryReaderBase<C, P, A, K>>;
@@ -28,19 +32,25 @@ pub trait HistoryReader<C, P, A, K>: Send + Sync {
 /// A reader keyed by raw (unhashed) channels (port of `HistoryReaderBase`).
 #[async_trait]
 pub trait HistoryReaderBase<C, P, A, K>: Send + Sync {
-    async fn get_data(&self, key: &C) -> Vec<Datum<A>>;
+    async fn get_data(&self, key: &C) -> Result<Vec<Datum<A>>, RSpaceError>;
 
-    async fn get_continuations(&self, key: &[C]) -> Vec<WaitingContinuation<P, K>>;
+    async fn get_continuations(
+        &self,
+        key: &[C],
+    ) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError>;
 
-    async fn get_joins(&self, key: &C) -> Vec<Vec<C>>;
+    async fn get_joins(&self, key: &C) -> Result<Vec<Vec<C>>, RSpaceError>;
 }
 
 /// A reader returning raw bytes alongside decoded values (port of `HistoryReaderBinary`).
 #[async_trait]
 pub trait HistoryReaderBinary<C, P, A, K>: Send + Sync {
-    async fn get_data(&self, key: Blake2b256Hash) -> Vec<DatumB<A>>;
+    async fn get_data(&self, key: Blake2b256Hash) -> Result<Vec<DatumB<A>>, RSpaceError>;
 
-    async fn get_continuations(&self, key: Blake2b256Hash) -> Vec<WaitingContinuationB<P, K>>;
+    async fn get_continuations(
+        &self,
+        key: Blake2b256Hash,
+    ) -> Result<Vec<WaitingContinuationB<P, K>>, RSpaceError>;
 
-    async fn get_joins(&self, key: Blake2b256Hash) -> Vec<JoinsB<C>>;
+    async fn get_joins(&self, key: Blake2b256Hash) -> Result<Vec<JoinsB<C>>, RSpaceError>;
 }

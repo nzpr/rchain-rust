@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_shared::serialize::Serialize;
 
+use crate::errors::RSpaceError;
 use crate::hashing::stable_hash_provider::{hash_channel, hash_channels};
 use crate::history::cold_store::{ColdKeyValueStore, PersistedData};
 use crate::history::history::History;
@@ -72,27 +73,30 @@ where
         self.target_history.root()
     }
 
-    async fn get_data(&self, key: Blake2b256Hash) -> Vec<Datum<A>> {
+    async fn get_data(&self, key: Blake2b256Hash) -> Result<Vec<Datum<A>>, RSpaceError> {
         match self.fetch_data(PREFIX_DATUM, key).await {
             Some(PersistedData::DataLeaf(bytes)) => decode_datums(&bytes),
-            Some(_) => panic!("unexpected leaf while looking for data at key {key:?}"),
-            None => Vec::new(),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("data")),
+            None => Ok(Vec::new()),
         }
     }
 
-    async fn get_continuations(&self, key: Blake2b256Hash) -> Vec<WaitingContinuation<P, K>> {
+    async fn get_continuations(
+        &self,
+        key: Blake2b256Hash,
+    ) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError> {
         match self.fetch_data(PREFIX_KONT, key).await {
             Some(PersistedData::ContinuationsLeaf(bytes)) => decode_continuations(&bytes),
-            Some(_) => panic!("unexpected leaf while looking for continuations at key {key:?}"),
-            None => Vec::new(),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("continuations")),
+            None => Ok(Vec::new()),
         }
     }
 
-    async fn get_joins(&self, key: Blake2b256Hash) -> Vec<Vec<C>> {
+    async fn get_joins(&self, key: Blake2b256Hash) -> Result<Vec<Vec<C>>, RSpaceError> {
         match self.fetch_data(PREFIX_JOINS, key).await {
             Some(PersistedData::JoinsLeaf(bytes)) => decode_joins(&bytes),
-            Some(_) => panic!("unexpected leaf while looking for joins at key {key:?}"),
-            None => Vec::new(),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("joins")),
+            None => Ok(Vec::new()),
         }
     }
 
@@ -119,15 +123,15 @@ where
     A: Serialize<A> + Send + Sync + 'static,
     K: Serialize<K> + Send + Sync + 'static,
 {
-    async fn get_data(&self, key: &C) -> Vec<Datum<A>> {
+    async fn get_data(&self, key: &C) -> Result<Vec<Datum<A>>, RSpaceError> {
         self.reader.get_data(hash_channel(key)).await
     }
 
-    async fn get_continuations(&self, key: &[C]) -> Vec<WaitingContinuation<P, K>> {
+    async fn get_continuations(&self, key: &[C]) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError> {
         self.reader.get_continuations(hash_channels(key)).await
     }
 
-    async fn get_joins(&self, key: &C) -> Vec<Vec<C>> {
+    async fn get_joins(&self, key: &C) -> Result<Vec<Vec<C>>, RSpaceError> {
         self.reader.get_joins(hash_channel(key)).await
     }
 }
