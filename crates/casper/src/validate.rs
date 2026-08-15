@@ -83,6 +83,172 @@ pub fn phlo_price(b: &BlockMessage, min_phlo_price: i64) -> BlockStatus {
     }
 }
 
+// --- Effectful checks (depend on the block DAG) ------------------------------------------------
+//
+// `repeatDeploy` (needs `BlockStore` + `DagOps`) and `bondsCache` (needs `RuntimeManager`) are
+// deferred.
+
+use std::collections::BTreeMap;
+
+use rchain_block_storage::dag::dag_storage::BlockDagStorage;
+use rchain_block_storage::dag::finalizer::Message;
+use rchain_models::validator::Validator;
+
+/// A block-validation outcome: `Ok(())` is valid, `Err(status)` is the invalid status (port of
+/// `ValidBlockProcessing`).
+pub type ValidBlockProcessing = Result<(), BlockStatus>;
+
+/// Validate the block number is one more than the maximum non-failed parent number (port of
+/// `blockNumber`).
+pub async fn block_number(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMessage,
+) -> Result<ValidBlockProcessing, String> {
+    let mut max_block_number = -1i64;
+    for j in &b.justifications {
+        let meta = dag
+            .lookup(j)
+            .await?
+            .ok_or_else(|| format!("missing justification {}", j.to_hex()))?;
+        if !meta.validation_failed {
+            max_block_number = max_block_number.max(meta.block_num);
+        }
+    }
+    if max_block_number + 1 == b.block_number {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(BlockStatus::InvalidBlockNumber))
+    }
+}
+
+/// Validate the sender's sequence number is one more than its latest justification's (port of
+/// `sequenceNumber`).
+pub async fn sequence_number(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMessage,
+) -> Result<ValidBlockProcessing, String> {
+    let mut creator_latest_seq = -1i64;
+    for j in &b.justifications {
+        let meta = dag
+            .lookup(j)
+            .await?
+            .ok_or_else(|| format!("missing justification {}", j.to_hex()))?;
+        if meta.sender == b.sender {
+            creator_latest_seq = creator_latest_seq.max(meta.seq_num);
+        }
+    }
+    if creator_latest_seq + 1 == b.seq_num {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(BlockStatus::InvalidSequenceNumber))
+    }
+}
+
+/// Validate there is no justification regression (port of `justificationRegressions`).
+pub async fn justification_regressions(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMessage,
+) -> Result<ValidBlockProcessing, String> {
+    let valid = check_justification_regression(dag, b).await?.unwrap_or(true);
+    if valid {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(BlockStatus::JustificationRegression))
+    }
+}
+
+async fn check_justification_regression(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMessage,
+) -> Result<Option<bool>, String> {
+    let repr = dag.get_representation().await;
+    let msg_map: &BTreeMap<BlockHash, Message<BlockHash, Validator>> =
+        &repr.dag_message_state.msg_map;
+
+    // `justifications.map(msgMap.get).sequence` — None if any is missing (see the Scala TODO).
+    let justifications: Option<Vec<Message<BlockHash, Validator>>> = b
+        .justifications
+        .iter()
+        .map(|j| msg_map.get(j).cloned())
+        .collect();
+    let justifications = match justifications {
+        Some(js) => js,
+        None => return Ok(None),
+    };
+
+    let prev_msg = match justifications.iter().find(|m| m.sender == b.sender) {
+        Some(m) => m,
+        None => return Ok(None),
+    };
+
+    let res = justifications.iter().all(|just| {
+        let just_prev_msg = prev_msg
+            .parents
+            .iter()
+            .filter_map(|p| msg_map.get(p))
+            .find(|m| m.sender == just.sender);
+        match just_prev_msg {
+            Some(just_prev_msg) => just_prev_msg.seen.difference(&just.seen).next().is_none(),
+            None => true,
+        }
+    });
+    Ok(Some(res))
+}
+
+/// Validate that a block does not neglect an invalid-but-still-bonded justification (port of
+/// `neglectedInvalidBlock`).
+pub async fn neglected_invalid_block(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMessage,
+) -> Result<ValidBlockProcessing, String> {
+    let mut justifications = Vec::new();
+    for j in &b.justifications {
+        if let Some(meta) = dag.lookup(j).await? {
+            justifications.push(meta);
+        }
+    }
+    let neglected = justifications
+        .iter()
+        .filter(|m| m.validation_failed)
+        .map(|m| m.sender)
+        .any(|v| b.bonds.get(&v).map(|&stake| stake > 0).unwrap_or(false));
+    if neglected {
+        Ok(Err(BlockStatus::NeglectedInvalidBlock))
+    } else {
+        Ok(Ok(()))
+    }
+}
+
+/// Compose the effectful + pure checks (port of `blockSummary`); `repeatDeploy` and `bondsCache`
+/// are deferred.
+pub async fn block_summary(
+    dag: &dyn BlockDagStorage,
+    block: &BlockMessage,
+    shard_id: &str,
+    expiration_threshold: i64,
+) -> Result<ValidBlockProcessing, String> {
+    if let Err(status) = justification_regressions(dag, block).await? {
+        return Ok(Err(status));
+    }
+    if let Err(status) = sequence_number(dag, block).await? {
+        return Ok(Err(status));
+    }
+    if let Err(status) = block_number(dag, block).await? {
+        return Ok(Err(status));
+    }
+    let pure = [
+        deploys_shard_identifier(block, shard_id),
+        future_transaction(block),
+        transaction_expiration(block, expiration_threshold),
+    ];
+    for status in pure {
+        if !status.is_valid() {
+            return Ok(Err(status));
+        }
+    }
+    Ok(Ok(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +344,146 @@ mod tests {
 
         b.state.deploys = vec![deploy(5, 1, "root")];
         assert_eq!(phlo_price(&b, 10), BlockStatus::ContainsLowCostDeploy);
+    }
+}
+
+#[cfg(test)]
+mod effectful_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use rchain_block_storage::dag::dag_storage::DeployId;
+    use rchain_block_storage::dag::message_state::DagMessageState;
+    use rchain_block_storage::dag::representation::DagRepresentation;
+    use rchain_models::block_metadata::BlockMetadata;
+    use rchain_models::casper::protocol::casper_message::SignedDeployData;
+    use std::collections::BTreeSet;
+
+    fn hash(byte: u8) -> BlockHash {
+        let mut bytes = [0u8; 32];
+        bytes[0] = byte;
+        BlockHash::new(bytes)
+    }
+
+    fn meta(hash: BlockHash, block_num: i64, sender_byte: u8, seq: i64, failed: bool) -> BlockMetadata {
+        BlockMetadata {
+            block_hash: hash,
+            block_num,
+            sender: Validator::new([sender_byte; 65]),
+            seq_num: seq,
+            justifications: BTreeSet::new(),
+            bonds_map: BTreeMap::new(),
+            validated: true,
+            validation_failed: failed,
+            fringe: BTreeSet::new(),
+            fringe_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            member_of_fringe: None,
+        }
+    }
+
+    struct MockDag {
+        metadata: BTreeMap<BlockHash, BlockMetadata>,
+        representation: DagRepresentation,
+    }
+
+    #[async_trait]
+    impl BlockDagStorage for MockDag {
+        async fn get_representation(&self) -> DagRepresentation {
+            self.representation.clone()
+        }
+        async fn insert(&self, _m: BlockMetadata, _b: BlockMessage) -> Result<(), String> {
+            Ok(())
+        }
+        async fn lookup(&self, h: &BlockHash) -> Result<Option<BlockMetadata>, String> {
+            Ok(self.metadata.get(h).cloned())
+        }
+        async fn lookup_by_deploy_id(&self, _d: &DeployId) -> Result<Option<BlockHash>, String> {
+            Ok(None)
+        }
+        async fn add_deploy(&self, _d: SignedDeployData) -> Result<(), String> {
+            Ok(())
+        }
+        async fn pooled_deploys(&self) -> Result<BTreeMap<DeployId, SignedDeployData>, String> {
+            Ok(BTreeMap::new())
+        }
+        async fn contains_deploy_in_pool(&self, _d: &DeployId) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    fn mock(metadata: BTreeMap<BlockHash, BlockMetadata>) -> MockDag {
+        MockDag {
+            metadata,
+            representation: DagRepresentation {
+                dag_set: BTreeSet::new(),
+                child_map: BTreeMap::new(),
+                height_map: BTreeMap::new(),
+                dag_message_state: DagMessageState::empty(),
+                fringe_states: BTreeMap::new(),
+            },
+        }
+    }
+
+    fn block(sender_byte: u8, block_num: i64, seq: i64, justifications: Vec<BlockHash>) -> BlockMessage {
+        BlockMessage {
+            version: 1,
+            shard_id: "root".to_string(),
+            block_hash: hash(0xee),
+            block_number: block_num,
+            sender: Validator::new([sender_byte; 65]),
+            seq_num: seq,
+            pre_state_hash: vec![1],
+            post_state_hash: vec![2],
+            justifications,
+            bonds: BTreeMap::new(),
+            rejected_deploys: BTreeSet::new(),
+            rejected_blocks: BTreeSet::new(),
+            rejected_senders: BTreeSet::new(),
+            state: rchain_models::casper::protocol::casper_message::RholangState::default(),
+            sig_algorithm: "secp256k1".to_string(),
+            sig: vec![1],
+        }
+    }
+
+    #[tokio::test]
+    async fn block_number_must_be_parent_max_plus_one() {
+        let parent = hash(1);
+        let dag = mock(BTreeMap::from([(parent, meta(parent, 4, 1, 0, false))]));
+        let b = block(2, 5, 0, vec![parent]);
+        assert_eq!(block_number(&dag, &b).await.unwrap(), Ok(()));
+
+        let bad = block(2, 6, 0, vec![parent]);
+        assert_eq!(
+            block_number(&dag, &bad).await.unwrap(),
+            Err(BlockStatus::InvalidBlockNumber)
+        );
+    }
+
+    #[tokio::test]
+    async fn sequence_number_must_be_creator_latest_plus_one() {
+        let parent = hash(1);
+        let dag = mock(BTreeMap::from([(parent, meta(parent, 4, 1, 2, false))]));
+        let b = block(1, 5, 3, vec![parent]);
+        assert_eq!(sequence_number(&dag, &b).await.unwrap(), Ok(()));
+
+        let bad = block(1, 5, 4, vec![parent]);
+        assert_eq!(
+            sequence_number(&dag, &bad).await.unwrap(),
+            Err(BlockStatus::InvalidSequenceNumber)
+        );
+    }
+
+    #[tokio::test]
+    async fn neglected_invalid_block_detects_bonded_invalid_justification() {
+        let invalid = hash(1);
+        let dag = mock(BTreeMap::from([(invalid, meta(invalid, 0, 1, 0, true))]));
+        let mut b = block(2, 1, 0, vec![invalid]);
+        b.bonds.insert(Validator::new([1u8; 65]), 100);
+        assert_eq!(
+            neglected_invalid_block(&dag, &b).await.unwrap(),
+            Err(BlockStatus::NeglectedInvalidBlock)
+        );
+
+        b.bonds.clear();
+        assert_eq!(neglected_invalid_block(&dag, &b).await.unwrap(), Ok(()));
     }
 }
