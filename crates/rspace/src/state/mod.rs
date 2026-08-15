@@ -1,16 +1,19 @@
 //! Tuple-space state export/import (port of `rspace/.../state/`).
 //!
-//! Ported here are the pure data types. The algorithmic pieces — `RSpaceExporter.traverseHistory`
-//! (which depends on `RadixTree.sequentialExport`), `RSpaceImporter.validateStateItems`, the
-//! store-backed instances (`RSpaceExporterStore`/`RSpaceImporterStore`/`RSpaceStateManagerImpl`),
-//! and the disk exporter (`RSpaceExporterDisk`) — are deferred pending a port of the radix-tree
-//! export traversal and the store wiring. The foundational `TrieExporter`/`TrieNode`/`TrieImporter`/
-//! `StateManager` abstractions live in `rchain_shared::state`.
+//! Ported here are the data types and the pure algorithms (`RSpaceExporter.traverseHistory` over
+//! `RadixTree.sequentialExport`, and `RSpaceImporter.validateStateItems`). The store-backed
+//! instances (`RSpaceExporterStore`/`RSpaceImporterStore`/`RSpaceStateManagerImpl`) and the disk
+//! exporter (`RSpaceExporterDisk`) are deferred pending the store wiring. The foundational
+//! `TrieExporter`/`TrieNode`/`TrieImporter`/`StateManager` abstractions live in `rchain_shared::state`.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
-use rchain_shared::state::{TrieExporter, TrieImporter};
+use rchain_shared::state::{TrieExporter, TrieImporter, TrieNode};
+
+use crate::history::export::{sequential_export, ExportDataSettings};
+use crate::history::key_segment::KeySegment;
 
 /// Export skip/take counters (port of `RSpaceExporter.Counter`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +70,211 @@ pub fn path_pretty(path: &(Blake2b256Hash, Option<u8>)) -> String {
     format!("{}:{}", idx_str, hash_hex)
 }
 
+/// Decode the last-exported prefix from its 5-hash encoding (port of `createLastPrefix`).
+fn create_last_prefix(prefix_seq: &[Blake2b256Hash]) -> Option<KeySegment> {
+    if prefix_seq.is_empty() {
+        return None;
+    }
+    assert!(prefix_seq.len() >= 5, "Invalid path during export.");
+    let size_prefix = prefix_seq[0].as_bytes()[0] as usize;
+    let mut prefix128 = Vec::with_capacity(128);
+    for i in 0..4 {
+        prefix128.extend_from_slice(prefix_seq[1 + i].as_bytes());
+    }
+    Some(KeySegment::new(prefix128[..size_prefix].to_vec()))
+}
+
+/// Build leaf/history `TrieNode`s from their hashes (port of `constructNodes`).
+fn construct_nodes(
+    leaf_keys: Vec<Blake2b256Hash>,
+    node_keys: Vec<Blake2b256Hash>,
+) -> Vec<TrieNode<Blake2b256Hash>> {
+    let mut out = Vec::with_capacity(leaf_keys.len() + node_keys.len());
+    for k in leaf_keys {
+        out.push(TrieNode {
+            hash: k,
+            is_leaf: true,
+            path: Vec::new(),
+        });
+    }
+    for k in node_keys {
+        out.push(TrieNode {
+            hash: k,
+            is_leaf: false,
+            path: Vec::new(),
+        });
+    }
+    out
+}
+
+/// Encode the last-exported prefix as the 6-hash path used to resume export (port of
+/// `constructLastPath`).
+fn construct_last_path(
+    last_prefix: &[u8],
+    root_hash: Blake2b256Hash,
+) -> Vec<(Blake2b256Hash, Option<u8>)> {
+    let prefix_size = last_prefix.len();
+    let mut size_array = [0u8; 32];
+    size_array[0] = prefix_size as u8;
+    let mut prefix128_array = [0u8; 128];
+    prefix128_array[..prefix_size].copy_from_slice(last_prefix);
+
+    vec![
+        (root_hash, None),
+        (Blake2b256Hash::from_byte_array(&size_array), None),
+        (
+            Blake2b256Hash::from_byte_array(&prefix128_array[0..32]),
+            None,
+        ),
+        (
+            Blake2b256Hash::from_byte_array(&prefix128_array[32..64]),
+            None,
+        ),
+        (
+            Blake2b256Hash::from_byte_array(&prefix128_array[64..96]),
+            None,
+        ),
+        (
+            Blake2b256Hash::from_byte_array(&prefix128_array[96..128]),
+            None,
+        ),
+    ]
+}
+
+fn construct_last_node(
+    last_hash: Blake2b256Hash,
+    last_path: Vec<(Blake2b256Hash, Option<u8>)>,
+) -> Vec<TrieNode<Blake2b256Hash>> {
+    vec![TrieNode {
+        hash: last_hash,
+        is_leaf: false,
+        path: last_path,
+    }]
+}
+
+/// Walk the trie and convert the exported nodes into path-indexed `TrieNode`s (port of
+/// `RSpaceExporter.traverseHistory`).
+pub fn traverse_history(
+    start_path: &[(Blake2b256Hash, Option<u8>)],
+    skip: i32,
+    take: i32,
+    get_from_history: &dyn Fn(&Blake2b256Hash) -> Option<Vec<u8>>,
+) -> Result<Vec<TrieNode<Blake2b256Hash>>, String> {
+    let settings = ExportDataSettings {
+        flag_node_prefixes: false,
+        flag_node_keys: true,
+        flag_node_values: false,
+        flag_leaf_prefixes: false,
+        flag_leaf_values: true,
+    };
+
+    if start_path.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let path_seq: Vec<Blake2b256Hash> = start_path.iter().map(|(h, _)| *h).collect();
+    let root_hash = path_seq[0];
+    let last_prefix = create_last_prefix(&path_seq[1..]);
+
+    let (data, new_last_prefix_opt) =
+        sequential_export(root_hash, last_prefix, skip, take, get_from_history, &settings)?;
+
+    let node_keys = data.node_keys.clone();
+    let leaf_keys = data.leaf_values.clone();
+    let mut nodes = construct_nodes(leaf_keys, node_keys.clone());
+    if !nodes.is_empty() {
+        nodes.pop();
+    }
+
+    let last_path = match new_last_prefix_opt {
+        Some(prefix) => construct_last_path(prefix.as_bytes(), root_hash),
+        None => Vec::new(),
+    };
+    let last_history_node = match node_keys.last() {
+        Some(last_hash) => construct_last_node(*last_hash, last_path),
+        None => Vec::new(),
+    };
+
+    nodes.extend(last_history_node);
+    Ok(nodes)
+}
+
+/// Validate a chunk of exported history/data items against the trie (port of
+/// `RSpaceImporter.validateStateItems`).
+pub fn validate_state_items(
+    history_items: &[(Blake2b256Hash, Vec<u8>)],
+    data_items: &[(Blake2b256Hash, Vec<u8>)],
+    start_path: &[(Blake2b256Hash, Option<u8>)],
+    chunk_size: i32,
+    skip: i32,
+    get_from_history: &dyn Fn(&Blake2b256Hash) -> Option<Vec<u8>>,
+) -> Result<(), StateValidationError> {
+    let received = history_items.len() as i32;
+    let is_end = received < chunk_size;
+    if !(received == chunk_size || is_end) {
+        return Err(StateValidationError(format!(
+            "Input size of history items is not valid. Expected chunk size {chunk_size}, received {received}."
+        )));
+    }
+
+    // Validate tries from the received history items, building the received-node map.
+    let mut trie_map: BTreeMap<Blake2b256Hash, Vec<u8>> = BTreeMap::new();
+    for (hash, trie_bytes) in history_items {
+        let trie_hash = Blake2b256Hash::create(trie_bytes);
+        if hash != &trie_hash {
+            return Err(StateValidationError(format!(
+                "Trie hash does not match decoded trie, key: {}, decoded: {}.",
+                hash.to_hex(),
+                trie_hash.to_hex()
+            )));
+        }
+        trie_map.insert(trie_hash, trie_bytes.clone());
+    }
+
+    let get_node = |hash: &Blake2b256Hash| -> Option<Vec<u8>> {
+        match trie_map.get(hash) {
+            Some(bytes) => Some(bytes.clone()),
+            None => get_from_history(hash),
+        }
+    };
+
+    let nodes = traverse_history(start_path, skip, chunk_size, &get_node)
+        .map_err(StateValidationError)?;
+
+    let mut data_keys = Vec::new();
+    let mut history_keys = Vec::new();
+    for node in &nodes {
+        if node.is_leaf {
+            data_keys.push(node.hash);
+        } else {
+            history_keys.push(node.hash);
+        }
+    }
+
+    let history_items_keys: Vec<Blake2b256Hash> = history_items.iter().map(|(h, _)| *h).collect();
+    if history_items_keys != history_keys {
+        return Err(StateValidationError("History items are corrupted.".to_string()));
+    }
+    let data_items_keys: Vec<Blake2b256Hash> = data_items.iter().map(|(h, _)| *h).collect();
+    if data_items_keys != data_keys {
+        return Err(StateValidationError("Data items are corrupted.".to_string()));
+    }
+
+    // Validate data (leaf) item hashes.
+    for (hash, value_bytes) in data_items {
+        let data_hash = Blake2b256Hash::create(value_bytes);
+        if hash != &data_hash {
+            return Err(StateValidationError(format!(
+                "Data hash does not match decoded data, key: {}, decoded: {}.",
+                hash.to_hex(),
+                data_hash.to_hex()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// The rspace exporter (port of `RSpaceExporter`).
 pub trait RSpaceExporter: TrieExporter<Blake2b256Hash> {
     fn get_root(&self) -> Blake2b256Hash;
@@ -75,4 +283,37 @@ pub trait RSpaceExporter: TrieExporter<Blake2b256Hash> {
 /// The rspace importer (port of `RSpaceImporter`).
 pub trait RSpaceImporter: TrieImporter<Blake2b256Hash> {
     fn get_history_item(&self, hash: Blake2b256Hash) -> Option<Vec<u8>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use crate::history::radix_tree::{empty_node, hash_node, Item};
+
+    fn single_leaf_store() -> (HashMap<Blake2b256Hash, Vec<u8>>, Blake2b256Hash, Blake2b256Hash) {
+        let mut root = empty_node();
+        let leaf_hash = Blake2b256Hash::from_bytes([0x42; 32]);
+        root[0] = Item::Leaf {
+            prefix: KeySegment::new(vec![1]),
+            value: leaf_hash,
+        };
+        let (root_hash, root_bytes) = hash_node(&root);
+        let store = HashMap::from([(root_hash, root_bytes)]);
+        (store, root_hash, leaf_hash)
+    }
+
+    #[test]
+    fn traverse_history_emits_leaf_and_last_node() {
+        let (store, root_hash, leaf_hash) = single_leaf_store();
+        let get = |h: &Blake2b256Hash| store.get(h).cloned();
+        let nodes =
+            traverse_history(&[(root_hash, None)], 0, 10, &get).unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes[0].is_leaf);
+        assert_eq!(nodes[0].hash, leaf_hash);
+        assert!(!nodes[1].is_leaf);
+        assert_eq!(nodes[1].hash, root_hash);
+    }
 }
