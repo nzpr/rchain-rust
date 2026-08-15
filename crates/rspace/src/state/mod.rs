@@ -1,19 +1,21 @@
 //! Tuple-space state export/import (port of `rspace/.../state/`).
 //!
-//! Ported here are the data types and the pure algorithms (`RSpaceExporter.traverseHistory` over
-//! `RadixTree.sequentialExport`, and `RSpaceImporter.validateStateItems`). The store-backed
-//! instances (`RSpaceExporterStore`/`RSpaceImporterStore`/`RSpaceStateManagerImpl`) and the disk
-//! exporter (`RSpaceExporterDisk`) are deferred pending the store wiring. The foundational
+//! Ported here are the data types, the pure algorithms (`RSpaceExporter.traverseHistory` over
+//! `RadixTree.sequentialExport`, and `RSpaceImporter.validateStateItems`), and the store-backed
+//! instances (`RSpaceExporterStore`/`RSpaceImporterStore`/`RSpaceStateManagerImpl`). The disk
+//! exporter (`RSpaceExporterDisk`) is deferred pending the LMDB store manager. The foundational
 //! `TrieExporter`/`TrieNode`/`TrieImporter`/`StateManager` abstractions live in `rchain_shared::state`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
-use rchain_shared::state::{TrieExporter, TrieImporter, TrieNode};
+use rchain_shared::state::{StateManager, TrieExporter, TrieImporter, TrieNode};
 
 use crate::history::export::{sequential_export, ExportDataSettings};
 use crate::history::key_segment::KeySegment;
+
+pub mod instances;
 
 /// Export skip/take counters (port of `RSpaceExporter.Counter`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,7 +279,17 @@ pub fn validate_state_items(
 
 /// The rspace exporter (port of `RSpaceExporter`).
 pub trait RSpaceExporter: TrieExporter<Blake2b256Hash> {
-    fn get_root(&self) -> Blake2b256Hash;
+    /// The current root, if set (port of `getRoot`; `None` is the `NoRootError` case).
+    fn get_root(&self) -> Option<Blake2b256Hash>;
+}
+
+/// The rspace state manager (port of `RSpaceStateManager`).
+pub trait RSpaceStateManager: StateManager {
+    type Exporter: RSpaceExporter;
+    type Importer: RSpaceImporter;
+
+    fn exporter(&self) -> &Self::Exporter;
+    fn importer(&self) -> &Self::Importer;
 }
 
 /// The rspace importer (port of `RSpaceImporter`).
