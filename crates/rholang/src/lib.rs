@@ -6,6 +6,8 @@
 //! The parser/normalizer and runtime glue are deferred.
 
 pub mod accounting;
+pub mod contract_call;
+pub mod dispatch;
 pub mod env;
 pub mod errors;
 pub mod matcher;
