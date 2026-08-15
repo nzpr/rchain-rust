@@ -257,6 +257,11 @@ impl<T: Clone> FreeMap<T> {
     pub fn count_no_wildcards(&self) -> i32 {
         self.next_level
     }
+
+    /// The de Bruijn level assigned to the next variable (port of `FreeMap.nextLevel`).
+    pub fn next_level(&self) -> i32 {
+        self.next_level
+    }
 }
 
 /// The sort of a name/process variable (port of `VarSort`).
