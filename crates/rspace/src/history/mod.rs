@@ -4,6 +4,7 @@
 
 pub mod codecs;
 pub mod cold_store;
+pub mod export;
 pub mod history;
 pub mod history_action;
 pub mod history_reader;
