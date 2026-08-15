@@ -11,6 +11,17 @@ pub trait Serialize<A> {
     fn decode(bytes: &[u8]) -> Result<A, String>;
 }
 
+/// UTF-8 serialization for strings (port of `rspace.util.stringSerialize`).
+impl Serialize<String> for String {
+    fn encode(a: &String) -> Vec<u8> {
+        a.as_bytes().to_vec()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<String, String> {
+        String::from_utf8(bytes.to_vec()).map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Serialize;

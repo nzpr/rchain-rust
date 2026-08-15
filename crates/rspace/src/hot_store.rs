@@ -1,13 +1,14 @@
 //! The in-memory hot store overlay over a history snapshot.
 //!
-//! Mirrors `rspace/src/main/scala/coop/rchain/rspace/HotStore.scala`. The `Deferred`-based
-//! memoized back-fill is simplified to a direct read-and-cache from the history reader.
+//! Mirrors `rspace/src/main/scala/coop/rchain/rspace/HotStore.scala`. Reads from the history store
+//! are memoized per key in a `HistoryStoreCache` (the Scala `Deferred`-backed cache), so concurrent
+//! readers of the same key share a single back-fill and readers of different keys do not serialize.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::history::history_reader::HistoryReaderBase;
 use crate::hot_store_action::HotStoreAction;
@@ -41,6 +42,23 @@ fn remove_index<E: Clone>(col: &[E], index: usize) -> Vec<E> {
     out
 }
 
+/// Memoized history-store reads (port of `HistoryStoreCache`).
+struct HistoryStoreCache<C, P, A, K> {
+    continuations: BTreeMap<Vec<C>, Arc<OnceCell<Vec<WaitingContinuation<P, K>>>>>,
+    datums: BTreeMap<C, Arc<OnceCell<Vec<Datum<A>>>>>,
+    joins: BTreeMap<C, Arc<OnceCell<Vec<Vec<C>>>>>,
+}
+
+impl<C, P, A, K> Default for HistoryStoreCache<C, P, A, K> {
+    fn default() -> Self {
+        HistoryStoreCache {
+            continuations: BTreeMap::new(),
+            datums: BTreeMap::new(),
+            joins: BTreeMap::new(),
+        }
+    }
+}
+
 /// The hot store interface (port of `HotStore[F]`).
 #[async_trait]
 pub trait HotStore<C, P, A, K>: Send + Sync {
@@ -66,6 +84,7 @@ pub trait HotStore<C, P, A, K>: Send + Sync {
 /// The in-memory hot store (port of `InMemHotStore`).
 pub struct InMemHotStore<C, P, A, K> {
     state: Mutex<HotStoreState<C, P, A, K>>,
+    cache: Mutex<HistoryStoreCache<C, P, A, K>>,
     reader_base: Arc<dyn HistoryReaderBase<C, P, A, K>>,
 }
 
@@ -79,6 +98,7 @@ where
     pub fn new(reader_base: Arc<dyn HistoryReaderBase<C, P, A, K>>) -> Self {
         InMemHotStore {
             state: Mutex::new(HotStoreState::default()),
+            cache: Mutex::new(HistoryStoreCache::default()),
             reader_base,
         }
     }
@@ -89,8 +109,62 @@ where
     ) -> Self {
         InMemHotStore {
             state: Mutex::new(state),
+            cache: Mutex::new(HistoryStoreCache::default()),
             reader_base,
         }
+    }
+
+    async fn get_cont_from_history_store(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+        let cell = {
+            let mut cache = self.cache.lock().await;
+            cache
+                .continuations
+                .entry(channels.to_vec())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+        let reader_base = self.reader_base.clone();
+        let channels = channels.to_vec();
+        cell.get_or_try_init(|| async move {
+            Ok::<_, ()>(reader_base.get_continuations(&channels).await)
+        })
+        .await
+        .unwrap()
+        .clone()
+    }
+
+    async fn get_data_from_history_store(&self, channel: &C) -> Vec<Datum<A>> {
+        let cell = {
+            let mut cache = self.cache.lock().await;
+            cache
+                .datums
+                .entry(channel.clone())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+        let reader_base = self.reader_base.clone();
+        let channel = channel.clone();
+        cell.get_or_try_init(|| async move { Ok::<_, ()>(reader_base.get_data(&channel).await) })
+            .await
+            .unwrap()
+            .clone()
+    }
+
+    async fn get_joins_from_history_store(&self, channel: &C) -> Vec<Vec<C>> {
+        let cell = {
+            let mut cache = self.cache.lock().await;
+            cache
+                .joins
+                .entry(channel.clone())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+        let reader_base = self.reader_base.clone();
+        let channel = channel.clone();
+        cell.get_or_try_init(|| async move { Ok::<_, ()>(reader_base.get_joins(&channel).await) })
+            .await
+            .unwrap()
+            .clone()
     }
 }
 
@@ -103,6 +177,7 @@ where
     K: Clone + Send + Sync + 'static,
 {
     async fn get_continuations(&self, channels: &[C]) -> Vec<WaitingContinuation<P, K>> {
+        let from_history = self.get_cont_from_history_store(channels).await;
         let mut state = self.state.lock().await;
         match state.continuations.get(channels) {
             Some(conts) => {
@@ -114,31 +189,26 @@ where
                 out
             }
             None => {
-                let from_base = self.reader_base.get_continuations(channels).await;
                 state
                     .continuations
-                    .insert(channels.to_vec(), from_base.clone());
+                    .insert(channels.to_vec(), from_history.clone());
                 let mut out = Vec::new();
                 if let Some(installed) = state.installed_continuations.get(channels) {
                     out.push(installed.clone());
                 }
-                out.extend(from_base);
+                out.extend(from_history);
                 out
             }
         }
     }
 
     async fn put_continuation(&self, channels: &[C], wc: WaitingContinuation<P, K>) {
+        let from_history = self.get_cont_from_history_store(channels).await;
         let mut state = self.state.lock().await;
-        let from_base = if state.continuations.contains_key(channels) {
-            Vec::new()
-        } else {
-            self.reader_base.get_continuations(channels).await
-        };
         let cur = state
             .continuations
             .entry(channels.to_vec())
-            .or_insert(from_base);
+            .or_insert(from_history);
         cur.insert(0, wc);
     }
 
@@ -150,68 +220,53 @@ where
     }
 
     async fn remove_continuation(&self, channels: &[C], index: usize) {
+        let from_history = self.get_cont_from_history_store(channels).await;
         let mut state = self.state.lock().await;
         let is_installed = state.installed_continuations.contains_key(channels);
-        let removed_index = if is_installed {
-            if index == 0 {
-                // Attempted to remove the installed continuation — skip.
-                return;
-            }
-            index - 1
-        } else {
-            index
-        };
-        let from_base = if state.continuations.contains_key(channels) {
-            Vec::new()
-        } else {
-            self.reader_base.get_continuations(channels).await
-        };
+        if is_installed && index == 0 {
+            // Attempted to remove the installed continuation — skip.
+            return;
+        }
+        let removed_index = if is_installed { index - 1 } else { index };
         let cur = state
             .continuations
             .entry(channels.to_vec())
-            .or_insert(from_base);
+            .or_insert(from_history);
         if removed_index < cur.len() {
             *cur = remove_index(cur, removed_index);
         }
     }
 
     async fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
+        let from_history = self.get_data_from_history_store(channel).await;
         let mut state = self.state.lock().await;
         match state.data.get(channel) {
             Some(data) => data.clone(),
             None => {
-                let from_base = self.reader_base.get_data(channel).await;
-                state.data.insert(channel.clone(), from_base.clone());
-                from_base
+                state.data.insert(channel.clone(), from_history.clone());
+                from_history
             }
         }
     }
 
     async fn put_datum(&self, channel: &C, datum: Datum<A>) {
+        let from_history = self.get_data_from_history_store(channel).await;
         let mut state = self.state.lock().await;
-        let from_base = if state.data.contains_key(channel) {
-            Vec::new()
-        } else {
-            self.reader_base.get_data(channel).await
-        };
-        let cur = state.data.entry(channel.clone()).or_insert(from_base);
+        let cur = state.data.entry(channel.clone()).or_insert(from_history);
         cur.insert(0, datum);
     }
 
     async fn remove_datum(&self, channel: &C, index: i64) {
+        let from_history = self.get_data_from_history_store(channel).await;
         let mut state = self.state.lock().await;
-        let from_base = if state.data.contains_key(channel) {
-            Vec::new()
-        } else {
-            self.reader_base.get_data(channel).await
-        };
-        let cur = state.data.entry(channel.clone()).or_insert(from_base);
+        let cur = state.data.entry(channel.clone()).or_insert(from_history);
         if index >= 0 && (index as usize) < cur.len() {
             *cur = remove_index(cur, index as usize);
         }
     }
 
     async fn get_joins(&self, channel: &C) -> Vec<Vec<C>> {
+        let from_history = self.get_joins_from_history_store(channel).await;
         let mut state = self.state.lock().await;
         match state.joins.get(channel) {
             Some(joins) => {
@@ -220,23 +275,18 @@ where
                 out
             }
             None => {
-                let from_base = self.reader_base.get_joins(channel).await;
-                state.joins.insert(channel.clone(), from_base.clone());
+                state.joins.insert(channel.clone(), from_history.clone());
                 let mut out = state.installed_joins.get(channel).cloned().unwrap_or_default();
-                out.extend(from_base);
+                out.extend(from_history);
                 out
             }
         }
     }
 
     async fn put_join(&self, channel: &C, join: &[C]) {
+        let from_history = self.get_joins_from_history_store(channel).await;
         let mut state = self.state.lock().await;
-        let from_base = if state.joins.contains_key(channel) {
-            Vec::new()
-        } else {
-            self.reader_base.get_joins(channel).await
-        };
-        let cur = state.joins.entry(channel.clone()).or_insert(from_base);
+        let cur = state.joins.entry(channel.clone()).or_insert(from_history);
         if !cur.contains(&join.to_vec()) {
             cur.insert(0, join.to_vec());
         }
@@ -251,13 +301,9 @@ where
     }
 
     async fn remove_join(&self, channel: &C, join: &[C]) {
+        let from_history = self.get_joins_from_history_store(channel).await;
         let mut state = self.state.lock().await;
-        let from_base = if state.joins.contains_key(channel) {
-            Vec::new()
-        } else {
-            self.reader_base.get_joins(channel).await
-        };
-        let cur = state.joins.entry(channel.clone()).or_insert(from_base);
+        let cur = state.joins.entry(channel.clone()).or_insert(from_history);
         if let Some(index) = cur.iter().position(|j| j == join) {
             *cur = remove_index(cur, index);
         }

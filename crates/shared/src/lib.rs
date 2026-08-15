@@ -9,6 +9,7 @@
 pub mod base16;
 pub mod dag;
 pub mod serialize;
+pub mod state;
 pub mod store;
 
 #[cfg(feature = "tokio")]

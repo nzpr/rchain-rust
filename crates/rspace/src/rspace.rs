@@ -59,7 +59,7 @@ where
         }
     }
 
-    fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, usize> {
+    pub(crate) fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, usize> {
         let counter = self.produce_counter.read().unwrap();
         produce_refs
             .iter()
@@ -67,7 +67,25 @@ where
             .collect()
     }
 
-    fn current_store(&self) -> Arc<dyn HotStore<C, P, A, K>> {
+    pub(crate) fn produce_counter_value(&self, source: &Produce) -> usize {
+        self.produce_counter
+            .read()
+            .unwrap()
+            .get(source)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn increment_produce_counter(&self, produce_ref: &Produce) {
+        let mut counter = self.produce_counter.write().unwrap();
+        *counter.entry(produce_ref.clone()).or_insert(0) += 1;
+    }
+
+    pub(crate) fn matcher(&self) -> Arc<dyn Match<P, A>> {
+        self.matcher.clone()
+    }
+
+    pub(crate) fn current_store(&self) -> Arc<dyn HotStore<C, P, A, K>> {
         self.store.read().expect("poisoned lock").clone()
     }
 
@@ -118,7 +136,7 @@ where
         map
     }
 
-    async fn store_waiting_continuation(
+    pub(crate) async fn store_waiting_continuation(
         &self,
         channels: &[C],
         wc: WaitingContinuation<P, K>,
@@ -131,7 +149,7 @@ where
         None
     }
 
-    async fn store_data(
+    pub(crate) async fn store_data(
         &self,
         channel: &C,
         data: A,
@@ -152,7 +170,7 @@ where
         None
     }
 
-    async fn store_persistent_data(&self, data_candidates: &[ConsumeCandidate<C, A>]) {
+    pub(crate) async fn store_persistent_data(&self, data_candidates: &[ConsumeCandidate<C, A>]) {
         let mut sorted = data_candidates.to_vec();
         sorted.sort_by(|a, b| b.datum_index.cmp(&a.datum_index));
         let store = self.current_store();
@@ -165,7 +183,7 @@ where
         }
     }
 
-    async fn remove_matched_datum_and_join(
+    pub(crate) async fn remove_matched_datum_and_join(
         &self,
         channels: &[C],
         data_candidates: &[ConsumeCandidate<C, A>],
@@ -183,7 +201,7 @@ where
         }
     }
 
-    fn wrap_result(
+    pub(crate) fn wrap_result(
         &self,
         channels: &[C],
         wk: &WaitingContinuation<P, K>,

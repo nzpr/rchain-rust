@@ -220,8 +220,10 @@ oracle tests and, where a formal law exists, a property test naming that law.
 
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
-- **Rewrite — paused (proofs-first)**: `sdk` and the foundational `shared` core are ported under
-  [`crates/`](crates/). The rewrite is **paused** for the Meredith cores until Laws 1–11 are proven.
+- **Rewrite — in progress**: the leaf modules (`sdk`, `shared`, `crypto`, `graphz`, `models`,
+  `block-storage`, `rspace`, `comm`) are ported under [`crates/`](crates/); `rholang` is in progress.
+  The proofs-first *pause* has been lifted in practice — `rspace`/`rholang` are being ported against
+  the verified spec rather than waiting on Laws 1–11.
 - **Formalization — proofs-first**: Laws 1–11 (rholang + rspace) are being proven machine-checkably —
   Coq for the ρ-calculus PL metatheory (Laws 2–6), Lean 4 for order/algebra (Laws 1, 7–11) — before
   `rspace`/`rholang` are ported.

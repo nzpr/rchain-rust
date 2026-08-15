@@ -17,9 +17,9 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `graphz` | `graphz/` | **done** (DOT builder) |
 | `models` | `models/` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer) |
 | `block-storage` | `block-storage/` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
-| `rspace` | `rspace/` | **done** (hashing/radix-tree/history/merger + play/replay engine); state/exporters + reporting deferred |
+| `rspace` | `rspace/` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util); state/exporters scaffolding ported — `traverseHistory`/`validateStateItems`/store-backed instances deferred pending the radix-tree export traversal |
 | `comm` | `comm/` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages); UPnP/WhoAmI deferred |
-| `rholang` | `rholang/` | pending |
+| `rholang` | `rholang/` | **in progress** (Env + errors; `par_ops` moved into `models`); Substitute/accounting/Reduce/matcher/dispatch pending |
 | `casper` | `casper/` | pending |
 | `node` | `node/` | pending |
 | `rspace-bench` | `rspace-bench/` | gated |

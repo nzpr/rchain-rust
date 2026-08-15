@@ -1,8 +1,9 @@
 //! The replay tuple space (Law 11: replay determinism).
 //!
-//! Mirrors `rspace/src/main/scala/coop/rchain/rspace/ReplayRSpace.scala`. The full re-execution
-//! matcher (re-running the recorded COMM) is simplified to delegation onto the play space; the
-//! recorded-trace bookkeeping (`rig` / `checkReplayData`) is preserved.
+//! Mirrors `rspace/src/main/scala/coop/rchain/rspace/ReplayRSpace.scala`. During replay a
+//! consume/produce is re-executed against the recorded COMMs in `replayData`; the recomputed COMM
+//! must be contained in the recorded trace, and `checkReplayData` fails if any recorded COMM was
+//! left unused.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
@@ -12,13 +13,17 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_shared::serialize::Serialize;
 
 use crate::checkpoint::SoftCheckpoint;
+use crate::concurrent::two_step_lock::TwoStepLock;
+use crate::hashing::stable_hash_provider::hash_channel;
 use crate::i_replay_space::IReplaySpace;
 use crate::i_space::ISpace;
-use crate::internal::{Datum, Row, WaitingContinuation};
+use crate::internal::{ConsumeCandidate, Datum, ProduceCandidate, Row, WaitingContinuation};
 use crate::rspace::RSpace;
+use crate::space_matcher::{extract_data_candidates, extract_first_match};
 use crate::trace::event::{Comm, Consume, Event, Produce};
 use crate::trace::Log;
-use crate::tuple_space::Tuplespace;
+use crate::tuple_space::{ContResult, Result, Tuplespace};
+use crate::util::ReplayException;
 
 /// The recorded replay trace: IO events keyed to the COMMs that reference them (port of
 /// `ReplayData`).
@@ -28,11 +33,56 @@ pub struct ReplayData {
     by_produce: BTreeMap<Produce, Vec<Comm>>,
 }
 
+impl ReplayData {
+    fn comms_for_consume(&self, consume: &Consume) -> Option<&Vec<Comm>> {
+        self.by_consume.get(consume)
+    }
+
+    fn comms_for_produce(&self, produce: &Produce) -> Option<&Vec<Comm>> {
+        self.by_produce.get(produce)
+    }
+
+    fn remove_consume_binding(&mut self, consume: &Consume, comm: &Comm) {
+        let mut remove_key = false;
+        if let Some(comms) = self.by_consume.get_mut(consume) {
+            if let Some(pos) = comms.iter().position(|c| c == comm) {
+                comms.remove(pos);
+            }
+            remove_key = comms.is_empty();
+        }
+        if remove_key {
+            self.by_consume.remove(consume);
+        }
+    }
+
+    fn remove_produce_binding(&mut self, produce: &Produce, comm: &Comm) {
+        let mut remove_key = false;
+        if let Some(comms) = self.by_produce.get_mut(produce) {
+            if let Some(pos) = comms.iter().position(|c| c == comm) {
+                comms.remove(pos);
+            }
+            remove_key = comms.is_empty();
+        }
+        if remove_key {
+            self.by_produce.remove(produce);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.by_consume.is_empty() && self.by_produce.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.by_consume.values().map(|v| v.len()).sum::<usize>()
+            + self.by_produce.values().map(|v| v.len()).sum::<usize>()
+    }
+}
+
 /// The replay space (port of `ReplayRSpace`).
 pub struct ReplayRSpace<C, P, A, K> {
     space: Arc<RSpace<C, P, A, K>>,
     replay_data: RwLock<ReplayData>,
-    log: RwLock<Log>,
+    lock_f: Arc<TwoStepLock<Blake2b256Hash>>,
 }
 
 impl<C, P, A, K> ReplayRSpace<C, P, A, K>
@@ -46,27 +96,307 @@ where
         ReplayRSpace {
             space,
             replay_data: RwLock::new(ReplayData::default()),
-            log: RwLock::new(Vec::new()),
+            lock_f: Arc::new(TwoStepLock::new()),
         }
     }
 
+    /// Build the replay data table from a log (port of `IReplaySpace.rig`). Only IO events that
+    /// appear in the log get bound to their COMMs.
     fn build_replay_data(log: &Log) -> ReplayData {
+        let mut produces: BTreeSet<Produce> = BTreeSet::new();
+        let mut consumes: BTreeSet<Consume> = BTreeSet::new();
+        for event in log {
+            match event {
+                Event::Produce(p) => {
+                    produces.insert(p.clone());
+                }
+                Event::Consume(c) => {
+                    consumes.insert(c.clone());
+                }
+                Event::Comm(_) => {}
+            }
+        }
+
         let mut data = ReplayData::default();
         for event in log {
             if let Event::Comm(comm) = event {
-                data.by_consume
-                    .entry(comm.consume.clone())
-                    .or_default()
-                    .push(comm.clone());
-                for produce in &comm.produces {
-                    data.by_produce
-                        .entry(produce.clone())
+                if consumes.contains(&comm.consume) {
+                    data.by_consume
+                        .entry(comm.consume.clone())
                         .or_default()
                         .push(comm.clone());
+                }
+                for produce in &comm.produces {
+                    if produces.contains(produce) {
+                        data.by_produce
+                            .entry(produce.clone())
+                            .or_default()
+                            .push(comm.clone());
+                    }
                 }
             }
         }
         data
+    }
+
+    /// Whether a datum participates in `comm` (port of `ReplayRSpace.matches`).
+    fn matches(&self, comm: &Comm, datum: &Datum<A>) -> bool {
+        if !comm.produces.contains(&datum.source) {
+            return false;
+        }
+        if datum.persist {
+            return true;
+        }
+        let expected = comm.times_repeated.get(&datum.source).copied().unwrap_or(0);
+        let actual = self.space.produce_counter_value(&datum.source);
+        actual == expected
+    }
+
+    async fn run_matcher_consume(
+        &self,
+        channels: &[C],
+        patterns: &[P],
+        comm: &Comm,
+    ) -> Option<Vec<ConsumeCandidate<C, A>>> {
+        let store = self.space.current_store();
+        let matcher = self.space.matcher();
+        let mut channel_to_indexed_data: BTreeMap<C, Vec<(Datum<A>, i64)>> = BTreeMap::new();
+        for c in channels {
+            let data_list = store.get_data(c).await;
+            let mut indexed = Vec::new();
+            for (i, d) in data_list.into_iter().enumerate() {
+                if self.matches(comm, &d) {
+                    indexed.push((d, i as i64));
+                }
+            }
+            channel_to_indexed_data.insert(c.clone(), indexed);
+        }
+        let options = extract_data_candidates(
+            &channels
+                .iter()
+                .cloned()
+                .zip(patterns.iter().cloned())
+                .collect::<Vec<_>>(),
+            &channel_to_indexed_data,
+            matcher.as_ref(),
+        );
+        options.into_iter().collect()
+    }
+
+    async fn get_comm_and_consume_candidates(
+        &self,
+        channels: &[C],
+        patterns: &[P],
+        comms: &[Comm],
+    ) -> Option<(Comm, Vec<ConsumeCandidate<C, A>>)> {
+        for comm in comms {
+            if let Some(candidates) = self.run_matcher_consume(channels, patterns, comm).await {
+                return Some((comm.clone(), candidates));
+            }
+        }
+        None
+    }
+
+    async fn run_matcher_produce(
+        &self,
+        channel: &C,
+        data: &A,
+        persist: bool,
+        comm: &Comm,
+        produce_ref: &Produce,
+        grouped_channels: &[Vec<C>],
+    ) -> Option<ProduceCandidate<C, P, A, K>> {
+        let store = self.space.current_store();
+        let matcher = self.space.matcher();
+        for channels in grouped_channels {
+            let conts = store.get_continuations(channels).await;
+            let match_candidates: Vec<(WaitingContinuation<P, K>, usize)> = conts
+                .into_iter()
+                .enumerate()
+                .filter(|(_, wc)| comm.consume == wc.source)
+                .map(|(i, wc)| (wc, i))
+                .collect();
+
+            let mut channel_to_indexed_data: BTreeMap<C, Vec<(Datum<A>, i64)>> = BTreeMap::new();
+            for c in channels {
+                let data_list = store.get_data(c).await;
+                let mut all: Vec<(Datum<A>, i64)> = Vec::new();
+                if c == channel {
+                    all.push((
+                        Datum {
+                            a: data.clone(),
+                            persist,
+                            source: produce_ref.clone(),
+                        },
+                        -1,
+                    ));
+                }
+                all.extend(
+                    data_list
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, d)| (d, i as i64)),
+                );
+                let mut indexed = Vec::new();
+                for (d, idx) in all {
+                    if self.matches(comm, &d) {
+                        indexed.push((d, idx));
+                    }
+                }
+                channel_to_indexed_data.insert(c.clone(), indexed);
+            }
+
+            if let Some(pc) = extract_first_match(
+                channels,
+                &match_candidates,
+                &channel_to_indexed_data,
+                matcher.as_ref(),
+            ) {
+                return Some(pc);
+            }
+        }
+        None
+    }
+
+    async fn get_comm_or_produce_candidate(
+        &self,
+        channel: &C,
+        data: &A,
+        persist: bool,
+        comms: &[Comm],
+        produce_ref: &Produce,
+        grouped_channels: &[Vec<C>],
+    ) -> Option<(Comm, ProduceCandidate<C, P, A, K>)> {
+        for comm in comms {
+            if let Some(pc) = self
+                .run_matcher_produce(channel, data, persist, comm, produce_ref, grouped_channels)
+                .await
+            {
+                return Some((comm.clone(), pc));
+            }
+        }
+        None
+    }
+
+    fn remove_bindings_for(&self, comm: &Comm) {
+        let mut data = self.replay_data.write().unwrap();
+        data.remove_consume_binding(&comm.consume, comm);
+        for produce in &comm.produces {
+            data.remove_produce_binding(produce, comm);
+        }
+    }
+
+    async fn locked_consume(
+        &self,
+        channels: &[C],
+        patterns: &[P],
+        continuation: K,
+        persist: bool,
+        peeks: BTreeSet<usize>,
+        consume_ref: Consume,
+    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+        let wk = WaitingContinuation {
+            patterns: patterns.to_vec(),
+            continuation,
+            persist,
+            peeks: peeks.clone(),
+            source: consume_ref.clone(),
+        };
+        let comms = self
+            .replay_data
+            .read()
+            .unwrap()
+            .comms_for_consume(&consume_ref)
+            .cloned();
+        match comms {
+            None => self.space.store_waiting_continuation(channels, wk).await,
+            Some(comms) => match self
+                .get_comm_and_consume_candidates(channels, patterns, &comms)
+                .await
+            {
+                None => self.space.store_waiting_continuation(channels, wk).await,
+                Some((_comm, data_candidates)) => {
+                    let comm_ref = Comm::apply(&data_candidates, consume_ref, peeks, |ps| {
+                        self.space.produce_counters(ps)
+                    });
+                    assert!(
+                        comms.contains(&comm_ref),
+                        "COMM Event was not contained in the trace"
+                    );
+                    self.space.store_persistent_data(&data_candidates).await;
+                    self.remove_bindings_for(&comm_ref);
+                    self.space.wrap_result(channels, &wk, &data_candidates)
+                }
+            },
+        }
+    }
+
+    async fn locked_produce(
+        &self,
+        channel: C,
+        data: A,
+        persist: bool,
+        produce_ref: Produce,
+    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+        let grouped_channels = self.space.current_store().get_joins(&channel).await;
+        if !persist {
+            self.space.increment_produce_counter(&produce_ref);
+        }
+        let comms = self
+            .replay_data
+            .read()
+            .unwrap()
+            .comms_for_produce(&produce_ref)
+            .cloned();
+        match comms {
+            None => self.space.store_data(&channel, data, persist, produce_ref).await,
+            Some(comms) => match self
+                .get_comm_or_produce_candidate(
+                    &channel,
+                    &data,
+                    persist,
+                    &comms,
+                    &produce_ref,
+                    &grouped_channels,
+                )
+                .await
+            {
+                None => self.space.store_data(&channel, data, persist, produce_ref).await,
+                Some((_comm, pc)) => self.handle_match(pc, &comms).await,
+            },
+        }
+    }
+
+    async fn handle_match(
+        &self,
+        pc: ProduceCandidate<C, P, A, K>,
+        comms: &[Comm],
+    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+        let ProduceCandidate {
+            channels,
+            continuation: wk,
+            continuation_index,
+            data_candidates,
+        } = pc;
+        let consume_ref = wk.source.clone();
+        let comm_ref = Comm::apply(&data_candidates, consume_ref, wk.peeks.clone(), |ps| {
+            self.space.produce_counters(ps)
+        });
+        assert!(
+            comms.contains(&comm_ref),
+            "COMM Event was not contained in the trace"
+        );
+        if !wk.persist {
+            let store = self.space.current_store();
+            store
+                .remove_continuation(&channels, continuation_index)
+                .await;
+        }
+        self.space
+            .remove_matched_datum_and_join(&channels, &data_candidates)
+            .await;
+        self.remove_bindings_for(&comm_ref);
+        self.space.wrap_result(&channels, &wk, &data_candidates)
     }
 }
 
@@ -85,9 +415,18 @@ where
         continuation: K,
         persist: bool,
         peeks: BTreeSet<usize>,
-    ) -> Option<(crate::tuple_space::ContResult<C, P, K>, Vec<crate::tuple_space::Result<C, A>>)> {
-        self.space
-            .consume(channels, patterns, continuation, persist, peeks)
+    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+        assert!(!channels.is_empty(), "channels can't be empty");
+        assert_eq!(
+            channels.len(),
+            patterns.len(),
+            "channels.length must equal patterns.length"
+        );
+        let consume_ref = Consume::apply(channels, patterns, &continuation, persist);
+        let hashes: Vec<Blake2b256Hash> = channels.iter().map(hash_channel).collect();
+        let thunk = self.locked_consume(channels, patterns, continuation, persist, peeks, consume_ref);
+        self.lock_f
+            .acquire(&hashes, Box::pin(async { hashes.clone() }), thunk)
             .await
     }
 
@@ -96,8 +435,24 @@ where
         channel: C,
         data: A,
         persist: bool,
-    ) -> Option<(crate::tuple_space::ContResult<C, P, K>, Vec<crate::tuple_space::Result<C, A>>)> {
-        self.space.produce(channel, data, persist).await
+    ) -> Option<(ContResult<C, P, K>, Vec<Result<C, A>>)> {
+        let produce_ref = Produce::apply(&channel, &data, persist);
+        let thunk = self.locked_produce(channel.clone(), data, persist, produce_ref);
+        let phase_two = {
+            let store = self.space.current_store();
+            let channel = channel.clone();
+            Box::pin(async move {
+                store
+                    .get_joins(&channel)
+                    .await
+                    .into_iter()
+                    .flatten()
+                    .map(|c| hash_channel(&c))
+                    .collect()
+            })
+        };
+        let hash = hash_channel(&channel);
+        self.lock_f.acquire(&[hash], phase_two, thunk).await
     }
 
     async fn install(&self, channels: &[C], patterns: &[P], continuation: K) -> Option<(K, Vec<A>)> {
@@ -114,6 +469,9 @@ where
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
     async fn create_checkpoint(&self) -> crate::checkpoint::Checkpoint {
+        self.check_replay_data()
+            .await
+            .expect("replay data must be empty at checkpoint");
         self.space.create_checkpoint().await
     }
 
@@ -160,19 +518,22 @@ where
 {
     async fn rig(&self, log: Log) {
         *self.replay_data.write().unwrap() = Self::build_replay_data(&log);
-        *self.log.write().unwrap() = log;
     }
 
     async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) {
-        self.reset(start_root).await;
         self.rig(log).await;
+        self.reset(start_root).await;
     }
 
-    async fn check_replay_data(&self) {
+    async fn check_replay_data(&self) -> std::result::Result<(), ReplayException> {
         let data = self.replay_data.read().unwrap();
-        assert!(
-            data.by_consume.is_empty() && data.by_produce.is_empty(),
-            "unused COMM event in replay data"
-        );
+        if data.is_empty() {
+            Ok(())
+        } else {
+            Err(ReplayException(format!(
+                "Unused COMM event: replayData multimap has {} elements left",
+                data.len()
+            )))
+        }
     }
 }
