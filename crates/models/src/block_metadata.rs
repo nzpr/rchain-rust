@@ -107,8 +107,8 @@ impl BlockMetadata {
         self.to_proto().encode_to_vec()
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let proto = BlockMetadataProto::decode(bytes).map_err(|e| e.to_string())?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = BlockMetadataProto::decode(bytes).map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
         Ok(BlockMetadata::from_proto(&proto))
     }
 

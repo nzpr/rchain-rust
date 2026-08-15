@@ -16,6 +16,7 @@ pub mod reduce;
 pub mod registry;
 pub mod runtime;
 pub mod storage;
+pub mod storage_printer;
 pub mod substitute;
 pub mod system_processes;
 pub mod util;

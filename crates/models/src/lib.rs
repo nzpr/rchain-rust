@@ -20,6 +20,7 @@ pub mod block_metadata;
 pub mod block_version;
 pub mod casper;
 pub mod comm;
+pub mod errors;
 pub mod fringe_data;
 mod proto;
 pub mod runtime;

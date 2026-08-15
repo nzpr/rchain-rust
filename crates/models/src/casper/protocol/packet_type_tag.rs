@@ -40,7 +40,7 @@ impl PacketTypeTag {
 }
 
 /// A packet parse result (port of `PacketParseResult`).
-pub type PacketParseResult<A> = Result<A, String>;
+pub type PacketParseResult<A> = Result<A, crate::errors::ModelsError>;
 
 /// Serialize a model into a `Packet` (port of `ToPacket[A]`).
 pub trait ToPacket<A> {
@@ -63,11 +63,10 @@ pub trait FromPacket<A>: ToPacket<A> {
         if packet.type_id == self.tag().tag() {
             self.parse(&packet.content)
         } else {
-            Err(format!(
-                "Got {} packet - need {} packet",
-                packet.type_id,
-                self.tag().tag()
-            ))
+            Err(crate::errors::ModelsError::PacketTypeMismatch {
+                got: packet.type_id.clone(),
+                expected: self.tag().tag().to_string(),
+            })
         }
     }
 }

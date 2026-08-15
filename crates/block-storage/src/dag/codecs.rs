@@ -53,7 +53,7 @@ impl Codec<BlockMetadata> for BlockMetadataCodec {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<BlockMetadata, String> {
-        BlockMetadata::from_bytes(bytes)
+        BlockMetadata::from_bytes(bytes).map_err(|e| e.to_string())
     }
 }
 
@@ -67,7 +67,7 @@ impl Codec<FringeData> for FringeDataCodec {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<FringeData, String> {
-        FringeData::from_bytes(bytes)
+        FringeData::from_bytes(bytes).map_err(|e| e.to_string())
     }
 }
 
@@ -81,7 +81,7 @@ impl Codec<FinalizedFringe> for FringeCodec {
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<FinalizedFringe, String> {
-        FinalizedFringe::from_bytes(bytes)
+        FinalizedFringe::from_bytes(bytes).map_err(|e| e.to_string())
     }
 }
 

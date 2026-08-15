@@ -35,7 +35,7 @@ pub fn block_message_to_bytes(block: &BlockMessage) -> Vec<u8> {
 /// Deserialize a block message from its stored byte form.
 pub fn bytes_to_block_message(bytes: &[u8]) -> Result<BlockMessage, String> {
     let decompressed = decompress_bytes(bytes).map_err(|e| e.to_string())?;
-    BlockMessage::from_bytes(&decompressed)
+    BlockMessage::from_bytes(&decompressed).map_err(|e| e.to_string())
 }
 
 /// Open the block store from a store manager (port of `BlockStore.apply[F](kvm)`).

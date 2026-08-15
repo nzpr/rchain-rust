@@ -154,7 +154,7 @@ pub enum Event {
 }
 
 impl Event {
-    pub fn from_proto(e: &EventProto) -> Result<Event, String> {
+    pub fn from_proto(e: &EventProto) -> Result<Event, crate::errors::ModelsError> {
         match &e.event_instance {
             Some(event_proto::EventInstance::Produce(pe)) => Ok(Event::Produce(ProduceEvent {
                 channels_hash: pe.channels_hash.clone(),
@@ -171,7 +171,7 @@ impl Event {
                 let consume = ce
                     .consume
                     .as_ref()
-                    .ok_or_else(|| "malformed CommEvent: missing consume".to_string())?;
+                    .ok_or(crate::errors::ModelsError::Malformed("malformed CommEvent: missing consume"))?;
                 Ok(Event::Comm(CommEvent {
                     consume: ConsumeEvent {
                         channels_hashes: consume.channels_hashes.clone(),
@@ -197,7 +197,7 @@ impl Event {
                         .collect(),
                 }))
             }
-            None => Err("malformed Event: empty".to_string()),
+            None => Err(crate::errors::ModelsError::Malformed("malformed Event: empty")),
         }
     }
 
@@ -308,8 +308,8 @@ pub enum ProcessedSystemDeploy {
 }
 
 impl ProcessedSystemDeploy {
-    pub fn from_proto(p: &ProcessedSystemDeployProto) -> Result<Self, String> {
-        let deploy_log: Result<Vec<Event>, String> =
+    pub fn from_proto(p: &ProcessedSystemDeployProto) -> Result<Self, crate::errors::ModelsError> {
+        let deploy_log: Result<Vec<Event>, crate::errors::ModelsError> =
             p.deploy_log.iter().map(Event::from_proto).collect();
         let deploy_log = deploy_log?;
         if p.error_msg.is_empty() {
@@ -367,12 +367,12 @@ pub struct ProcessedDeploy {
 }
 
 impl ProcessedDeploy {
-    pub fn from_proto(p: &ProcessedDeployProto) -> Result<Self, String> {
+    pub fn from_proto(p: &ProcessedDeployProto) -> Result<Self, crate::errors::ModelsError> {
         let deploy = p
             .deploy
             .as_ref()
-            .ok_or_else(|| "malformed ProcessedDeploy: missing deploy".to_string())?;
-        let deploy_log: Result<Vec<Event>, String> =
+            .ok_or(crate::errors::ModelsError::Malformed("malformed ProcessedDeploy: missing deploy"))?;
+        let deploy_log: Result<Vec<Event>, crate::errors::ModelsError> =
             p.deploy_log.iter().map(Event::from_proto).collect();
         Ok(ProcessedDeploy {
             deploy: SignedDeployData::from_proto(deploy),
@@ -406,10 +406,10 @@ pub struct RholangState {
 }
 
 impl RholangState {
-    pub fn from_proto(p: &RholangStateProto) -> Result<Self, String> {
-        let deploys: Result<Vec<ProcessedDeploy>, String> =
+    pub fn from_proto(p: &RholangStateProto) -> Result<Self, crate::errors::ModelsError> {
+        let deploys: Result<Vec<ProcessedDeploy>, crate::errors::ModelsError> =
             p.deploys.iter().map(ProcessedDeploy::from_proto).collect();
-        let system_deploys: Result<Vec<ProcessedSystemDeploy>, String> =
+        let system_deploys: Result<Vec<ProcessedSystemDeploy>, crate::errors::ModelsError> =
             p.system_deploys.iter().map(ProcessedSystemDeploy::from_proto).collect();
         Ok(RholangState {
             deploys: deploys?,
@@ -455,11 +455,11 @@ pub struct BlockMessage {
 }
 
 impl BlockMessage {
-    pub fn from_proto(bm: &BlockMessageProto) -> Result<BlockMessage, String> {
+    pub fn from_proto(bm: &BlockMessageProto) -> Result<BlockMessage, crate::errors::ModelsError> {
         let state = bm
             .state
             .as_ref()
-            .ok_or_else(|| "malformed BlockMessage: missing state".to_string())?;
+            .ok_or(crate::errors::ModelsError::Malformed("malformed BlockMessage: missing state"))?;
         Ok(BlockMessage {
             version: bm.version,
             shard_id: bm.shard_id.clone(),
@@ -538,8 +538,8 @@ impl BlockMessage {
         self.to_proto().encode_to_vec()
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<BlockMessage, String> {
-        let proto = BlockMessageProto::decode(bytes).map_err(|e| e.to_string())?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<BlockMessage, crate::errors::ModelsError> {
+        let proto = BlockMessageProto::decode(bytes).map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
         BlockMessage::from_proto(&proto)
     }
 }
@@ -571,8 +571,8 @@ impl FinalizedFringe {
     pub fn to_bytes(&self) -> Vec<u8> {
         self.to_proto().encode_to_vec()
     }
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let proto = FinalizedFringeProto::decode(bytes).map_err(|e| e.to_string())?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = FinalizedFringeProto::decode(bytes).map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
         Ok(FinalizedFringe::from_proto(&proto))
     }
 }
@@ -648,7 +648,7 @@ pub enum CasperMessageProto {
 }
 
 impl CasperMessage {
-    pub fn from_proto(cm: &CasperMessageProto) -> Result<CasperMessage, String> {
+    pub fn from_proto(cm: &CasperMessageProto) -> Result<CasperMessage, crate::errors::ModelsError> {
         match cm {
             CasperMessageProto::BlockMessage(m) => {
                 Ok(CasperMessage::BlockMessage(BlockMessage::from_proto(m)?))
@@ -684,10 +684,10 @@ impl CasperMessage {
             ),
             // Store items require `RSpaceExporter` / casper — deferred.
             CasperMessageProto::StoreItemsMessageRequest(_) => {
-                Err("StoreItemsMessageRequest decode deferred to casper/RSpaceExporter".to_string())
+                Err(crate::errors::ModelsError::Decode("StoreItemsMessageRequest decode deferred to casper/RSpaceExporter".to_string()))
             }
             CasperMessageProto::StoreItemsMessage(_) => {
-                Err("StoreItemsMessage decode deferred to casper/RSpaceExporter".to_string())
+                Err(crate::errors::ModelsError::Decode("StoreItemsMessage decode deferred to casper/RSpaceExporter".to_string()))
             }
         }
     }
