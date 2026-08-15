@@ -4,7 +4,8 @@
 //! hand-port (no crates.io crate provides this construction); it is pinned by the known-answer
 //! test vectors ported from `Blake2b512RandomTest.scala`.
 
-use super::blake2b512_block::Blake2b512Block;
+use super::blake2b512_block::{u64_from_le_at, Blake2b512Block};
+use crate::errors::CryptoError;
 use rand::RngCore;
 
 /// The path region holds 112 bytes; the following 16 bytes hold the 128-bit counter (little-endian).
@@ -96,9 +97,9 @@ impl Blake2b512Random {
     fn hash(&mut self) {
         self.digest
             .peek_final_root(&self.last_block, 0, &mut self.hash_array, 0);
-        let low = u64::from_le_bytes(self.last_block[112..120].try_into().unwrap());
+        let low = u64_from_le_at(&self.last_block, 112);
         if low == u64::MAX {
-            let high = u64::from_le_bytes(self.last_block[120..128].try_into().unwrap());
+            let high = u64_from_le_at(&self.last_block, 120);
             self.last_block[112..120].copy_from_slice(&0u64.to_le_bytes());
             self.last_block[120..128].copy_from_slice(&high.wrapping_add(1).to_le_bytes());
         } else {
@@ -176,11 +177,11 @@ impl Blake2b512Random {
     }
 
     /// Deserialize from bytes (the Scala `typeMapper.toCustom`).
-    pub fn from_bytes(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
         if bytes.is_empty() {
-            return Self::from_init(&[]);
+            return Ok(Self::from_init(&[]));
         }
-        let digest = Blake2b512Block::from_bytes(&bytes[16..96]);
+        let digest = Blake2b512Block::from_bytes(&bytes[16..96])?;
         let mut result = Self {
             digest,
             last_block: [0u8; 128],
@@ -200,7 +201,7 @@ impl Blake2b512Random {
                 .copy_from_slice(&bytes[98 + path_position..98 + path_position + rem_len]);
         }
         result.position = remainder_position;
-        result
+        Ok(result)
     }
 
     /// Diagnostic string (mirrors `Blake2b512Random.debugStr`).
@@ -249,7 +250,7 @@ fn internal_merge(children: &[Blake2b512Random]) -> Blake2b512Random {
         squashed.push(result);
     }
     if squashed.len() == 1 {
-        squashed.pop().unwrap()
+        squashed.swap_remove(0)
     } else {
         internal_merge(&squashed)
     }
@@ -497,7 +498,7 @@ mod tests {
 
         for state in &states {
             let bytes = state.to_bytes();
-            let restored = Blake2b512Random::from_bytes(&bytes);
+            let restored = Blake2b512Random::from_bytes(&bytes).expect("deserialize Blake2b512Random state");
             assert_eq!(restored, *state, "round-trip mismatch");
             assert_eq!(restored.to_bytes(), bytes, "encoding not idempotent");
             // A round-tripped state must produce the same next value.

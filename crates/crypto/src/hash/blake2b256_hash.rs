@@ -6,8 +6,18 @@
 
 use rchain_shared::base16;
 
+use crate::errors::CryptoError;
+
 /// The length of a `Blake2b256Hash` in bytes.
 pub const LENGTH: usize = 32;
+
+/// Convert a digest `Vec<u8>` to a fixed array (provably total: Blake2b256 always emits `LENGTH`
+/// bytes).
+fn digest_to_array(digest: Vec<u8>) -> [u8; LENGTH] {
+    let mut arr = [0u8; LENGTH];
+    arr.copy_from_slice(&digest);
+    arr
+}
 
 /// A 32-byte Blake2b256 hash.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -16,14 +26,12 @@ pub struct Blake2b256Hash([u8; LENGTH]);
 impl Blake2b256Hash {
     /// Hash `bytes` and wrap the result.
     pub fn create(bytes: &[u8]) -> Self {
-        let digest: [u8; LENGTH] = super::blake2b256::hash(bytes).try_into().unwrap();
-        Self(digest)
+        Self(digest_to_array(super::blake2b256::hash(bytes)))
     }
 
     /// Hash the concatenation of `parts` and wrap the result.
     pub fn create_many(parts: &[&[u8]]) -> Self {
-        let digest: [u8; LENGTH] = super::blake2b256::hash_many(parts).try_into().unwrap();
-        Self(digest)
+        Self(digest_to_array(super::blake2b256::hash_many(parts)))
     }
 
     /// Wrap an existing 32-byte array without hashing.
@@ -51,10 +59,10 @@ impl Blake2b256Hash {
     }
 
     /// Parse a hex string, failing on invalid input or an incorrect length.
-    pub fn from_hex_either(string: &str) -> Result<Self, String> {
+    pub fn from_hex_either(string: &str) -> Result<Self, CryptoError> {
         match base16::decode(string) {
             Some(bytes) if bytes.len() == LENGTH => Ok(Self::from_byte_array(&bytes)),
-            _ => Err(format!("Invalid hex string {string}")),
+            _ => Err(CryptoError::InvalidHex),
         }
     }
 

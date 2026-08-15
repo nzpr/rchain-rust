@@ -132,8 +132,11 @@ mod tests {
     fn der_round_trips_rs_signature() {
         // A representative 64-byte RS signature.
         let rs: Vec<u8> = (0..64).collect();
-        let der = encode_signature_rs_to_der(&rs).unwrap();
-        assert_eq!(decode_signature_der_to_rs(&der).unwrap(), rs);
+        let der = encode_signature_rs_to_der(&rs).expect("encode RS signature to DER");
+        assert_eq!(
+            decode_signature_der_to_rs(&der).expect("decode DER signature to RS"),
+            rs
+        );
     }
 
     #[test]

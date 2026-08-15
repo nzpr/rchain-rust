@@ -75,12 +75,9 @@ pub fn add_block_to_dag_state(block: &BlockInfo, state: &DagState) -> DagState {
 /// Validate that the height-map keys form a contiguous range (Law 18).
 pub fn validate_dag_state(state: &DagState) {
     let m = &state.height_map;
-    let (min, max) = if m.is_empty() {
-        (0, 0)
-    } else {
-        let first = *m.keys().next().unwrap();
-        let last = *m.keys().next_back().unwrap();
-        (first, last + 1)
+    let (min, max) = match (m.keys().next(), m.keys().next_back()) {
+        (Some(first), Some(last)) => (*first, *last + 1),
+        _ => (0, 0),
     };
     assert!(
         max - min == m.len() as i64,

@@ -73,16 +73,12 @@ where
     }
 
     pub fn record_produce(&self, channel: C, data: A) {
-        self.soft_report
-            .write()
-            .unwrap()
+        crate::lock::wlock(&self.soft_report)
             .push(ReportingEvent::Produce(ReportingProduce { channel, data }));
     }
 
     pub fn record_consume(&self, channels: Vec<C>, patterns: Vec<P>, continuation: K, peeks: Vec<usize>) {
-        self.soft_report
-            .write()
-            .unwrap()
+        crate::lock::wlock(&self.soft_report)
             .push(ReportingEvent::Consume(ReportingConsume {
                 channels,
                 patterns,
@@ -92,24 +88,22 @@ where
     }
 
     pub fn record_comm(&self, consume: ReportingConsume<C, P, K>, produces: Vec<ReportingProduce<C, A>>) {
-        self.soft_report
-            .write()
-            .unwrap()
+        crate::lock::wlock(&self.soft_report)
             .push(ReportingEvent::Comm(ReportingComm { consume, produces }));
     }
 
     /// Move the soft report into the report history (port of `collectReport`).
     pub fn collect_report(&self) {
-        let mut soft = std::mem::take(&mut *self.soft_report.write().unwrap());
+        let mut soft = std::mem::take(&mut *crate::lock::wlock(&self.soft_report));
         if !soft.is_empty() {
-            self.report.write().unwrap().push(std::mem::take(&mut soft));
+            crate::lock::wlock(&self.report).push(std::mem::take(&mut soft));
         }
     }
 
     /// Drain and return the report (port of `getReport`).
     pub fn get_report(&self) -> Vec<Vec<ReportingEvent<C, P, A, K>>> {
         self.collect_report();
-        std::mem::take(&mut *self.report.write().unwrap())
+        std::mem::take(&mut *crate::lock::wlock(&self.report))
     }
 }
 
@@ -158,8 +152,8 @@ where
 {
     async fn create_checkpoint(&self) -> crate::checkpoint::Checkpoint {
         let checkpoint = self.replay.create_checkpoint().await;
-        self.soft_report.write().unwrap().clear();
-        self.report.write().unwrap().clear();
+        crate::lock::wlock(&self.soft_report).clear();
+        crate::lock::wlock(&self.report).clear();
         checkpoint
     }
 

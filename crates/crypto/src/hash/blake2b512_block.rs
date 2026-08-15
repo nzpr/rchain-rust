@@ -43,6 +43,16 @@ const SIGMA: [[u8; 16]; 12] = [
 
 const ROUNDS: usize = 12;
 
+use crate::errors::CryptoError;
+
+/// Read a little-endian `u64` from `bytes[start..start + 8]`. The caller guarantees the 8-byte
+/// window is in bounds (a full 128-byte message block or a length-checked serialization).
+pub(crate) fn u64_from_le_at(bytes: &[u8], start: usize) -> u64 {
+    let mut arr = [0u8; 8];
+    arr.copy_from_slice(&bytes[start..start + 8]);
+    u64::from_le_bytes(arr)
+}
+
 /// A Blake2b512 block hasher with a configurable fanout.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Blake2b512Block {
@@ -168,7 +178,7 @@ impl Blake2b512Block {
         let mut m = [0u64; BLOCK_LENGTH_LONGS];
         for (i, mi) in m.iter_mut().enumerate() {
             let start = offset + i * 8;
-            *mi = u64::from_le_bytes(msg[start..start + 8].try_into().unwrap());
+            *mi = u64_from_le_at(msg, start);
         }
 
         for round in 0..ROUNDS {
@@ -200,14 +210,20 @@ impl Blake2b512Block {
     }
 
     /// Deserialize from 80 bytes (the Scala `typeMapper.toCustom`).
-    pub fn from_bytes(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() < 80 {
+            return Err(CryptoError::InvalidLength {
+                expected: 80,
+                actual: bytes.len(),
+            });
+        }
         let mut chain_value = [0u64; CHAIN_VALUE_LENGTH];
         for (i, cv) in chain_value.iter_mut().enumerate() {
-            *cv = u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap());
+            *cv = u64_from_le_at(bytes, i * 8);
         }
-        let t0 = u64::from_le_bytes(bytes[64..72].try_into().unwrap());
-        let t1 = u64::from_le_bytes(bytes[72..80].try_into().unwrap());
-        Self { chain_value, t0, t1 }
+        let t0 = u64_from_le_at(bytes, 64);
+        let t1 = u64_from_le_at(bytes, 72);
+        Ok(Self { chain_value, t0, t1 })
     }
 
     /// For testing only — will give invalid results otherwise.

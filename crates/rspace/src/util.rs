@@ -81,8 +81,8 @@ pub fn unpack_tuple_with_peek<C, P, K, R>(
 
 /// Extract the continuation from an optional pair (port of `getK`).
 #[allow(dead_code)] // used by the deferred casper/node layers
-pub fn get_k<A, K>(t: Option<(K, A)>) -> K {
-    t.map(|x| x.0).unwrap()
+pub fn get_k<A, K>(t: Option<(K, A)>) -> Option<K> {
+    t.map(|x| x.0)
 }
 
 /// Run a continuation with its accompanying data (port of `runK`).

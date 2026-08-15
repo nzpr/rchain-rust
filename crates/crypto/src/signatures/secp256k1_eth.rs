@@ -5,6 +5,7 @@
 
 use super::secp256k1::Secp256k1;
 use super::signatures_alg::SignaturesAlg;
+use crate::errors::CryptoError;
 use crate::private_key::PrivateKey;
 use crate::public_key::PublicKey;
 use crate::util::certificate_helper;
@@ -21,13 +22,13 @@ impl SignaturesAlg for Secp256k1Eth {
         }
     }
 
-    fn sign(&self, data: &[u8], sec: &[u8]) -> Vec<u8> {
-        let der = Secp256k1::sign_bytes(data, sec).expect("valid secret key");
-        certificate_helper::decode_signature_der_to_rs(&der).unwrap_or_default()
+    fn sign(&self, data: &[u8], sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let der = Secp256k1::sign_bytes(data, sec)?;
+        Ok(certificate_helper::decode_signature_der_to_rs(&der).unwrap_or_default())
     }
 
-    fn to_public(&self, sec: &PrivateKey) -> PublicKey {
-        PublicKey::new(Secp256k1::to_public_bytes(sec.bytes()))
+    fn to_public(&self, sec: &PrivateKey) -> Result<PublicKey, CryptoError> {
+        Ok(PublicKey::new(Secp256k1::to_public_bytes(sec.bytes())?))
     }
 
     fn new_key_pair(&self) -> (PrivateKey, PublicKey) {

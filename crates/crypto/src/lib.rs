@@ -10,6 +10,7 @@
 //! `readKeyPair` / `generate`).
 
 pub mod encryption;
+pub mod errors;
 pub mod hash;
 pub mod private_key;
 pub mod public_key;

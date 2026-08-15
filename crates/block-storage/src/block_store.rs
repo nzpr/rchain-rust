@@ -12,6 +12,7 @@ use rchain_shared::store_manager::KeyValueStoreManager;
 use rchain_shared::typed_store::{KeyValueTypedStore, KeyValueTypedStoreCodec};
 
 use crate::dag::codecs::{BlockHashCodec, BlockMessageCodec};
+use crate::errors::StorageError;
 
 /// A typed store from block hash to block message (port of `BlockStore[F]`).
 pub type BlockStore = Arc<dyn KeyValueTypedStore<BlockHash, BlockMessage>>;
@@ -21,9 +22,9 @@ pub fn compress_bytes(bytes: &[u8]) -> Vec<u8> {
     lz4_flex::compress_prepend_size(bytes)
 }
 
-/// Length-prefixed LZ4 decompression (the Scala `LZ4DecompressorWithLength`; panics on corruption).
-pub fn decompress_bytes(bytes: &[u8]) -> Vec<u8> {
-    lz4_flex::decompress_size_prepended(bytes).expect("decompress block message")
+/// Length-prefixed LZ4 decompression (the Scala `LZ4DecompressorWithLength`).
+pub fn decompress_bytes(bytes: &[u8]) -> Result<Vec<u8>, StorageError> {
+    lz4_flex::decompress_size_prepended(bytes).map_err(|_| StorageError::DecompressionError)
 }
 
 /// Serialize a block message to its stored byte form (LZ4 over protobuf).
@@ -33,7 +34,7 @@ pub fn block_message_to_bytes(block: &BlockMessage) -> Vec<u8> {
 
 /// Deserialize a block message from its stored byte form.
 pub fn bytes_to_block_message(bytes: &[u8]) -> Result<BlockMessage, String> {
-    let decompressed = decompress_bytes(bytes);
+    let decompressed = decompress_bytes(bytes).map_err(|e| e.to_string())?;
     BlockMessage::from_bytes(&decompressed)
 }
 

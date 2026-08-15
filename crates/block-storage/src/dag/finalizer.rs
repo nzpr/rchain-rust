@@ -163,7 +163,8 @@ where
         for p in justifications {
             let mut chain = vec![p.clone()];
             chain.extend(self.self_parents(p, prev_fringe));
-            min_msgs.push(chain.into_iter().last().expect("non-empty chain"));
+            // `chain` is non-empty by construction (seeded with `p`).
+            min_msgs.push(chain.into_iter().last().unwrap_or_else(|| p.clone()));
         }
         if !self.check_min_messages(&min_msgs, bonds_map) {
             return None;

@@ -279,7 +279,7 @@ where
     }
 
     fn remove_bindings_for(&self, comm: &Comm) {
-        let mut data = self.replay_data.write().unwrap();
+        let mut data = crate::lock::wlock(&self.replay_data);
         data.remove_consume_binding(&comm.consume, comm);
         for produce in &comm.produces {
             data.remove_produce_binding(produce, comm);
@@ -517,7 +517,7 @@ where
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
     async fn rig(&self, log: Log) {
-        *self.replay_data.write().unwrap() = Self::build_replay_data(&log);
+        *crate::lock::wlock(&self.replay_data) = Self::build_replay_data(&log);
     }
 
     async fn rig_and_reset(&self, start_root: Blake2b256Hash, log: Log) {
@@ -526,7 +526,7 @@ where
     }
 
     async fn check_replay_data(&self) -> std::result::Result<(), ReplayException> {
-        let data = self.replay_data.read().unwrap();
+        let data = crate::lock::rlock(&self.replay_data);
         if data.is_empty() {
             Ok(())
         } else {

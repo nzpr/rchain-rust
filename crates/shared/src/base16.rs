@@ -18,7 +18,8 @@ pub fn decode(input: &str) -> Option<Vec<u8>> {
 /// Decode a hex string, ignoring any non-hex characters. Always succeeds.
 pub fn unsafe_decode(input: &str) -> Vec<u8> {
     let digits: String = input.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    parse_hex_padded(&digits).expect("filtered digits are always valid hex")
+    // `digits` contains only ASCII hex digits, so `parse_hex_padded` cannot return `None`.
+    parse_hex_padded(&digits).unwrap_or_default()
 }
 
 fn parse_hex_padded(digits: &str) -> Option<Vec<u8>> {

@@ -8,6 +8,7 @@
 
 pub mod checkpoint;
 pub mod concurrent;
+pub mod errors;
 pub mod hashing;
 pub mod history;
 pub mod hot_store;
@@ -16,6 +17,7 @@ pub mod hot_store_trie_action;
 pub mod i_replay_space;
 pub mod i_space;
 pub mod internal;
+pub mod lock;
 pub mod match_;
 pub mod merger;
 pub mod replay_rspace;

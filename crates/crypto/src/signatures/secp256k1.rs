@@ -5,6 +5,7 @@
 //! Rust port wraps the pure-Rust `k256` crate (RFC-6979 deterministic nonces, low-S DER).
 
 use super::signatures_alg::SignaturesAlg;
+use crate::errors::CryptoError;
 use crate::private_key::PrivateKey;
 use crate::public_key::PublicKey;
 use k256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
@@ -18,10 +19,10 @@ pub struct Secp256k1;
 
 impl Secp256k1 {
     /// Sign a 32-byte message hash, returning a DER-encoded signature.
-    pub fn sign_bytes(data: &[u8], sec: &[u8]) -> Result<Vec<u8>, String> {
-        let sk = SecretKey::from_slice(sec).map_err(|e| e.to_string())?;
+    pub fn sign_bytes(data: &[u8], sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let sk = SecretKey::from_slice(sec).map_err(|_| CryptoError::InvalidKey)?;
         let signing = SigningKey::from(&sk);
-        let sig: Signature = signing.sign_prehash(data).map_err(|e| e.to_string())?;
+        let sig: Signature = signing.sign_prehash(data).map_err(|_| CryptoError::InvalidKey)?;
         Ok(sig.to_der().as_bytes().to_vec())
     }
 
@@ -42,9 +43,9 @@ impl Secp256k1 {
     }
 
     /// Compute the uncompressed (65-byte) public key from a 32-byte secret key.
-    pub fn to_public_bytes(seckey: &[u8]) -> Vec<u8> {
-        let sk = SecretKey::from_slice(seckey).expect("valid secret key");
-        sk.public_key().to_encoded_point(false).as_bytes().to_vec()
+    pub fn to_public_bytes(seckey: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let sk = SecretKey::from_slice(seckey).map_err(|_| CryptoError::InvalidKey)?;
+        Ok(sk.public_key().to_encoded_point(false).as_bytes().to_vec())
     }
 }
 
@@ -53,12 +54,12 @@ impl SignaturesAlg for Secp256k1 {
         Secp256k1::verify_bytes(data, signature, pub_key)
     }
 
-    fn sign(&self, data: &[u8], sec: &[u8]) -> Vec<u8> {
-        Secp256k1::sign_bytes(data, sec).expect("valid secret key")
+    fn sign(&self, data: &[u8], sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        Secp256k1::sign_bytes(data, sec)
     }
 
-    fn to_public(&self, sec: &PrivateKey) -> PublicKey {
-        PublicKey::new(Secp256k1::to_public_bytes(sec.bytes()))
+    fn to_public(&self, sec: &PrivateKey) -> Result<PublicKey, CryptoError> {
+        Ok(PublicKey::new(Secp256k1::to_public_bytes(sec.bytes())?))
     }
 
     fn new_key_pair(&self) -> (PrivateKey, PublicKey) {
@@ -87,7 +88,7 @@ mod tests {
     fn verifies_signature_with_keypair() {
         let (PrivateKey(sec), PublicKey(pub_key)) = Secp256k1.new_key_pair();
         let data = sha256::hash(b"testing");
-        let sig = Secp256k1::sign_bytes(&data, &sec).unwrap();
+        let sig = Secp256k1::sign_bytes(&data, &sec).expect("sign with valid secret key");
         assert!(Secp256k1::verify_bytes(&data, &sig, &pub_key));
     }
 
@@ -107,7 +108,7 @@ mod tests {
     fn creates_known_ecdsa_signature() {
         let data = sha256::hash(b"testing");
         let sec = base16::unsafe_decode("67E56582298859DDAE725F972992A07C6C4FB9F62A8FFF58CE3CA926A1063530");
-        let sig = Secp256k1::sign_bytes(&data, &sec).unwrap();
+        let sig = Secp256k1::sign_bytes(&data, &sec).expect("sign with valid secret key");
         assert_eq!(
             base16::encode(&sig).to_uppercase(),
             "30440220182A108E1448DC8F1FB467D06A0F3BB8EA0533584CB954EF8DA112F1D60E39A202201C66F36DA211C087F3AF88B50EDF4F9BDAA6CF5FD6817E74DCA34DB12390C6E9"
@@ -123,7 +124,7 @@ mod tests {
     #[test]
     fn computes_public_key_from_secret_key() {
         let sec = base16::unsafe_decode("67E56582298859DDAE725F972992A07C6C4FB9F62A8FFF58CE3CA926A1063530");
-        let pub_key = Secp256k1::to_public_bytes(&sec);
+        let pub_key = Secp256k1::to_public_bytes(&sec).expect("compute public key");
         assert_eq!(
             base16::encode(&pub_key).to_uppercase(),
             "04C591A8FF19AC9C4E4E5793673B83123437E975285E7B442F4EE2654DFFCA5E2D2103ED494718C697AC9AEBCFD19612E224DB46661011863ED2FC54E71861E2A6"

@@ -57,6 +57,22 @@ pub struct ReportingEventStringTransformer<C, P, A, K> {
 
 impl<C, P, A, K> ReportingTransformer<C, P, A, K, RhoEvent> for ReportingEventStringTransformer<C, P, A, K> {
     fn serialize_consume(&self, rc: &ReportingConsume<C, P, K>) -> RhoEvent {
+        RhoEvent::Consume(self.consume_to_rho(rc))
+    }
+
+    fn serialize_produce(&self, rp: &ReportingProduce<C, A>) -> RhoEvent {
+        RhoEvent::Produce(self.produce_to_rho(rp))
+    }
+
+    fn serialize_comm(&self, rc: &ReportingComm<C, P, A, K>) -> RhoEvent {
+        let consume = self.consume_to_rho(&rc.consume);
+        let produces = rc.produces.iter().map(|rp| self.produce_to_rho(rp)).collect();
+        RhoEvent::Comm(RhoComm { consume, produces })
+    }
+}
+
+impl<C, P, A, K> ReportingEventStringTransformer<C, P, A, K> {
+    fn consume_to_rho(&self, rc: &ReportingConsume<C, P, K>) -> RhoConsume {
         let k = (self.serialize_k)(&rc.continuation);
         let chs = rc
             .channels
@@ -70,33 +86,17 @@ impl<C, P, A, K> ReportingTransformer<C, P, A, K, RhoEvent> for ReportingEventSt
             .map(self.serialize_p)
             .collect::<Vec<_>>()
             .join(";");
-        RhoEvent::Consume(RhoConsume {
+        RhoConsume {
             channels: format!("[{}]", chs),
             patterns: format!("[{}]", ps),
             continuation: k,
-        })
+        }
     }
 
-    fn serialize_produce(&self, rp: &ReportingProduce<C, A>) -> RhoEvent {
-        RhoEvent::Produce(RhoProduce {
+    fn produce_to_rho(&self, rp: &ReportingProduce<C, A>) -> RhoProduce {
+        RhoProduce {
             channel: (self.serialize_c)(&rp.channel),
             data: (self.serialize_a)(&rp.data),
-        })
-    }
-
-    fn serialize_comm(&self, rc: &ReportingComm<C, P, A, K>) -> RhoEvent {
-        let consume = match self.serialize_consume(&rc.consume) {
-            RhoEvent::Consume(c) => c,
-            _ => unreachable!("serialize_consume always returns RhoEvent::Consume"),
-        };
-        let produces = rc
-            .produces
-            .iter()
-            .map(|rp| match self.serialize_produce(rp) {
-                RhoEvent::Produce(p) => p,
-                _ => unreachable!("serialize_produce always returns RhoEvent::Produce"),
-            })
-            .collect();
-        RhoEvent::Comm(RhoComm { consume, produces })
+        }
     }
 }

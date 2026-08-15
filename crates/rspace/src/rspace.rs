@@ -60,7 +60,7 @@ where
     }
 
     pub(crate) fn produce_counters(&self, produce_refs: &[Produce]) -> BTreeMap<Produce, usize> {
-        let counter = self.produce_counter.read().unwrap();
+        let counter = crate::lock::rlock(&self.produce_counter);
         produce_refs
             .iter()
             .map(|p| (p.clone(), *counter.get(p).unwrap_or(&0)))
@@ -68,16 +68,14 @@ where
     }
 
     pub(crate) fn produce_counter_value(&self, source: &Produce) -> usize {
-        self.produce_counter
-            .read()
-            .unwrap()
+        crate::lock::rlock(&self.produce_counter)
             .get(source)
             .copied()
             .unwrap_or(0)
     }
 
     pub(crate) fn increment_produce_counter(&self, produce_ref: &Produce) {
-        let mut counter = self.produce_counter.write().unwrap();
+        let mut counter = crate::lock::wlock(&self.produce_counter);
         *counter.entry(produce_ref.clone()).or_insert(0) += 1;
     }
 
@@ -86,39 +84,31 @@ where
     }
 
     pub(crate) fn current_store(&self) -> Arc<dyn HotStore<C, P, A, K>> {
-        self.store.read().expect("poisoned lock").clone()
+        crate::lock::rlock(&self.store).clone()
     }
 
     fn current_history(&self) -> Arc<HistoryRepository<C, P, A, K>> {
-        self.history_repository
-            .read()
-            .expect("poisoned lock")
+        crate::lock::rlock(&self.history_repository)
             .clone()
     }
 
     fn log_comm(&self, comm: Comm) -> Comm {
-        self.event_log
-            .write()
-            .unwrap()
+        crate::lock::wlock(&self.event_log)
             .insert(0, Event::Comm(comm.clone()));
         comm
     }
 
     fn log_consume(&self, consume_ref: Consume) -> Consume {
-        self.event_log
-            .write()
-            .unwrap()
+        crate::lock::wlock(&self.event_log)
             .insert(0, Event::Consume(consume_ref.clone()));
         consume_ref
     }
 
     fn log_produce(&self, produce_ref: Produce, persist: bool) -> Produce {
-        self.event_log
-            .write()
-            .unwrap()
+        crate::lock::wlock(&self.event_log)
             .insert(0, Event::Produce(produce_ref.clone()));
         if !persist {
-            let mut counter = self.produce_counter.write().unwrap();
+            let mut counter = crate::lock::wlock(&self.produce_counter);
             *counter.entry(produce_ref.clone()).or_insert(0) += 1;
         }
         produce_ref
@@ -382,7 +372,7 @@ where
                     peeks: BTreeSet::new(),
                     source: consume_ref,
                 };
-                self.installs.write().unwrap().insert(
+                crate::lock::wlock(&self.installs).insert(
                     channels.to_vec(),
                     Install {
                         patterns: patterns.to_vec(),
@@ -483,12 +473,12 @@ where
             let history = self.current_history();
             history.checkpoint(&changes).await
         };
-        *self.history_repository.write().unwrap() = next_history.clone();
-        let log = std::mem::take(&mut *self.event_log.write().unwrap());
-        *self.produce_counter.write().unwrap() = BTreeMap::new();
+        *crate::lock::wlock(&self.history_repository) = next_history.clone();
+        let log = std::mem::take(&mut *crate::lock::wlock(&self.event_log));
+        *crate::lock::wlock(&self.produce_counter) = BTreeMap::new();
         let history_reader = next_history.get_history_reader(next_history.root()).await;
         let base = history_reader.base();
-        *self.store.write().unwrap() = Arc::new(InMemHotStore::new(base));
+        *crate::lock::wlock(&self.store) = Arc::new(InMemHotStore::new(base));
         Checkpoint {
             root: next_history.root(),
             log,
@@ -500,12 +490,12 @@ where
             let history = self.current_history();
             history.reset(root).await.expect("reset failed")
         };
-        *self.history_repository.write().unwrap() = next_history.clone();
-        *self.event_log.write().unwrap() = Vec::new();
-        *self.produce_counter.write().unwrap() = BTreeMap::new();
+        *crate::lock::wlock(&self.history_repository) = next_history.clone();
+        *crate::lock::wlock(&self.event_log) = Vec::new();
+        *crate::lock::wlock(&self.produce_counter) = BTreeMap::new();
         let history_reader = next_history.get_history_reader(root).await;
         let base = history_reader.base();
-        *self.store.write().unwrap() = Arc::new(InMemHotStore::new(base));
+        *crate::lock::wlock(&self.store) = Arc::new(InMemHotStore::new(base));
     }
 
     async fn get_data(&self, channel: &C) -> Vec<Datum<A>> {
@@ -531,8 +521,8 @@ where
 
     async fn create_soft_checkpoint(&self) -> SoftCheckpoint<C, P, A, K> {
         let snapshot = self.current_store().snapshot().await;
-        let log = std::mem::take(&mut *self.event_log.write().unwrap());
-        let produce_counter = std::mem::take(&mut *self.produce_counter.write().unwrap());
+        let log = std::mem::take(&mut *crate::lock::wlock(&self.event_log));
+        let produce_counter = std::mem::take(&mut *crate::lock::wlock(&self.produce_counter));
         SoftCheckpoint {
             cache_snapshot: snapshot,
             log,
@@ -544,9 +534,9 @@ where
         let history = self.current_history();
         let history_reader = history.get_history_reader(history.root()).await;
         let base = history_reader.base();
-        *self.store.write().unwrap() =
+        *crate::lock::wlock(&self.store) =
             Arc::new(InMemHotStore::from_state(checkpoint.cache_snapshot, base));
-        *self.event_log.write().unwrap() = checkpoint.log;
-        *self.produce_counter.write().unwrap() = checkpoint.produce_counter;
+        *crate::lock::wlock(&self.event_log) = checkpoint.log;
+        *crate::lock::wlock(&self.produce_counter) = checkpoint.produce_counter;
     }
 }

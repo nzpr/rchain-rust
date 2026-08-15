@@ -2,6 +2,7 @@
 //!
 //! Mirrors `crypto/src/main/scala/coop/rchain/crypto/signatures/SignaturesAlg.scala`.
 
+use crate::errors::CryptoError;
 use crate::private_key::PrivateKey;
 use crate::public_key::PublicKey;
 
@@ -11,10 +12,10 @@ pub trait SignaturesAlg {
     fn verify(&self, data: &[u8], signature: &[u8], pub_key: &[u8]) -> bool;
 
     /// Sign `data` with the secret key `sec`.
-    fn sign(&self, data: &[u8], sec: &[u8]) -> Vec<u8>;
+    fn sign(&self, data: &[u8], sec: &[u8]) -> Result<Vec<u8>, CryptoError>;
 
     /// Compute the public key corresponding to `sec`.
-    fn to_public(&self, sec: &PrivateKey) -> PublicKey;
+    fn to_public(&self, sec: &PrivateKey) -> Result<PublicKey, CryptoError>;
 
     /// Generate a fresh (private, public) key pair.
     fn new_key_pair(&self) -> (PrivateKey, PublicKey);

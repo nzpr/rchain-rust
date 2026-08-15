@@ -8,6 +8,8 @@ use crypto_box::aead::{Aead, Nonce};
 use crypto_box::{PublicKey as BoxPublicKey, SalsaBox, SecretKey as BoxSecretKey};
 use rand::RngCore;
 
+use crate::errors::CryptoError;
+
 /// Generate a fresh (public, secret) key pair.
 pub fn new_key_pair() -> (Vec<u8>, Vec<u8>) {
     let sk = BoxSecretKey::generate(&mut rand::rngs::OsRng);
@@ -30,21 +32,33 @@ pub fn to_public(sec: &[u8]) -> Vec<u8> {
 }
 
 /// Encrypt `message` with the box keyed by `(pub, sec)` and `nonce`.
-pub fn encrypt(pub_key: &[u8], sec: &[u8], nonce: &[u8], message: &[u8]) -> Vec<u8> {
+pub fn encrypt(
+    pub_key: &[u8],
+    sec: &[u8],
+    nonce: &[u8],
+    message: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     let sender_sk = secret_key_from(sec);
-    let recipient_pk = public_key_from(pub_key);
+    let recipient_pk = public_key_from(pub_key)?;
     let b = SalsaBox::new(&recipient_pk, &sender_sk);
     let nonce = Nonce::<SalsaBox>::from_slice(nonce);
-    b.encrypt(nonce, message).expect("valid box parameters")
+    b.encrypt(nonce, message)
+        .map_err(|_| CryptoError::EncryptionFailed)
 }
 
 /// Decrypt `cipher` with the box keyed by `(pub, sec)` and `nonce`.
-pub fn decrypt(pub_key: &[u8], sec: &[u8], nonce: &[u8], cipher: &[u8]) -> Vec<u8> {
+pub fn decrypt(
+    pub_key: &[u8],
+    sec: &[u8],
+    nonce: &[u8],
+    cipher: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     let sender_sk = secret_key_from(sec);
-    let recipient_pk = public_key_from(pub_key);
+    let recipient_pk = public_key_from(pub_key)?;
     let b = SalsaBox::new(&recipient_pk, &sender_sk);
     let nonce = Nonce::<SalsaBox>::from_slice(nonce);
-    b.decrypt(nonce, cipher).expect("valid box parameters")
+    b.decrypt(nonce, cipher)
+        .map_err(|_| CryptoError::EncryptionFailed)
 }
 
 fn secret_key_from(bytes: &[u8]) -> BoxSecretKey {
@@ -53,9 +67,12 @@ fn secret_key_from(bytes: &[u8]) -> BoxSecretKey {
     BoxSecretKey::from(arr)
 }
 
-fn public_key_from(bytes: &[u8]) -> BoxPublicKey {
-    let arr: [u8; 32] = bytes.try_into().expect("32-byte public key");
-    BoxPublicKey::from(arr)
+fn public_key_from(bytes: &[u8]) -> Result<BoxPublicKey, CryptoError> {
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidLength {
+        expected: 32,
+        actual: bytes.len(),
+    })?;
+    Ok(BoxPublicKey::from(arr))
 }
 
 #[cfg(test)]
@@ -73,7 +90,7 @@ mod tests {
         let message = base16::unsafe_decode(
             "be075fc53c81f2d5cf141316ebeb0c7b5228c52a4c62cbd44b66849b64244ffce5ecbaaf33bd751a1ac728d45e6c61296cdc3c01233561f41db66cce314adb310e3be8250c46f06dceea3a7fa1348057e2f6556ad6b1318a024a838f21af1fde048977eb48f59ffd4924ca1c60902e52f0a089bc76897040e082f937763848645e0705",
         );
-        let cipher = encrypt(&alice_pub, &bob_sec, &nonce, &message);
+        let cipher = encrypt(&alice_pub, &bob_sec, &nonce, &message).expect("box encrypt");
         assert_eq!(
             base16::encode(&cipher),
             "f3ffc7703f9400e52a7dfb4b3d3305d98e993b9f48681273c29650ba32fc76ce48332ea7164d96a4476fb8c531a1186ac0dfc17c98dce87b4da7f011ec48c97271d2c20f9b928fe2270d6fb863d51738b48eeee314a7cc8ab932164548e526ae90224368517acfeabd6bb3732bc0e9da99832b61ca01b6de56244a9e88d5f9b37973f622a43d14a6599b1f654cb45a74e355a5"
@@ -93,7 +110,7 @@ mod tests {
         let cipher = base16::unsafe_decode(
             "f3ffc7703f9400e52a7dfb4b3d3305d98e993b9f48681273c29650ba32fc76ce48332ea7164d96a4476fb8c531a1186ac0dfc17c98dce87b4da7f011ec48c97271d2c20f9b928fe2270d6fb863d51738b48eeee314a7cc8ab932164548e526ae90224368517acfeabd6bb3732bc0e9da99832b61ca01b6de56244a9e88d5f9b37973f622a43d14a6599b1f654cb45a74e355a5",
         );
-        assert_eq!(decrypt(&bob_pub, &alice_sec, &nonce, &cipher), message);
+        assert_eq!(decrypt(&bob_pub, &alice_sec, &nonce, &cipher).expect("box decrypt"), message);
     }
 
     #[test]

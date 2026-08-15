@@ -1,4 +1,4 @@
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
@@ -9,6 +9,6 @@ fn main() {
                 "proto/kademlia.proto",
             ],
             &["proto"],
-        )
-        .expect("failed to compile protobuf definitions");
+        )?;
+    Ok(())
 }

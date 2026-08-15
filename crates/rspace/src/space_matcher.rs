@@ -108,7 +108,7 @@ where
                 channels: channels.to_vec(),
                 continuation: wc.clone(),
                 continuation_index: *index,
-                data_candidates: data_candidates.into_iter().map(|c| c.unwrap()).collect(),
+                data_candidates: data_candidates.into_iter().flatten().collect(),
             });
         }
     }

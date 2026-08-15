@@ -5,6 +5,7 @@
 //! libsodium's malleable-signature acceptance.
 
 use super::signatures_alg::SignaturesAlg;
+use crate::errors::CryptoError;
 use crate::private_key::PrivateKey;
 use crate::public_key::PublicKey;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -15,15 +16,21 @@ pub struct Ed25519;
 
 impl Ed25519 {
     /// Compute the 32-byte public key from a 32-byte secret (seed) key.
-    pub fn to_public_bytes(sec: &[u8]) -> Vec<u8> {
-        let arr: [u8; 32] = sec.try_into().expect("32-byte secret key");
-        SigningKey::from_bytes(&arr).verifying_key().to_bytes().to_vec()
+    pub fn to_public_bytes(sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let arr: [u8; 32] = sec.try_into().map_err(|_| CryptoError::InvalidLength {
+            expected: 32,
+            actual: sec.len(),
+        })?;
+        Ok(SigningKey::from_bytes(&arr).verifying_key().to_bytes().to_vec())
     }
 
     /// Sign `data` with a 32-byte secret (seed) key, returning a 64-byte signature.
-    pub fn sign_bytes(data: &[u8], sec: &[u8]) -> Vec<u8> {
-        let arr: [u8; 32] = sec.try_into().expect("32-byte secret key");
-        SigningKey::from_bytes(&arr).sign(data).to_bytes().to_vec()
+    pub fn sign_bytes(data: &[u8], sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let arr: [u8; 32] = sec.try_into().map_err(|_| CryptoError::InvalidLength {
+            expected: 32,
+            actual: sec.len(),
+        })?;
+        Ok(SigningKey::from_bytes(&arr).sign(data).to_bytes().to_vec())
     }
 
     /// Verify a 64-byte signature against a 32-byte public key.
@@ -46,12 +53,12 @@ impl SignaturesAlg for Ed25519 {
         Ed25519::verify_bytes(data, signature, pub_key)
     }
 
-    fn sign(&self, data: &[u8], sec: &[u8]) -> Vec<u8> {
+    fn sign(&self, data: &[u8], sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
         Ed25519::sign_bytes(data, sec)
     }
 
-    fn to_public(&self, sec: &PrivateKey) -> PublicKey {
-        PublicKey::new(Ed25519::to_public_bytes(sec.bytes()))
+    fn to_public(&self, sec: &PrivateKey) -> Result<PublicKey, CryptoError> {
+        Ok(PublicKey::new(Ed25519::to_public_bytes(sec.bytes())?))
     }
 
     fn new_key_pair(&self) -> (PrivateKey, PublicKey) {
@@ -81,7 +88,7 @@ mod tests {
             "b18e1d0045995ec3d010c387ccfeb984d783af8fbb0f40fa7db126d889f6dadd",
         );
         assert_eq!(
-            base16::encode(&Ed25519::to_public_bytes(&sec)),
+            base16::encode(&Ed25519::to_public_bytes(&sec).expect("compute ed25519 public key")),
             "77f48b59caeda77751ed138b0ec667ff50f8768c25d48309a8f386a2bad187fb"
         );
     }
@@ -111,6 +118,6 @@ mod tests {
         let sec = base16::unsafe_decode(
             "b18e1d0045995ec3d010c387ccfeb984d783af8fbb0f40fa7db126d889f6dadd",
         );
-        assert_eq!(Ed25519::sign_bytes(&data, &sec), expected);
+        assert_eq!(Ed25519::sign_bytes(&data, &sec).expect("ed25519 sign"), expected);
     }
 }

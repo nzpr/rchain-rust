@@ -2,6 +2,7 @@
 //!
 //! Mirrors `crypto/src/main/scala/coop/rchain/crypto/signatures/Signed.scala`.
 
+use crate::errors::CryptoError;
 use crate::hash::{blake2b256, keccak256};
 use crate::private_key::PrivateKey;
 use crate::public_key::PublicKey;
@@ -18,17 +19,21 @@ pub struct Signed<A> {
 
 impl<A: Serialize<A>> Signed<A> {
     /// Sign `data` with `sig_algorithm` and `sk`.
-    pub fn new(data: A, sig_algorithm: &'static dyn SignaturesAlg, sk: &PrivateKey) -> Self {
+    pub fn new(
+        data: A,
+        sig_algorithm: &'static dyn SignaturesAlg,
+        sk: &PrivateKey,
+    ) -> Result<Self, CryptoError> {
         let serialized = <A as Serialize<A>>::encode(&data);
         let hash = signature_hash(sig_algorithm.name(), &serialized);
-        let sig = sig_algorithm.sign(&hash, sk.bytes());
-        let pk = sig_algorithm.to_public(sk);
-        Self {
+        let sig = sig_algorithm.sign(&hash, sk.bytes())?;
+        let pk = sig_algorithm.to_public(sk)?;
+        Ok(Self {
             data,
             pk,
             sig,
             sig_algorithm,
-        }
+        })
     }
 
     /// Reconstruct a `Signed` from its parts, verifying the signature. Returns `None` on failure.

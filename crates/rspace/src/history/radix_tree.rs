@@ -132,12 +132,12 @@ impl RadixTreeImpl {
 
     /// Load a node, using the read cache and falling back to the store (port of `loadNode`).
     pub async fn load_node(&self, node_ptr: Blake2b256Hash, no_assert: bool) -> Node {
-        if let Some(node) = self.cache_read.lock().unwrap().get(&node_ptr).cloned() {
+        if let Some(node) = crate::lock::mlock(&self.cache_read).get(&node_ptr).cloned() {
             return node;
         }
         match self.load_node_from_store(node_ptr).await {
             Some(node) => {
-                self.cache_read.lock().unwrap().insert(node_ptr, node.clone());
+                crate::lock::mlock(&self.cache_read).insert(node_ptr, node.clone());
                 node
             }
             None => {
@@ -152,13 +152,13 @@ impl RadixTreeImpl {
     }
 
     pub fn clear_read_cache(&self) {
-        self.cache_read.lock().unwrap().clear();
+        crate::lock::mlock(&self.cache_read).clear();
     }
 
     /// Serialize + hash a node, caching the bytes for a later commit (port of `saveNode`).
     pub fn save_node(&self, node: &Node) -> Blake2b256Hash {
         let (hash, bytes) = hash_node(node);
-        let mut cache_read = self.cache_read.lock().unwrap();
+        let mut cache_read = crate::lock::mlock(&self.cache_read);
         if let Some(existing) = cache_read.get(&hash) {
             assert!(
                 existing == node,
@@ -169,16 +169,13 @@ impl RadixTreeImpl {
             cache_read.insert(hash, node.clone());
         }
         drop(cache_read);
-        self.cache_write.lock().unwrap().insert(hash, bytes);
+        crate::lock::mlock(&self.cache_write).insert(hash, bytes);
         hash
     }
 
     /// Write the write-cache to the store, checking for collisions (port of `commit`).
     pub async fn commit(&self) -> Result<(), String> {
-        let kv_pairs: Vec<(Blake2b256Hash, Vec<u8>)> = self
-            .cache_write
-            .lock()
-            .unwrap()
+        let kv_pairs: Vec<(Blake2b256Hash, Vec<u8>)> = crate::lock::mlock(&self.cache_write)
             .iter()
             .map(|(k, v)| (*k, v.clone()))
             .collect();
@@ -199,7 +196,9 @@ impl RadixTreeImpl {
         let existing_values = self.store.get(&existing_keys).await;
         let cache_map: HashMap<Blake2b256Hash, Vec<u8>> = kv_pairs.iter().cloned().collect();
         for (k, existing) in existing_keys.iter().zip(existing_values.iter()) {
-            let cached = cache_map.get(k).expect("cached key must be present");
+            let cached = cache_map
+                .get(k)
+                .ok_or_else(|| "cached key must be present".to_string())?;
             let stored = existing.clone().unwrap_or_default();
             if cached != &stored {
                 return Err(format!("collision in KVDB (key = {})", k.to_hex()));
@@ -210,7 +209,7 @@ impl RadixTreeImpl {
     }
 
     pub fn clear_write_cache(&self) {
-        self.cache_write.lock().unwrap().clear();
+        crate::lock::mlock(&self.cache_write).clear();
     }
 
     /// Read the leaf value at `start_prefix` under `start_node` (port of `read`).
@@ -467,7 +466,7 @@ impl RadixTreeImpl {
         // Group actions by the first byte of their key.
         let mut grouped: Vec<(u8, Vec<HistoryAction>)> = Vec::new();
         for action in actions {
-            let first = action.key().head_option().expect("prefix must be non-empty");
+            let first = action.key().head();
             match grouped.iter_mut().find(|(b, _)| *b == first) {
                 Some((_, list)) => list.push(action.clone()),
                 None => grouped.push((first, vec![action.clone()])),
