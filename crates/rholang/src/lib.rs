@@ -9,4 +9,5 @@ pub mod accounting;
 pub mod env;
 pub mod errors;
 pub mod matcher;
+pub mod reduce;
 pub mod substitute;

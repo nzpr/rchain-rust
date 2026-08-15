@@ -307,3 +307,30 @@ pub fn is_nil(p: &Par) -> bool {
         && p.bundles.is_empty()
         && p.connectives.is_empty()
 }
+
+/// Wrap an expression in a single-`Expr` `Par` (port of `Par.apply(e: Expr)` / `fromExpr`).
+pub fn from_expr(expr: Expr) -> Par {
+    Par {
+        exprs: vec![expr.clone()],
+        locally_free: AlwaysEqual(locally_free_of_expr(&expr, 0)),
+        connective_used: connective_used_of_expr(&expr),
+        ..Par::default()
+    }
+}
+
+/// The rholang type name of an expression (port of `RichExprInstance.typ`).
+pub fn typ(expr: &Expr) -> &'static str {
+    match expr {
+        Expr::GBool(_) => "Bool",
+        Expr::GInt(_) => "Int",
+        Expr::GBigInt(_) => "BigInt",
+        Expr::GString(_) => "String",
+        Expr::GUri(_) => "Uri",
+        Expr::GByteArray(_) => "ByteArray",
+        Expr::EList(_) => "List",
+        Expr::ETuple(_) => "Tuple",
+        Expr::ESet(_) => "Set",
+        Expr::EMap(_) => "Map",
+        _ => "Unit",
+    }
+}
