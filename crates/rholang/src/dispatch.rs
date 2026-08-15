@@ -63,7 +63,7 @@ impl Dispatch for RholangAndScalaDispatcher {
                 randoms.extend(data_list.iter().map(|d| d.random_state.clone()));
                 let merged = Blake2b512Random::merge(&randoms);
                 let eval = self.eval.borrow();
-                let f = eval.as_ref().expect("dispatcher eval not set");
+                let f = eval.as_ref().ok_or_else(|| RholangError::BugFoundError("dispatcher eval not set".to_string()))?;
                 f(&pwr.body, &env, &merged)
             }
             TaggedContinuation::ScalaBodyRef(r) => {

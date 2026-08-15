@@ -459,7 +459,7 @@ fn build_seq(items: &[String]) -> String {
 
 /// Increment a base-id string (`a` → `b`, `z` → `aa`, `az` → `ba`).
 fn increment(id: &str) -> String {
-    let last = id.chars().last().expect("non-empty id");
+    let last = id.chars().last().unwrap_or('a');
     let new_id = increment_char(last).to_string();
     if new_id == "a" {
         if id.chars().count() > 1 {

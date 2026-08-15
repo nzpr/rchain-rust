@@ -39,7 +39,7 @@ pub async fn pretty_print(runtime: &RhoRuntime) -> String {
     if pars.is_empty() {
         EMPTY_SPACE.to_string()
     } else {
-        let merged = pars.into_iter().reduce(|a, b| par_concat(&a, &b)).unwrap();
+        let merged = pars.into_iter().reduce(|a, b| par_concat(&a, &b)).unwrap_or_else(|| Par::default());
         PrettyPrinter::new().build_string(&merged)
     }
 }
@@ -52,7 +52,7 @@ pub async fn pretty_print_unmatched_sends(runtime: &RhoRuntime) -> String {
     if pars.is_empty() {
         NO_UNMATCHED_SENDS.to_string()
     } else {
-        let merged = pars.into_iter().reduce(|a, b| par_concat(&a, &b)).unwrap();
+        let merged = pars.into_iter().reduce(|a, b| par_concat(&a, &b)).unwrap_or_else(|| Par::default());
         PrettyPrinter::new().build_string(&merged)
     }
 }

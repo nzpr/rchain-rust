@@ -13,6 +13,7 @@ use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_shared::serialize::Serialize;
 
 use crate::ast as a;
+use crate::errors::ModelsError;
 use crate::proto::rholang as p;
 use crate::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
 
@@ -117,20 +118,20 @@ fn connective_body_to_proto(b: &a::ConnectiveBody) -> p::ConnectiveBody {
     }
 }
 
-pub fn connective_from_proto(p: &p::Connective) -> a::Connective {
-    match &p.connective_instance {
+pub fn connective_from_proto(p: &p::Connective) -> Result<a::Connective, ModelsError> {
+    Ok(match &p.connective_instance {
         Some(p::connective::ConnectiveInstance::ConnAndBody(b)) => {
             a::Connective::ConnAnd(a::ConnectiveBody {
-                ps: b.ps.iter().map(par_from_proto).collect(),
+                ps: b.ps.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
             })
         }
         Some(p::connective::ConnectiveInstance::ConnOrBody(b)) => {
             a::Connective::ConnOr(a::ConnectiveBody {
-                ps: b.ps.iter().map(par_from_proto).collect(),
+                ps: b.ps.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
             })
         }
         Some(p::connective::ConnectiveInstance::ConnNotBody(p_)) => {
-            a::Connective::ConnNot(Box::new(par_from_proto(p_)))
+            a::Connective::ConnNot(Box::new(par_from_proto(p_)?))
         }
         Some(p::connective::ConnectiveInstance::VarRefBody(v)) => {
             a::Connective::VarRef(a::VarRef { index: v.index, depth: v.depth })
@@ -142,7 +143,7 @@ pub fn connective_from_proto(p: &p::Connective) -> a::Connective {
         Some(p::connective::ConnectiveInstance::ConnUri(b)) => a::Connective::ConnUri(*b),
         Some(p::connective::ConnectiveInstance::ConnByteArray(b)) => a::Connective::ConnByteArray(*b),
         None => a::Connective::Empty,
-    }
+    })
 }
 
 // --- GUnforgeable -------------------------------------------------------------------------------
@@ -170,8 +171,8 @@ pub fn unforgeable_to_proto(u: &a::GUnforgeable) -> p::GUnforgeable {
     }
 }
 
-pub fn unforgeable_from_proto(p: &p::GUnforgeable) -> a::GUnforgeable {
-    match &p.unf_instance {
+pub fn unforgeable_from_proto(p: &p::GUnforgeable) -> Result<a::GUnforgeable, ModelsError> {
+    Ok(match &p.unf_instance {
         Some(p::g_unforgeable::UnfInstance::GPrivateBody(g)) => {
             a::GUnforgeable::GPrivate(a::GPrivate { id: g.id.clone() })
         }
@@ -185,7 +186,7 @@ pub fn unforgeable_from_proto(p: &p::GUnforgeable) -> a::GUnforgeable {
         }
         Some(p::g_unforgeable::UnfInstance::GSysAuthTokenBody(_)) => a::GUnforgeable::GSysAuthToken,
         None => a::GUnforgeable::Empty,
-    }
+    })
 }
 
 // --- Expr ---------------------------------------------------------------------------------------
@@ -232,44 +233,44 @@ pub fn expr_to_proto(e: &a::Expr) -> p::Expr {
     }
 }
 
-pub fn expr_from_proto(p: &p::Expr) -> a::Expr {
+pub fn expr_from_proto(p: &p::Expr) -> Result<a::Expr, ModelsError> {
     use p::expr::ExprInstance as E;
-    match &p.expr_instance {
+    Ok(match &p.expr_instance {
         Some(E::GBool(b)) => a::Expr::GBool(*b),
         Some(E::GInt(i)) => a::Expr::GInt(*i),
         Some(E::GBigInt(b)) => a::Expr::GBigInt(BigInt::from_signed_bytes_be(b)),
         Some(E::GString(s)) => a::Expr::GString(s.clone()),
         Some(E::GUri(u)) => a::Expr::GUri(u.clone()),
         Some(E::GByteArray(b)) => a::Expr::GByteArray(b.clone()),
-        Some(E::ENotBody(m)) => a::Expr::ENot(Box::new(par_from_proto(m.p.as_ref().unwrap()))),
-        Some(E::ENegBody(m)) => a::Expr::ENeg(Box::new(par_from_proto(m.p.as_ref().unwrap()))),
-        Some(E::EMultBody(m)) => a::Expr::EMult(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EDivBody(m)) => a::Expr::EDiv(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EModBody(m)) => a::Expr::EMod(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EPlusBody(m)) => a::Expr::EPlus(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EMinusBody(m)) => a::Expr::EMinus(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::ELtBody(m)) => a::Expr::ELt(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::ELteBody(m)) => a::Expr::ELte(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EGtBody(m)) => a::Expr::EGt(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EGteBody(m)) => a::Expr::EGte(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EEqBody(m)) => a::Expr::EEq(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::ENeqBody(m)) => a::Expr::ENeq(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EAndBody(m)) => a::Expr::EAnd(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EOrBody(m)) => a::Expr::EOr(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EShortAndBody(m)) => a::Expr::EShortAnd(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EShortOrBody(m)) => a::Expr::EShortOr(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EMatchesBody(m)) => a::Expr::EMatches(Box::new(par_from_proto(m.target.as_ref().unwrap())), Box::new(par_from_proto(m.pattern.as_ref().unwrap()))),
-        Some(E::EPercentPercentBody(m)) => a::Expr::EPercentPercent(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EPlusPlusBody(m)) => a::Expr::EPlusPlus(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EMinusMinusBody(m)) => a::Expr::EMinusMinus(Box::new(par_from_proto(m.p1.as_ref().unwrap())), Box::new(par_from_proto(m.p2.as_ref().unwrap()))),
-        Some(E::EVarBody(m)) => a::Expr::EVar(Box::new(var_from_proto(m.v.as_ref().unwrap()))),
-        Some(E::EListBody(m)) => a::Expr::EList(elist_from_proto(m)),
-        Some(E::ETupleBody(m)) => a::Expr::ETuple(etuple_from_proto(m)),
-        Some(E::ESetBody(m)) => a::Expr::ESet(eset_from_proto(m)),
-        Some(E::EMapBody(m)) => a::Expr::EMap(emap_from_proto(m)),
-        Some(E::EMethodBody(m)) => a::Expr::EMethod(emethod_from_proto(m)),
+        Some(E::ENotBody(m)) => a::Expr::ENot(Box::new(par_from_proto(m.p.as_ref().ok_or(ModelsError::Malformed("p"))?)?)),
+        Some(E::ENegBody(m)) => a::Expr::ENeg(Box::new(par_from_proto(m.p.as_ref().ok_or(ModelsError::Malformed("p"))?)?)),
+        Some(E::EMultBody(m)) => a::Expr::EMult(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EDivBody(m)) => a::Expr::EDiv(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EModBody(m)) => a::Expr::EMod(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EPlusBody(m)) => a::Expr::EPlus(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EMinusBody(m)) => a::Expr::EMinus(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::ELtBody(m)) => a::Expr::ELt(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::ELteBody(m)) => a::Expr::ELte(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EGtBody(m)) => a::Expr::EGt(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EGteBody(m)) => a::Expr::EGte(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EEqBody(m)) => a::Expr::EEq(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::ENeqBody(m)) => a::Expr::ENeq(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EAndBody(m)) => a::Expr::EAnd(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EOrBody(m)) => a::Expr::EOr(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EShortAndBody(m)) => a::Expr::EShortAnd(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EShortOrBody(m)) => a::Expr::EShortOr(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EMatchesBody(m)) => a::Expr::EMatches(Box::new(par_from_proto(m.target.as_ref().ok_or(ModelsError::Malformed("target"))?)?), Box::new(par_from_proto(m.pattern.as_ref().ok_or(ModelsError::Malformed("pattern"))?)?)),
+        Some(E::EPercentPercentBody(m)) => a::Expr::EPercentPercent(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EPlusPlusBody(m)) => a::Expr::EPlusPlus(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EMinusMinusBody(m)) => a::Expr::EMinusMinus(Box::new(par_from_proto(m.p1.as_ref().ok_or(ModelsError::Malformed("p1"))?)?), Box::new(par_from_proto(m.p2.as_ref().ok_or(ModelsError::Malformed("p2"))?)?)),
+        Some(E::EVarBody(m)) => a::Expr::EVar(Box::new(var_from_proto(m.v.as_ref().ok_or(ModelsError::Malformed("v"))?))),
+        Some(E::EListBody(m)) => a::Expr::EList(elist_from_proto(m)?),
+        Some(E::ETupleBody(m)) => a::Expr::ETuple(etuple_from_proto(m)?),
+        Some(E::ESetBody(m)) => a::Expr::ESet(eset_from_proto(m)?),
+        Some(E::EMapBody(m)) => a::Expr::EMap(emap_from_proto(m)?),
+        Some(E::EMethodBody(m)) => a::Expr::EMethod(emethod_from_proto(m)?),
         None => a::Expr::GBool(false),
-    }
+    })
 }
 
 // --- Collection helpers -------------------------------------------------------------------------
@@ -282,14 +283,14 @@ fn elist_to_proto(el: &a::EList) -> p::EList {
         remainder: el.remainder.as_deref().map(var_to_proto),
     }
 }
-fn elist_from_proto(p: &p::EList) -> a::EList {
+fn elist_from_proto(p: &p::EList) -> Result<a::EList, ModelsError> {Ok(
     a::EList {
-        ps: p.ps.iter().map(par_from_proto).collect(),
+        ps: p.ps.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
         remainder: p.remainder.as_ref().map(var_from_proto).map(Box::new),
     }
-}
+)}
 
 fn etuple_to_proto(et: &a::ETuple) -> p::ETuple {
     p::ETuple {
@@ -298,13 +299,13 @@ fn etuple_to_proto(et: &a::ETuple) -> p::ETuple {
         connective_used: et.connective_used,
     }
 }
-fn etuple_from_proto(p: &p::ETuple) -> a::ETuple {
+fn etuple_from_proto(p: &p::ETuple) -> Result<a::ETuple, ModelsError> {Ok(
     a::ETuple {
-        ps: p.ps.iter().map(par_from_proto).collect(),
+        ps: p.ps.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
-}
+)}
 
 fn eset_to_proto(es: &a::ParSet) -> p::ESet {
     p::ESet {
@@ -314,14 +315,14 @@ fn eset_to_proto(es: &a::ParSet) -> p::ESet {
         remainder: es.remainder.as_deref().map(var_to_proto),
     }
 }
-fn eset_from_proto(p: &p::ESet) -> a::ParSet {
+fn eset_from_proto(p: &p::ESet) -> Result<a::ParSet, ModelsError> {Ok(
     a::ParSet {
-        ps: p.ps.iter().map(par_from_proto).collect(),
+        ps: p.ps.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
         remainder: p.remainder.as_ref().map(var_from_proto).map(Box::new),
     }
-}
+)}
 
 fn emap_to_proto(em: &a::ParMap) -> p::EMap {
     p::EMap {
@@ -338,23 +339,23 @@ fn emap_to_proto(em: &a::ParMap) -> p::EMap {
         remainder: em.remainder.as_deref().map(var_to_proto),
     }
 }
-fn emap_from_proto(p: &p::EMap) -> a::ParMap {
+fn emap_from_proto(p: &p::EMap) -> Result<a::ParMap, ModelsError> {Ok(
     a::ParMap {
         kvs: p
             .kvs
             .iter()
             .map(|kv| {
-                (
-                    par_from_proto(kv.key.as_ref().unwrap()),
-                    par_from_proto(kv.value.as_ref().unwrap()),
-                )
+                Ok((
+                    par_from_proto(kv.key.as_ref().ok_or(ModelsError::Malformed("key"))?)?,
+                    par_from_proto(kv.value.as_ref().ok_or(ModelsError::Malformed("value"))?)?,
+                ))
             })
-            .collect(),
+            .collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
         remainder: p.remainder.as_ref().map(var_from_proto).map(Box::new),
     }
-}
+)}
 
 fn emethod_to_proto(em: &a::EMethod) -> p::EMethod {
     p::EMethod {
@@ -365,15 +366,15 @@ fn emethod_to_proto(em: &a::EMethod) -> p::EMethod {
         connective_used: em.connective_used,
     }
 }
-fn emethod_from_proto(p: &p::EMethod) -> a::EMethod {
+fn emethod_from_proto(p: &p::EMethod) -> Result<a::EMethod, ModelsError> {Ok(
     a::EMethod {
         method_name: p.method_name.clone(),
-        target: Box::new(par_from_proto(p.target.as_ref().unwrap())),
-        arguments: p.arguments.iter().map(par_from_proto).collect(),
+        target: Box::new(par_from_proto(p.target.as_ref().ok_or(ModelsError::Malformed("target"))?)?),
+        arguments: p.arguments.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
-}
+)}
 
 // --- Terms --------------------------------------------------------------------------------------
 
@@ -386,15 +387,15 @@ pub fn send_to_proto(s: &a::Send) -> p::Send {
         connective_used: s.connective_used,
     }
 }
-pub fn send_from_proto(p: &p::Send) -> a::Send {
+pub fn send_from_proto(p: &p::Send) -> Result<a::Send, ModelsError> {Ok(
     a::Send {
-        chan: Box::new(par_from_proto(p.chan.as_ref().unwrap())),
-        data: p.data.iter().map(par_from_proto).collect(),
+        chan: Box::new(par_from_proto(p.chan.as_ref().ok_or(ModelsError::Malformed("chan"))?)?),
+        data: p.data.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         persistent: p.persistent,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
-}
+)}
 
 pub fn receive_to_proto(r: &a::Receive) -> p::Receive {
     p::Receive {
@@ -407,17 +408,17 @@ pub fn receive_to_proto(r: &a::Receive) -> p::Receive {
         connective_used: r.connective_used,
     }
 }
-pub fn receive_from_proto(p: &p::Receive) -> a::Receive {
+pub fn receive_from_proto(p: &p::Receive) -> Result<a::Receive, ModelsError> {Ok(
     a::Receive {
-        binds: p.binds.iter().map(receive_bind_from_proto).collect(),
-        body: Box::new(par_from_proto(p.body.as_ref().unwrap())),
+        binds: p.binds.iter().map(receive_bind_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        body: Box::new(par_from_proto(p.body.as_ref().ok_or(ModelsError::Malformed("body"))?)?),
         persistent: p.persistent,
         peek: p.peek,
         bind_count: p.bind_count,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
-}
+)}
 
 pub fn receive_bind_to_proto(rb: &a::ReceiveBind) -> p::ReceiveBind {
     p::ReceiveBind {
@@ -427,14 +428,14 @@ pub fn receive_bind_to_proto(rb: &a::ReceiveBind) -> p::ReceiveBind {
         free_count: rb.free_count,
     }
 }
-pub fn receive_bind_from_proto(p: &p::ReceiveBind) -> a::ReceiveBind {
+pub fn receive_bind_from_proto(p: &p::ReceiveBind) -> Result<a::ReceiveBind, ModelsError> {Ok(
     a::ReceiveBind {
-        patterns: p.patterns.iter().map(par_from_proto).collect(),
-        source: Box::new(par_from_proto(p.source.as_ref().unwrap())),
+        patterns: p.patterns.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        source: Box::new(par_from_proto(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
         remainder: p.remainder.as_ref().map(var_from_proto).map(Box::new),
         free_count: p.free_count,
     }
-}
+)}
 
 pub fn new_to_proto(n: &a::New) -> p::New {
     p::New {
@@ -449,19 +450,19 @@ pub fn new_to_proto(n: &a::New) -> p::New {
         locally_free: bitset_to_bytes(&n.locally_free.0),
     }
 }
-pub fn new_from_proto(p: &p::New) -> a::New {
+pub fn new_from_proto(p: &p::New) -> Result<a::New, ModelsError> {Ok(
     a::New {
         bind_count: p.bind_count,
-        p: Box::new(par_from_proto(p.p.as_ref().unwrap())),
+        p: Box::new(par_from_proto(p.p.as_ref().ok_or(ModelsError::Malformed("p"))?)?),
         uri: p.uri.clone(),
         injections: p
             .injections
             .iter()
-            .map(|(k, v)| (k.clone(), par_from_proto(v)))
-            .collect(),
+            .map(|(k, v)| Ok((k.clone(), par_from_proto(v)?)))
+            .collect::<Result<std::collections::BTreeMap<_, _>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
     }
-}
+)}
 
 pub fn match_to_proto(m: &a::Match) -> p::Match {
     p::Match {
@@ -471,14 +472,14 @@ pub fn match_to_proto(m: &a::Match) -> p::Match {
         connective_used: m.connective_used,
     }
 }
-pub fn match_from_proto(p: &p::Match) -> a::Match {
+pub fn match_from_proto(p: &p::Match) -> Result<a::Match, ModelsError> {Ok(
     a::Match {
-        target: Box::new(par_from_proto(p.target.as_ref().unwrap())),
-        cases: p.cases.iter().map(match_case_from_proto).collect(),
+        target: Box::new(par_from_proto(p.target.as_ref().ok_or(ModelsError::Malformed("target"))?)?),
+        cases: p.cases.iter().map(match_case_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
-}
+)}
 
 pub fn match_case_to_proto(mc: &a::MatchCase) -> p::MatchCase {
     p::MatchCase {
@@ -487,13 +488,13 @@ pub fn match_case_to_proto(mc: &a::MatchCase) -> p::MatchCase {
         free_count: mc.free_count,
     }
 }
-pub fn match_case_from_proto(p: &p::MatchCase) -> a::MatchCase {
+pub fn match_case_from_proto(p: &p::MatchCase) -> Result<a::MatchCase, ModelsError> {Ok(
     a::MatchCase {
-        pattern: Box::new(par_from_proto(p.pattern.as_ref().unwrap())),
-        source: Box::new(par_from_proto(p.source.as_ref().unwrap())),
+        pattern: Box::new(par_from_proto(p.pattern.as_ref().ok_or(ModelsError::Malformed("pattern"))?)?),
+        source: Box::new(par_from_proto(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
         free_count: p.free_count,
     }
-}
+)}
 
 pub fn bundle_to_proto(b: &a::Bundle) -> p::Bundle {
     p::Bundle {
@@ -502,13 +503,13 @@ pub fn bundle_to_proto(b: &a::Bundle) -> p::Bundle {
         read_flag: b.read_flag,
     }
 }
-pub fn bundle_from_proto(p: &p::Bundle) -> a::Bundle {
+pub fn bundle_from_proto(p: &p::Bundle) -> Result<a::Bundle, ModelsError> {Ok(
     a::Bundle {
-        body: Box::new(par_from_proto(p.body.as_ref().unwrap())),
+        body: Box::new(par_from_proto(p.body.as_ref().ok_or(ModelsError::Malformed("body"))?)?),
         write_flag: p.write_flag,
         read_flag: p.read_flag,
     }
-}
+)}
 
 pub fn par_to_proto(par: &a::Par) -> p::Par {
     p::Par {
@@ -525,20 +526,20 @@ pub fn par_to_proto(par: &a::Par) -> p::Par {
     }
 }
 
-pub fn par_from_proto(p: &p::Par) -> a::Par {
+pub fn par_from_proto(p: &p::Par) -> Result<a::Par, ModelsError> {Ok(
     a::Par {
-        sends: p.sends.iter().map(send_from_proto).collect(),
-        receives: p.receives.iter().map(receive_from_proto).collect(),
-        news: p.news.iter().map(new_from_proto).collect(),
-        exprs: p.exprs.iter().map(expr_from_proto).collect(),
-        matches: p.matches.iter().map(match_from_proto).collect(),
-        unforgeables: p.unforgeables.iter().map(unforgeable_from_proto).collect(),
-        bundles: p.bundles.iter().map(bundle_from_proto).collect(),
-        connectives: p.connectives.iter().map(connective_from_proto).collect(),
+        sends: p.sends.iter().map(send_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        receives: p.receives.iter().map(receive_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        news: p.news.iter().map(new_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        exprs: p.exprs.iter().map(expr_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        matches: p.matches.iter().map(match_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        unforgeables: p.unforgeables.iter().map(unforgeable_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        bundles: p.bundles.iter().map(bundle_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        connectives: p.connectives.iter().map(connective_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
-}
+)}
 
 // --- Runtime types ------------------------------------------------------------------------------
 
@@ -549,13 +550,13 @@ pub fn bind_pattern_to_proto(bp: &BindPattern) -> p::BindPattern {
         free_count: bp.free_count,
     }
 }
-pub fn bind_pattern_from_proto(p: &p::BindPattern) -> BindPattern {
+pub fn bind_pattern_from_proto(p: &p::BindPattern) -> Result<BindPattern, ModelsError> {Ok(
     BindPattern {
-        patterns: p.patterns.iter().map(par_from_proto).collect(),
+        patterns: p.patterns.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         remainder: p.remainder.as_ref().map(var_from_proto),
         free_count: p.free_count,
     }
-}
+)}
 
 pub fn list_par_with_random_to_proto(l: &ListParWithRandom) -> p::ListParWithRandom {
     p::ListParWithRandom {
@@ -565,7 +566,7 @@ pub fn list_par_with_random_to_proto(l: &ListParWithRandom) -> p::ListParWithRan
 }
 pub fn list_par_with_random_from_proto(p: &p::ListParWithRandom) -> Result<ListParWithRandom, String> {
     Ok(ListParWithRandom {
-        pars: p.pars.iter().map(par_from_proto).collect(),
+        pars: p.pars.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>().map_err(|e| e.to_string())?,
         random_state: Blake2b512Random::from_bytes(&p.random_state).map_err(|e| e.to_string())?,
     })
 }
@@ -578,7 +579,7 @@ pub fn par_with_random_to_proto(pw: &ParWithRandom) -> p::ParWithRandom {
 }
 pub fn par_with_random_from_proto(p: &p::ParWithRandom) -> Result<ParWithRandom, String> {
     Ok(ParWithRandom {
-        body: par_from_proto(p.body.as_ref().unwrap()),
+        body: par_from_proto(p.body.as_ref().ok_or(ModelsError::Malformed("body")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         random_state: Blake2b512Random::from_bytes(&p.random_state).map_err(|e| e.to_string())?,
     })
 }
@@ -617,7 +618,7 @@ impl Serialize<a::Par> for a::Par {
     }
     fn decode(bytes: &[u8]) -> Result<a::Par, String> {
         let proto = <p::Par as ::prost::Message>::decode(bytes).map_err(|e| e.to_string())?;
-        Ok(par_from_proto(&proto))
+        par_from_proto(&proto).map_err(|e| e.to_string())
     }
 }
 
@@ -627,7 +628,7 @@ impl Serialize<BindPattern> for BindPattern {
     }
     fn decode(bytes: &[u8]) -> Result<BindPattern, String> {
         let proto = <p::BindPattern as ::prost::Message>::decode(bytes).map_err(|e| e.to_string())?;
-        Ok(bind_pattern_from_proto(&proto))
+        bind_pattern_from_proto(&proto).map_err(|e| e.to_string())
     }
 }
 
@@ -685,5 +686,46 @@ mod tests {
         let bytes = <a::Par as Serialize<a::Par>>::encode(&par);
         let decoded = <a::Par as Serialize<a::Par>>::decode(&bytes).unwrap();
         assert_eq!(decoded, par);
+    }
+}
+
+/// Differential tests against the Scala scalapb `TypeMapper` encodings and `Serialize[Par]` wire
+/// bytes. Golden vectors are captured in `testdata/differential/wire.tsv`. The custom `locallyFree`
+/// `BitSet` encoding (little-endian `Long` mask with trailing zeros stripped) is the Scala-specific
+/// behavior that must be reproduced byte-for-byte.
+#[cfg(test)]
+mod differential {
+    use super::*;
+    use rchain_shared::base16;
+
+    fn load(case: &str) -> String {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/differential/wire.tsv");
+        let data = std::fs::read_to_string(path).unwrap();
+        for line in data.lines() {
+            let (id, hex) = line.split_once('\t').unwrap_or((line, ""));
+            if id == case {
+                return hex.to_string();
+            }
+        }
+        panic!("missing differential case: {case}");
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        base16::encode(bytes)
+    }
+
+    #[test]
+    fn differential_bitset_encoding() {
+        assert_eq!(hex(&bitset_to_bytes(&[])), load("bitset_empty"));
+        assert_eq!(hex(&bitset_to_bytes(&[0])), load("bitset_0"));
+        assert_eq!(hex(&bitset_to_bytes(&[7])), load("bitset_7"));
+        assert_eq!(hex(&bitset_to_bytes(&[8])), load("bitset_8"));
+        assert_eq!(hex(&bitset_to_bytes(&[64])), load("bitset_64"));
+    }
+
+    #[test]
+    fn differential_empty_par_serializes_to_empty() {
+        let bytes = <a::Par as Serialize<a::Par>>::encode(&a::Par::default());
+        assert_eq!(hex(&bytes), load("par_empty"));
     }
 }

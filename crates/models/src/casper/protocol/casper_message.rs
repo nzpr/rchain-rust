@@ -108,6 +108,16 @@ impl SignedDeployData {
             ..self.data.to_proto_data()
         }
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = DeployDataProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(Self::from_proto(&proto))
+    }
 }
 
 // -------------------------------------------------------------------------------------------------

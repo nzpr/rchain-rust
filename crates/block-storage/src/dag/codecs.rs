@@ -4,9 +4,10 @@
 //! `Codec` becomes [`rchain_shared::typed_store::Codec`]; `bytes(BlockHash.Length)` becomes the raw
 //! 32-byte [`BlockHashCodec`], and `codecBlockMessage` composes LZ4 with protobuf.
 
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
-use rchain_models::casper::protocol::casper_message::{BlockMessage, FinalizedFringe};
+use rchain_models::casper::protocol::casper_message::{BlockMessage, FinalizedFringe, SignedDeployData};
 use rchain_models::fringe_data::FringeData;
 use rchain_shared::typed_store::Codec;
 
@@ -99,5 +100,36 @@ impl Codec<u8> for ByteCodec {
             [b] => Ok(*b),
             _ => Err(format!("expected 1 byte, got {}", bytes.len())),
         }
+    }
+}
+
+/// Raw 32-byte `Blake2b256Hash` codec (the Scala `codecBlake2b256Hash`).
+#[derive(Default)]
+pub struct Blake2b256HashCodec;
+
+impl Codec<Blake2b256Hash> for Blake2b256HashCodec {
+    fn encode(&self, value: &Blake2b256Hash) -> Vec<u8> {
+        value.as_bytes().to_vec()
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<Blake2b256Hash, String> {
+        if bytes.len() != 32 {
+            return Err(format!("expected 32 bytes, got {}", bytes.len()));
+        }
+        Ok(Blake2b256Hash::from_byte_array(bytes))
+    }
+}
+
+/// Protobuf signed-deploy-data codec (the Scala `codecSignedDeployData`).
+#[derive(Default)]
+pub struct SignedDeployDataCodec;
+
+impl Codec<SignedDeployData> for SignedDeployDataCodec {
+    fn encode(&self, value: &SignedDeployData) -> Vec<u8> {
+        value.to_bytes()
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<SignedDeployData, String> {
+        SignedDeployData::from_bytes(bytes).map_err(|e| e.to_string())
     }
 }

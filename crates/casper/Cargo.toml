@@ -5,7 +5,13 @@ edition = "2021"
 description = "Faithful Rust port of the RChain casper module (CBC-Casper consensus + DAG)."
 
 [dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync"] }
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
 rchain-block-storage = { path = "../block-storage" }
 rchain-rspace = { path = "../rspace" }
+rchain-shared = { path = "../shared" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
