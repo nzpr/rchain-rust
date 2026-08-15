@@ -6,6 +6,7 @@
 pub mod block_metadata_store;
 pub mod block_status;
 pub mod dag;
+pub mod event_converter;
 pub mod merging;
 pub mod proto_util;
 pub mod validate;

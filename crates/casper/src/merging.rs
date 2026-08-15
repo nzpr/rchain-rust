@@ -8,6 +8,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
+use rchain_block_storage::dag::finalizer::Message;
+use rchain_block_storage::dag::message_map;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
@@ -155,6 +157,69 @@ pub struct MergeScope {
     pub conflict_scope: BTreeSet<BlockHash>,
 }
 
+impl MergeScope {
+    /// Create a merge scope from the DAG (port of `MergeScope.fromDag`).
+    pub fn from_dag(
+        merge_fringe: &BTreeSet<BlockHash>,
+        final_fringe: &BTreeSet<BlockHash>,
+        child_map: &BTreeMap<BlockHash, BTreeSet<BlockHash>>,
+        dag_data: &BTreeMap<BlockHash, Message<BlockHash, Validator>>,
+    ) -> (MergeScope, Option<BlockHash>) {
+        let prune_fringe: BTreeSet<BlockHash> =
+            message_map::prune_fringe(dag_data, final_fringe, child_map)
+                .iter()
+                .map(|m| m.id)
+                .collect();
+        MergeScope::from_fringes(merge_fringe, final_fringe, &prune_fringe, dag_data)
+    }
+
+    /// Create a merge scope from explicit fringes (port of `MergeScope.fromFringes`).
+    pub fn from_fringes(
+        merge_fringe: &BTreeSet<BlockHash>,
+        final_fringe: &BTreeSet<BlockHash>,
+        prune_fringe: &BTreeSet<BlockHash>,
+        dag_data: &BTreeMap<BlockHash, Message<BlockHash, Validator>>,
+    ) -> (MergeScope, Option<BlockHash>) {
+        let merge_msgs: BTreeSet<Message<BlockHash, Validator>> = merge_fringe
+            .iter()
+            .map(|h| dag_data.get(h).expect("merge fringe not in dag").clone())
+            .collect();
+        let final_msgs: BTreeSet<Message<BlockHash, Validator>> = final_fringe
+            .iter()
+            .map(|h| dag_data.get(h).expect("final fringe not in dag").clone())
+            .collect();
+        let prune_msgs: BTreeSet<Message<BlockHash, Validator>> = prune_fringe
+            .iter()
+            .map(|h| dag_data.get(h).expect("prune fringe not in dag").clone())
+            .collect();
+
+        let c_scope = message_map::between(dag_data, &merge_msgs, &final_msgs);
+        let f_scope = message_map::between(dag_data, &final_msgs, &prune_msgs);
+
+        let f_scope_ids: BTreeSet<BlockHash> = f_scope.iter().map(|m| m.id).collect();
+        let base_msg = if f_scope.is_empty() {
+            let genesis = message_map::find_with_empty_parents(dag_data)
+                .expect("Final scope is empty but no genesis found.");
+            Some(genesis.id)
+        } else {
+            None
+        };
+        let c_scope_ids: BTreeSet<BlockHash> = c_scope.iter().map(|m| m.id).collect();
+        let conflict_scope: BTreeSet<BlockHash> = c_scope_ids
+            .difference(&base_msg.into_iter().collect())
+            .copied()
+            .collect();
+
+        (
+            MergeScope {
+                final_scope: f_scope_ids,
+                conflict_scope,
+            },
+            base_msg,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +267,37 @@ mod tests {
         assert!(DeployChainIndex::deploys_are_conflicting(&a, &b));
         // Different ids, empty event logs -> not conflicting.
         assert!(!DeployChainIndex::deploys_are_conflicting(&chain(1, 5), &chain(2, 5)));
+    }
+
+    fn msg(id: u8, parents: &[u8], seen: &[u8]) -> Message<BlockHash, Validator> {
+        let hash = |b: u8| BlockHash::new([b; 32]);
+        Message {
+            id: hash(id),
+            height: 0,
+            sender: Validator::new([id; 65]),
+            sender_seq: 0,
+            bonds_map: BTreeMap::new(),
+            parents: parents.iter().map(|&b| hash(b)).collect(),
+            fringe: BTreeSet::new(),
+            seen: seen.iter().map(|&b| hash(b)).collect(),
+        }
+    }
+
+    #[test]
+    fn merge_scope_genesis_returns_genesis_as_base() {
+        let g = msg(1, &[], &[1]);
+        let c = msg(2, &[1], &[1, 2]);
+        let dag = BTreeMap::from([(g.id, g.clone()), (c.id, c.clone())]);
+
+        let (scope, base) = MergeScope::from_fringes(
+            &[c.id].into_iter().collect(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &dag,
+        );
+        // Final scope empty -> genesis is the base; conflict scope excludes it.
+        assert!(scope.final_scope.is_empty());
+        assert_eq!(scope.conflict_scope, [c.id].into_iter().collect());
+        assert_eq!(base, Some(g.id));
     }
 }
