@@ -5,18 +5,24 @@
 //! (`eval(Send/Receive/New/Match/Bundle)`, `produce`/`consume`, `new` allocation) and the
 //! collection methods (`union`/`diff`/`add`/`delete`/`contains`/`slice`/`keys`) are deferred.
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use num_bigint::BigInt;
-use rchain_models::ast::{AlwaysEqual, EList, ETuple, Expr, Par, ParMap, Var};
-use rchain_models::par_ops::{from_expr, par_concat, single_expr, typ};
+use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
+use rchain_models::ast::{
+    AlwaysEqual, Bundle, EList, ETuple, Expr, GPrivate, GUnforgeable, Match, MatchCase, New, Par,
+    ParMap, Receive, ReceiveBind, Send, Var,
+};
+use rchain_models::par_ops::{from_expr, par_concat, single_bundle, single_expr, typ};
+use rchain_models::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
 use rchain_models::sorter::{par_map, par_set};
 
 use crate::accounting::{CostAccounting, Costs};
 use crate::env::Env;
 use crate::errors::RholangError;
 use crate::matcher::spatial_match_result;
-use crate::substitute::substitute_par;
+use crate::substitute::{substitute_par, substitute_par_no_sort};
 
 fn union_free(a: Vec<i32>, b: Vec<i32>) -> Vec<i32> {
     let mut set: BTreeSet<i32> = a.into_iter().collect();
@@ -711,6 +717,453 @@ fn eval_method(
     }
 }
 
+/// The result of a tuplespace produce/consume: the matched continuation, the list of
+/// (channel, matched data, removed data, persistent), and whether it was a peek.
+pub type Application =
+    Option<(TaggedContinuation, Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>, bool)>;
+
+/// The tuplespace interface the evaluator produces/consumes against (port of `RhoTuplespace`).
+pub trait Tuplespace {
+    fn produce(
+        &self,
+        channel: &Par,
+        data: ListParWithRandom,
+        persist: bool,
+    ) -> Result<Application, RholangError>;
+
+    fn consume(
+        &self,
+        channels: &[Par],
+        patterns: &[BindPattern],
+        continuation: TaggedContinuation,
+        persist: bool,
+        peeks: &BTreeSet<usize>,
+    ) -> Result<Application, RholangError>;
+}
+
+/// Dispatches a continuation with its matched data (port of `Dispatch`).
+pub trait Dispatch {
+    fn dispatch(
+        &self,
+        continuation: &TaggedContinuation,
+        data_list: &[ListParWithRandom],
+    ) -> Result<(), RholangError>;
+}
+
+enum Term<'a> {
+    Send(&'a Send),
+    Receive(&'a Receive),
+    New(&'a New),
+    Match(&'a Match),
+    Bundle(&'a Bundle),
+    Expr(&'a Expr),
+}
+
+/// The reducer (port of `DebruijnInterpreter`).
+pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
+    space: T,
+    dispatcher: D,
+    urn_map: BTreeMap<String, Par>,
+    merge_chs: RefCell<Vec<Par>>,
+    mergeable_tag_name: Par,
+}
+
+impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
+    pub fn new(
+        space: T,
+        dispatcher: D,
+        urn_map: BTreeMap<String, Par>,
+        mergeable_tag_name: Par,
+    ) -> Self {
+        DebruijnInterpreter {
+            space,
+            dispatcher,
+            urn_map,
+            merge_chs: RefCell::new(Vec::new()),
+            mergeable_tag_name,
+        }
+    }
+
+    /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`).
+    pub fn eval(
+        &self,
+        par: &Par,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        let mut terms: Vec<Term> = Vec::new();
+        for s in &par.sends {
+            terms.push(Term::Send(s));
+        }
+        for r in &par.receives {
+            terms.push(Term::Receive(r));
+        }
+        for n in &par.news {
+            terms.push(Term::New(n));
+        }
+        for m in &par.matches {
+            terms.push(Term::Match(m));
+        }
+        for b in &par.bundles {
+            terms.push(Term::Bundle(b));
+        }
+        for e in &par.exprs {
+            if matches!(e, Expr::EVar(_) | Expr::EMethod(_)) {
+                terms.push(Term::Expr(e));
+            }
+        }
+        if terms.len() > i16::MAX as usize {
+            return Err(RholangError::ReduceError(format!(
+                "The number of terms in the Par is {}, which exceeds the limit of {}.",
+                terms.len(),
+                i16::MAX
+            )));
+        }
+        for (i, term) in terms.iter().enumerate() {
+            let r = if terms.len() == 1 {
+                rand.clone()
+            } else if terms.len() > 256 {
+                rand.split_short(i as u16)
+            } else {
+                rand.split_byte(i as u8)
+            };
+            self.eval_term(term, env, &r, cost)?;
+        }
+        Ok(())
+    }
+
+    fn eval_term(
+        &self,
+        term: &Term,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        match term {
+            Term::Send(s) => self.eval_send(s, env, rand, cost),
+            Term::Receive(r) => self.eval_receive(r, env, rand, cost),
+            Term::New(n) => self.eval_new(n, env, rand, cost),
+            Term::Match(m) => self.eval_match(m, env, rand, cost),
+            Term::Bundle(b) => self.eval_bundle(b, env, rand, cost),
+            Term::Expr(e) => match e {
+                Expr::EVar(v) => {
+                    let p = eval_var(v, env, cost)?;
+                    self.eval(&p, env, rand, cost)
+                }
+                Expr::EMethod(_) => {
+                    let p = eval_expr_to_par(e, env, cost)?;
+                    self.eval(&p, env, rand, cost)
+                }
+                _ => Err(RholangError::BugFoundError(format!(
+                    "Undefined term: {e:?}"
+                ))),
+            },
+        }
+    }
+
+    fn eval_send(
+        &self,
+        send: &Send,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        cost.charge(Costs::send_eval_cost())?;
+        let eval_chan = eval_expr(&send.chan, env, cost)?;
+        let sub_chan = substitute_par(&eval_chan, 0, env)?;
+        let unbundled = match single_bundle(&sub_chan) {
+            Some(value) => {
+                if !value.write_flag {
+                    return Err(RholangError::ReduceError(
+                        "Trying to send on non-writeable channel.".to_string(),
+                    ));
+                }
+                (*value.body).clone()
+            }
+            None => sub_chan,
+        };
+        let data: Vec<Par> = send
+            .data
+            .iter()
+            .map(|d| eval_expr(d, env, cost))
+            .collect::<Result<_, _>>()?;
+        let subst_data: Vec<Par> = data
+            .iter()
+            .map(|d| substitute_par(d, 0, env))
+            .collect::<Result<_, _>>()?;
+        self.produce(
+            &unbundled,
+            ListParWithRandom {
+                pars: subst_data,
+                random_state: rand.clone(),
+            },
+            send.persistent,
+            cost,
+        )
+    }
+
+    fn eval_receive(
+        &self,
+        receive: &Receive,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        cost.charge(Costs::receive_eval_cost())?;
+        let mut binds: Vec<(BindPattern, Par)> = Vec::new();
+        for rb in &receive.binds {
+            let q = self.unbundle_receive(rb, env, cost)?;
+            let subst_patterns: Vec<Par> = rb
+                .patterns
+                .iter()
+                .map(|p| substitute_par(p, 1, env))
+                .collect::<Result<_, _>>()?;
+            binds.push((
+                BindPattern {
+                    patterns: subst_patterns,
+                    remainder: rb.remainder.as_deref().cloned(),
+                    free_count: rb.free_count,
+                },
+                q,
+            ));
+        }
+        let subst_body = substitute_par_no_sort(&receive.body, 0, &env.shift(receive.bind_count))?;
+        self.consume(
+            &binds,
+            ParWithRandom {
+                body: subst_body,
+                random_state: rand.clone(),
+            },
+            receive.persistent,
+            receive.peek,
+            cost,
+        )
+    }
+
+    fn unbundle_receive(
+        &self,
+        rb: &ReceiveBind,
+        env: &Env<Par>,
+        cost: &CostAccounting,
+    ) -> Result<Par, RholangError> {
+        let eval_src = eval_expr(&rb.source, env, cost)?;
+        let subst = substitute_par(&eval_src, 0, env)?;
+        match single_bundle(&subst) {
+            Some(value) => {
+                if !value.read_flag {
+                    Err(RholangError::ReduceError(
+                        "Trying to read from non-readable channel.".to_string(),
+                    ))
+                } else {
+                    Ok((*value.body).clone())
+                }
+            }
+            None => Ok(subst),
+        }
+    }
+
+    fn eval_new(
+        &self,
+        new: &New,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        cost.charge(Costs::new_bindings_cost(new.bind_count as i64))?;
+        let mut r = rand.clone();
+        let new_env = self.alloc(new.bind_count, &new.uri, &new.injections, env, &mut r)?;
+        self.eval(&new.p, &new_env, rand, cost)
+    }
+
+    fn alloc(
+        &self,
+        count: i32,
+        urns: &[String],
+        injections: &BTreeMap<String, Par>,
+        env: &Env<Par>,
+        rand: &mut Blake2b512Random,
+    ) -> Result<Env<Par>, RholangError> {
+        let mut new_env = env.clone();
+        for _ in 0..(count - urns.len() as i32) {
+            let bytes = rand.next();
+            let addr = Par {
+                unforgeables: vec![GUnforgeable::GPrivate(GPrivate { id: bytes })],
+                ..Par::default()
+            };
+            new_env = new_env.put(addr);
+        }
+        for urn in urns {
+            new_env = self.add_urn(new_env, urn, injections)?;
+        }
+        Ok(new_env)
+    }
+
+    fn add_urn(
+        &self,
+        env: Env<Par>,
+        urn: &str,
+        injections: &BTreeMap<String, Par>,
+    ) -> Result<Env<Par>, RholangError> {
+        if let Some(p) = self.urn_map.get(urn) {
+            Ok(env.put(p.clone()))
+        } else if let Some(p) = injections.get(urn) {
+            Ok(env.put(p.clone()))
+        } else {
+            Err(RholangError::BugFoundError(format!(
+                "No value set for `{urn}`. This is a bug in the normalizer or on the path from it."
+            )))
+        }
+    }
+
+    fn eval_match(
+        &self,
+        m: &Match,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        cost.charge(Costs::match_eval_cost())?;
+        let evaled_target = eval_expr(&m.target, env, cost)?;
+        let subst_target = substitute_par(&evaled_target, 0, env)?;
+        self.first_match(&subst_target, &m.cases, env, rand, cost)
+    }
+
+    fn first_match(
+        &self,
+        target: &Par,
+        cases: &[MatchCase],
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        for case in cases {
+            let pattern = substitute_par(&case.pattern, 1, env)?;
+            if let Some(free_map) = spatial_match_result(target, &pattern)? {
+                let mut new_env = env.clone();
+                for e in 0..case.free_count {
+                    new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
+                }
+                return self.eval(&case.source, &new_env, rand, cost);
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_bundle(
+        &self,
+        bundle: &Bundle,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        self.eval(&bundle.body, env, rand, cost)
+    }
+
+    fn produce(
+        &self,
+        chan: &Par,
+        data: ListParWithRandom,
+        persistent: bool,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        self.update_mergeable_channels(chan);
+        let result = self.space.produce(chan, data.clone(), persistent)?;
+        match result {
+            Some((continuation, data_list, peek)) => {
+                self.dispatch(&continuation, &data_list)?;
+                if persistent {
+                    self.produce(chan, data, persistent, cost)?;
+                } else if peek {
+                    self.produce_peeks(&data_list, cost)?;
+                }
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn consume(
+        &self,
+        binds: &[(BindPattern, Par)],
+        body: ParWithRandom,
+        persistent: bool,
+        peek: bool,
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        let patterns: Vec<BindPattern> = binds.iter().map(|(p, _)| p.clone()).collect();
+        let sources: Vec<Par> = binds.iter().map(|(_, s)| s.clone()).collect();
+        for s in &sources {
+            self.update_mergeable_channels(s);
+        }
+        let peeks: BTreeSet<usize> = if peek {
+            (0..sources.len()).collect()
+        } else {
+            BTreeSet::new()
+        };
+        let result = self.space.consume(
+            &sources,
+            &patterns,
+            TaggedContinuation::ParBody(body.clone()),
+            persistent,
+            &peeks,
+        )?;
+        match result {
+            Some((continuation, data_list, p)) => {
+                self.dispatch(&continuation, &data_list)?;
+                if persistent {
+                    self.consume(binds, body, persistent, peek, cost)?;
+                } else if p {
+                    self.produce_peeks(&data_list, cost)?;
+                }
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn produce_peeks(
+        &self,
+        data_list: &[(Par, ListParWithRandom, ListParWithRandom, bool)],
+        cost: &CostAccounting,
+    ) -> Result<(), RholangError> {
+        for (chan, _, removed_data, persist) in data_list {
+            if !persist {
+                self.produce(chan, removed_data.clone(), false, cost)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn dispatch(
+        &self,
+        continuation: &TaggedContinuation,
+        data_list: &[(Par, ListParWithRandom, ListParWithRandom, bool)],
+    ) -> Result<(), RholangError> {
+        let data: Vec<ListParWithRandom> = data_list.iter().map(|(_, d, _, _)| d.clone()).collect();
+        self.dispatcher.dispatch(continuation, &data)
+    }
+
+    fn update_mergeable_channels(&self, chan: &Par) {
+        if self.is_mergeable_channel(chan) {
+            let mut chs = self.merge_chs.borrow_mut();
+            if !chs.contains(chan) {
+                chs.push(chan.clone());
+            }
+        }
+    }
+
+    fn is_mergeable_channel(&self, chan: &Par) -> bool {
+        chan.exprs
+            .iter()
+            .find_map(|e| match e {
+                Expr::ETuple(ETuple { ps, .. }) => ps.first(),
+                _ => None,
+            })
+            .map_or(false, |head| head == &self.mergeable_tag_name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -752,5 +1205,77 @@ mod tests {
             eval_single_expr(&p, &e, &cost).unwrap(),
             Expr::GString("ab".to_string())
         );
+    }
+
+    struct MockSpace {
+        produced: RefCell<Vec<(Par, ListParWithRandom, bool)>>,
+    }
+    impl Tuplespace for MockSpace {
+        fn produce(
+            &self,
+            channel: &Par,
+            data: ListParWithRandom,
+            persist: bool,
+        ) -> Result<Application, RholangError> {
+            self.produced
+                .borrow_mut()
+                .push((channel.clone(), data, persist));
+            Ok(None)
+        }
+        fn consume(
+            &self,
+            _channels: &[Par],
+            _patterns: &[BindPattern],
+            _continuation: TaggedContinuation,
+            _persist: bool,
+            _peeks: &BTreeSet<usize>,
+        ) -> Result<Application, RholangError> {
+            Ok(None)
+        }
+    }
+    struct MockDispatch;
+    impl Dispatch for MockDispatch {
+        fn dispatch(
+            &self,
+            _continuation: &TaggedContinuation,
+            _data_list: &[ListParWithRandom],
+        ) -> Result<(), RholangError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn eval_send_produces_on_evaluated_channel() {
+        let space = MockSpace {
+            produced: RefCell::new(Vec::new()),
+        };
+        let interp = DebruijnInterpreter::new(
+            space,
+            MockDispatch,
+            BTreeMap::new(),
+            Par::default(),
+        );
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let env = Env::new();
+        let rand = Blake2b512Random::new_random(128);
+
+        let send = Send {
+            chan: Box::new(from_expr(Expr::GInt(1))),
+            data: vec![from_expr(Expr::GInt(2))],
+            persistent: false,
+            locally_free: AlwaysEqual(vec![]),
+            connective_used: false,
+        };
+        let par = Par {
+            sends: vec![send],
+            ..Par::default()
+        };
+        interp.eval(&par, &env, &rand, &cost).unwrap();
+
+        let produced = interp.space.produced.borrow();
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.exprs, vec![Expr::GInt(1)]);
+        assert_eq!(produced[0].1.pars, vec![from_expr(Expr::GInt(2))]);
+        assert!(!produced[0].2);
     }
 }
