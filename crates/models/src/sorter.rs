@@ -808,6 +808,22 @@ pub fn sort_pairs(pairs: Vec<(Par, Par)>) -> Vec<(Par, Par)> {
     )
 }
 
+/// Sort `(ReceiveBind, T)` pairs by the bind's canonical sort score (port of
+/// `ReceiveBindsSortMatcher.preSortBinds`).
+pub fn sort_receive_binds_with<T>(binds: Vec<(ReceiveBind, T)>) -> Vec<(ReceiveBind, T)> {
+    let scored: Vec<ScoredTerm<(ReceiveBind, T)>> = binds
+        .into_iter()
+        .map(|(bind, tag)| {
+            let sb = sort_receive_bind(&bind);
+            ScoredTerm {
+                term: (sb.term, tag),
+                score: sb.score,
+            }
+        })
+        .collect();
+    sort_scored(scored)
+}
+
 /// Construct a `ParSet`, deduplicating (by raw equality) then sorting (the Scala `ParSet.apply`).
 pub fn par_set(ps: Vec<Par>) -> ParSet {
     let mut deduped: Vec<Par> = Vec::new();

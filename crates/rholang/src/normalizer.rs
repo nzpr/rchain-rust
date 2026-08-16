@@ -17,6 +17,7 @@ use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
     prepend_new, prepend_receive, prepend_send, single_bundle, single_connective,
 };
+use rchain_models::sorter::sort_receive_binds_with;
 
 use crate::compiler::{
     CollectVisitInputs, CollectVisitOutputs, FreeMap, NameVisitInputs, NameVisitOutputs,
@@ -24,9 +25,10 @@ use crate::compiler::{
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
-    BoolLiteral, Bundle as BundleKind, Case, Collection, Ground, KeyValuePair, LinearBind, Name,
-    NameDecl, NameRemainder, NameSource, Proc, ProcRemainder, ProcVar, Receipt, ReceiptLinearImpl,
-    Send as SendKind, SimpleType, SynchSendCont, Tuple, VarRefKind,
+    BoolLiteral, Bundle as BundleKind, Case, Collection, Decl, Decls, Ground, KeyValuePair,
+    LinearBind, Name, NameDecl, NameRemainder, NameSource, PeekBind, Proc, ProcRemainder, ProcVar,
+    Receipt, ReceiptLinearImpl, ReceiptPeekImpl, ReceiptRepeatedImpl, RepeatedBind, Send as SendKind,
+    SimpleType, SynchSendCont, Tuple, VarRefKind,
 };
 
 fn pos() -> SourcePosition {
@@ -232,6 +234,8 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
                 free_map: collect_result.free_map,
             })
         }
+        Proc::PInput(receipts, body) => normalize_input(receipts, body, input),
+        Proc::PLet(decl, decls, body) => normalize_let(decl, decls, body, input),
         _ => Err(defer("process")),
     }
 }
@@ -1040,6 +1044,284 @@ fn normalize_send_synch(
         Box::new(ppar),
     );
     normalize_proc(&pnew, input)
+}
+
+/// Normalize an input (port of `PInputNormalizer.normalize`, common single-receipt path).
+fn normalize_input(
+    receipts: &[Receipt],
+    body: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    if receipts.len() != 1 {
+        return Err(defer("multi-receipt input"));
+    }
+    let receipt = &receipts[0];
+
+    // Extract (patterns, sources, persistent, peek).
+    let (patterns, sources, persistent, peek): (Vec<(Vec<Name>, NameRemainder)>, Vec<Name>, bool, bool) =
+        match receipt {
+            Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(binds)) => {
+                let mut patterns = Vec::new();
+                let mut sources = Vec::new();
+                for lb in binds {
+                    match &lb.2 {
+                        NameSource::SimpleSource(name) => {
+                            patterns.push((lb.0.clone(), lb.1.clone()));
+                            sources.push(name.clone());
+                        }
+                        _ => return Err(defer("complex input source")),
+                    }
+                }
+                (patterns, sources, false, false)
+            }
+            Receipt::ReceiptRepeated(ReceiptRepeatedImpl::RepeatedSimple(binds)) => {
+                let patterns: Vec<(Vec<Name>, NameRemainder)> = binds
+                    .iter()
+                    .map(|rb: &RepeatedBind| (rb.0.clone(), rb.1.clone()))
+                    .collect();
+                let sources: Vec<Name> = binds.iter().map(|rb| rb.2.clone()).collect();
+                (patterns, sources, true, false)
+            }
+            Receipt::ReceiptPeek(ReceiptPeekImpl::PeekSimple(binds)) => {
+                let patterns: Vec<(Vec<Name>, NameRemainder)> = binds
+                    .iter()
+                    .map(|pb: &PeekBind| (pb.0.clone(), pb.1.clone()))
+                    .collect();
+                let sources: Vec<Name> = binds.iter().map(|pb| pb.2.clone()).collect();
+                (patterns, sources, false, true)
+            }
+        };
+
+    // Process sources.
+    let mut source_pars: Vec<Par> = Vec::new();
+    let mut sources_free = input.free_map.clone();
+    let mut sources_locally_free: Vec<i32> = Vec::new();
+    let mut sources_connective_used = false;
+    for name in &sources {
+        let res = normalize_name(
+            name,
+            NameVisitInputs {
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map: sources_free,
+            },
+        )?;
+        source_pars.push(res.par.clone());
+        sources_free = res.free_map;
+        sources_locally_free = union_free(&sources_locally_free, &res.par.locally_free.0);
+        sources_connective_used = sources_connective_used || res.par.connective_used;
+    }
+
+    // Process patterns.
+    let mut binds: Vec<(ReceiveBind, FreeMap<VarSort>)> = Vec::new();
+    let mut patterns_locally_free: Vec<i32> = Vec::new();
+    for (names, remainder) in &patterns {
+        let mut pattern_pars: Vec<Par> = Vec::new();
+        let mut pattern_free = FreeMap::<VarSort>::empty();
+        for name in names {
+            let res = normalize_name(
+                name,
+                NameVisitInputs {
+                    bound_map_chain: input.bound_map_chain.push(),
+                    free_map: pattern_free,
+                },
+            )?;
+            fail_on_invalid_connective(&input, &res)?;
+            pattern_pars.push(res.par.clone());
+            pattern_free = res.free_map;
+            patterns_locally_free = union_free(&patterns_locally_free, &res.par.locally_free.0);
+        }
+        let (opt_var, pattern_free) = normalize_remainder_name(remainder, pattern_free)?;
+        let free_count = pattern_free.count_no_wildcards();
+        let rb = ReceiveBind {
+            patterns: pattern_pars,
+            source: Box::new(source_pars[binds.len()].clone()),
+            remainder: opt_var.map(Box::new),
+            free_count,
+        };
+        binds.push((rb, pattern_free));
+    }
+
+    // Sort binds, then split.
+    let sorted = sort_receive_binds_with(binds);
+    let receive_binds: Vec<ReceiveBind> = sorted.iter().map(|(rb, _)| rb.clone()).collect();
+    let receive_bind_free_maps: Vec<FreeMap<VarSort>> =
+        sorted.iter().map(|(_, fm)| fm.clone()).collect();
+
+    // Check for repeated channels.
+    let channels: BTreeSet<Par> = receive_binds.iter().map(|rb| (*rb.source).clone()).collect();
+    if channels.len() != receive_binds.len() {
+        return Err(RholangError::ReceiveOnSameChannelsError { line: 0, col: 0 });
+    }
+
+    // Merge the receive-bind free maps, detecting shadowing.
+    let mut receive_binds_free_map = FreeMap::<VarSort>::empty();
+    for fm in receive_bind_free_maps {
+        let (merged, shadowed) = receive_binds_free_map.merge(&fm);
+        if let Some((var, sp)) = shadowed.first() {
+            return Err(RholangError::UnexpectedReuseOfNameContextFree {
+                var_name: var.clone(),
+                first_use: receive_binds_free_map.get(var).unwrap().source_position,
+                second_use: sp.clone(),
+            });
+        }
+        receive_binds_free_map = merged;
+    }
+
+    // Normalize the body.
+    let body_result = normalize_proc(
+        body,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: input.bound_map_chain.absorb_free(&receive_binds_free_map),
+            free_map: sources_free,
+        },
+    )?;
+
+    let bind_count = receive_binds_free_map.count_no_wildcards();
+    let receive = Receive {
+        binds: receive_binds,
+        body: Box::new(body_result.par.clone()),
+        persistent,
+        peek,
+        bind_count,
+        locally_free: AlwaysEqual(union_free(
+            &union_free(&sources_locally_free, &patterns_locally_free),
+            &from_free(&body_result.par.locally_free.0, bind_count),
+        )),
+        connective_used: sources_connective_used || body_result.par.connective_used,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_receive(&input.par, receive),
+        free_map: body_result.free_map,
+    })
+}
+
+/// Normalize a sequential/empty `let` by desugaring to a `match` (port of `PLetNormalizer`, the
+/// `_` branch).
+fn normalize_let(
+    decl: &Decl,
+    decls: &Decls,
+    body: &Proc,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let new_continuation: Proc = match decls {
+        Decls::EmptyDeclImpl => body.clone(),
+        Decls::LinearDeclsImpl(lds) => {
+            if lds.is_empty() {
+                body.clone()
+            } else {
+                // Recurse on the tail (rarely exercised; represent as a nested PLet).
+                Proc::PLet(
+                    lds[0].0.clone(),
+                    if lds.len() == 1 {
+                        Decls::EmptyDeclImpl
+                    } else {
+                        Decls::LinearDeclsImpl(lds[1..].to_vec())
+                    },
+                    Box::new(body.clone()),
+                )
+            }
+        }
+        Decls::ConcDeclsImpl(_) => return Err(defer("concurrent let")),
+    };
+
+    // Build the value EList from the RHS procs.
+    let value_par = list_proc_to_elist(&decl.2, input.free_map.clone(), &input)?;
+    // Build the pattern EList from the LHS names.
+    let pattern_par = list_name_to_elist(&decl.0, &decl.1, &input)?;
+
+    let pattern_bound_count = pattern_par.free_map.count_no_wildcards();
+    let continuation = normalize_proc(
+        &new_continuation,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: input.bound_map_chain.absorb_free(&pattern_par.free_map),
+            free_map: value_par.free_map.clone(),
+        },
+    )?;
+
+    let m = Match {
+        target: Box::new(value_par.par.clone()),
+        cases: vec![MatchCase {
+            pattern: Box::new(pattern_par.par.clone()),
+            source: Box::new(continuation.par.clone()),
+            free_count: pattern_bound_count,
+        }],
+        locally_free: AlwaysEqual(union_free(
+            &union_free(&value_par.par.locally_free.0, &pattern_par.par.locally_free.0),
+            &from_free(&continuation.par.locally_free.0, pattern_bound_count),
+        )),
+        connective_used: value_par.par.connective_used || continuation.par.connective_used,
+    };
+    Ok(ProcVisitOutputs {
+        par: prepend_match(&input.par, m),
+        free_map: continuation.free_map,
+    })
+}
+
+fn list_proc_to_elist(
+    procs: &[Proc],
+    known_free: FreeMap<VarSort>,
+    input: &ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let mut pars: Vec<Par> = Vec::new();
+    let mut locally_free: Vec<i32> = Vec::new();
+    let mut connective_used = false;
+    let mut free_map = known_free;
+    for proc in procs {
+        let result = normalize_proc(
+            proc,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map,
+            },
+        )?;
+        pars.push(result.par.clone());
+        locally_free = union_free(&locally_free, &result.par.locally_free.0);
+        connective_used = connective_used || result.par.connective_used;
+        free_map = result.free_map;
+    }
+    Ok(ProcVisitOutputs {
+        par: from_expr(Expr::EList(EList {
+            ps: pars,
+            locally_free: AlwaysEqual(locally_free),
+            connective_used,
+            remainder: None,
+        })),
+        free_map,
+    })
+}
+
+fn list_name_to_elist(
+    names: &[Name],
+    remainder: &NameRemainder,
+    input: &ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let (opt_var, mut free_map) = normalize_remainder_name(remainder, FreeMap::empty())?;
+    let mut pars: Vec<Par> = Vec::new();
+    let mut locally_free: Vec<i32> = Vec::new();
+    for name in names {
+        let res = normalize_name(
+            name,
+            NameVisitInputs {
+                bound_map_chain: input.bound_map_chain.push(),
+                free_map,
+            },
+        )?;
+        pars.push(res.par.clone());
+        locally_free = union_free(&locally_free, &res.par.locally_free.0);
+        free_map = res.free_map;
+    }
+    Ok(ProcVisitOutputs {
+        par: from_expr(Expr::EList(EList {
+            ps: pars,
+            locally_free: AlwaysEqual(locally_free),
+            connective_used: true,
+            remainder: opt_var.map(Box::new),
+        })),
+        free_map,
+    })
 }
 
 fn fold_collection(
