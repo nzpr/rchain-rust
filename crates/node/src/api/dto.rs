@@ -3,6 +3,7 @@
 use std::fmt;
 
 use rchain_models::casper::protocol::casper_message::DeployData;
+use rchain_models::casper::protocol::deploy_service::LightBlockInfo;
 
 use super::rho_expr::{RhoExpr, RhoUnforg};
 
@@ -133,4 +134,48 @@ mod tests {
         let e = SignatureException("bad sig".to_string());
         assert_eq!(e.to_string(), "bad sig");
     }
+}
+
+/// A deploy execution status (port of the `DeployExecStatus` ADT in `WebApi.scala`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeployExecStatus {
+    ProcessedWithSuccess {
+        deploy_result: Vec<RhoExpr>,
+        block: LightBlockInfo,
+    },
+    ProcessedWithError {
+        deploy_error: String,
+        block: LightBlockInfo,
+    },
+    NotProcessed {
+        status: String,
+    },
+}
+
+/// A rholang expression plus the block it was found in (port of `RhoExprWithBlock`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RhoExprWithBlock {
+    pub expr: RhoExpr,
+    pub block: LightBlockInfo,
+}
+
+/// A data-at-name response (port of `DataAtNameResponse`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataAtNameResponse {
+    pub exprs: Vec<RhoExprWithBlock>,
+    pub length: i32,
+}
+
+/// An exploratory-deploy response (port of `ExploratoryDeployResponse`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExploratoryDeployResponse {
+    pub expr: Vec<RhoExpr>,
+    pub block: LightBlockInfo,
+}
+
+/// A rho data response (port of `RhoDataResponse`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RhoDataResponse {
+    pub expr: Vec<RhoExpr>,
+    pub block: LightBlockInfo,
 }
