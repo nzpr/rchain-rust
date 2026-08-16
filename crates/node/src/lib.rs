@@ -4,3 +4,4 @@
 //! sub-package (CLI + HOCON config).
 
 pub mod configuration;
+pub mod diagnostics;
