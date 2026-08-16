@@ -13,9 +13,11 @@ use rchain_shared::serialize::Serialize;
 
 use crate::block::state_hash::StateHash;
 use crate::block_hash::BlockHash;
+use crate::casper::protocol::deploy_service::DeployInfo;
 use crate::proto::casper::PCost as PCostProto;
 use crate::proto::casper::*;
 use crate::validator::Validator;
+use rchain_shared::base16;
 
 // -------------------------------------------------------------------------------------------------
 // Cost
@@ -415,6 +417,23 @@ impl ProcessedDeploy {
             deploy: Some(self.deploy.to_proto()),
             cost: Some(self.cost.to_proto()),
             deploy_log: self.deploy_log.iter().map(Event::to_proto).collect(),
+            errored: self.is_failed,
+            system_deploy_error: self.system_deploy_error.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Build the client-facing deploy info (port of `toDeployInfo`).
+    pub fn to_deploy_info(&self) -> DeployInfo {
+        DeployInfo {
+            deployer: base16::encode(&self.deploy.deployer),
+            term: self.deploy.data.term.clone(),
+            timestamp: self.deploy.data.timestamp,
+            sig: base16::encode(&self.deploy.sig),
+            sig_algorithm: self.deploy.sig_algorithm.clone(),
+            phlo_price: self.deploy.data.phlo_price,
+            phlo_limit: self.deploy.data.phlo_limit,
+            valid_after_block_number: self.deploy.data.valid_after_block_number,
+            cost: self.cost.cost,
             errored: self.is_failed,
             system_deploy_error: self.system_deploy_error.clone().unwrap_or_default(),
         }

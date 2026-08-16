@@ -3,6 +3,7 @@
 //! Mirrors `casper/src/main/scala/coop/rchain/casper/`. Encodes Laws 14–18 (finality, fringe
 //! monotonicity, block numbering/content-addressing, merge determinism, height-map contiguity).
 
+pub mod api;
 pub mod block_metadata_store;
 pub mod block_random_seed;
 pub mod block_status;
