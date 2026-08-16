@@ -12,4 +12,5 @@ rchain-casper = { path = "../casper" }
 rchain-comm = { path = "../comm" }
 rchain-crypto = { path = "../crypto" }
 rchain-models = { path = "../models" }
+rchain-sdk = { path = "../sdk" }
 rchain-shared = { path = "../shared" }
