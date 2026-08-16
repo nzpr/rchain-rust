@@ -9,3 +9,4 @@ pub mod casper_syntax;
 pub mod consensus;
 pub mod dag;
 pub mod error;
+pub mod primitive;
