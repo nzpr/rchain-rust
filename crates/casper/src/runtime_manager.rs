@@ -23,8 +23,9 @@ use crate::event_converter::to_casper_event;
 use crate::rholang::{SystemDeployRuntimeResult, UserDeployRuntimeResult};
 use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, SystemDeployUserError};
 
-/// The runtime manager (port of `RuntimeManager`). The deploy-execution, replay, and bond-computation
-/// methods are deferred pending the system deploys + replay runtime wiring.
+/// The runtime manager (port of `RuntimeManager`). Deploy execution (user deploys + system
+/// deploys), genesis/state computation, and bond/validator queries are implemented; replay is
+/// deferred pending the replay-runtime wiring.
 pub struct RuntimeManager {
     runtime: RhoRuntime,
     history_repo: RhoHistoryRepository,
