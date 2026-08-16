@@ -10,6 +10,7 @@ pub mod base16;
 pub mod dag;
 pub mod serialize;
 pub mod state;
+pub mod stopwatch;
 pub mod store;
 pub mod string_ops;
 pub mod terminal_mode;
