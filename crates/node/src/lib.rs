@@ -8,5 +8,6 @@ pub mod configuration;
 pub mod dag;
 pub mod diagnostics;
 pub mod effects;
+pub mod revvaultexport;
 pub mod runtime;
 pub mod web;
