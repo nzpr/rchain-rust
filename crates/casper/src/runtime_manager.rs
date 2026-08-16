@@ -1,9 +1,10 @@
 //! The runtime manager façade (port of `casper/rholang/RuntimeManager.scala`, read-only surface).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
+use rchain_crypto::public_key::PublicKey;
 use rchain_models::ast::{Expr, Par, Var};
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::casper_message::{
@@ -18,7 +19,7 @@ use rchain_rholang::system_processes::BlockData;
 
 use crate::event_converter::to_casper_event;
 use crate::rholang::{SystemDeployRuntimeResult, UserDeployRuntimeResult};
-use crate::system_deploy::{process_bool_result, SystemDeploy, SystemDeployUserError};
+use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, SystemDeployUserError};
 
 /// The runtime manager (port of `RuntimeManager`). The deploy-execution, replay, and bond-computation
 /// methods are deferred pending the system deploys + replay runtime wiring.
@@ -119,6 +120,78 @@ impl RuntimeManager {
         Ok((checkpoint.root, results))
     }
 
+    /// Execute a user deploy with the pre-charge/refund system deploys (port of
+    /// `playDeployWithCostAccounting`).
+    pub async fn play_deploy_with_cost_accounting(
+        &self,
+        deploy: &SignedDeployData,
+        rand: &Blake2b512Random,
+    ) -> Result<UserDeployRuntimeResult, String> {
+        let mut collector = EvalCollector::default();
+
+        let pre_charge = SystemDeploy::pre_charge(
+            deploy.data.total_phlo_charge(),
+            &PublicKey::new(deploy.deployer.clone()),
+            rand.split_byte(0),
+        );
+        let (pre_result, pre_eval) = self.eval_system_deploy(&pre_charge).await?;
+        let pre_checkpoint = self.runtime.create_soft_checkpoint().await;
+        collector = collector.add(
+            &pre_checkpoint.log.iter().map(to_casper_event).collect::<Vec<_>>(),
+            &pre_eval.mergeable,
+        );
+
+        if let Err(e) = pre_result {
+            let failed = ProcessedDeploy {
+                deploy: deploy.clone(),
+                cost: PCost { cost: 0 },
+                deploy_log: collector.event_log.clone(),
+                is_failed: true,
+                system_deploy_error: Some(e.0),
+            };
+            return Ok(UserDeployRuntimeResult {
+                deploy: failed,
+                mergeable: BTreeMap::new(),
+                eval_result: EvaluateResult {
+                    cost: rchain_rholang::accounting::Cost::new(0, "pre-charge"),
+                    errors: Vec::new(),
+                    mergeable: BTreeSet::new(),
+                },
+            });
+        }
+
+        let (mut processed, eval_result) = self.process_deploy(deploy, &rand.split_byte(1)).await?;
+        collector = collector.add(&processed.deploy_log, &eval_result.mergeable);
+
+        let refund = SystemDeploy::refund(deploy.data.phlo_limit, rand.split_byte(2));
+        let _ = self.eval_system_deploy(&refund).await?;
+
+        processed.deploy_log = collector.event_log.clone();
+        Ok(UserDeployRuntimeResult {
+            deploy: processed,
+            mergeable: BTreeMap::new(),
+            eval_result,
+        })
+    }
+
+    /// Run deploys with cost accounting from `start_hash` (port of `playDeploys` with
+    /// `playDeployWithCostAccounting`).
+    pub async fn play_deploys_with_cost_accounting(
+        &self,
+        start_hash: &Blake2b256Hash,
+        terms: &[SignedDeployData],
+        rand: &Blake2b512Random,
+    ) -> Result<(Blake2b256Hash, Vec<UserDeployRuntimeResult>), String> {
+        self.runtime.reset(*start_hash).await.map_err(|e| e)?;
+        let mut results = Vec::new();
+        for (i, d) in terms.iter().enumerate() {
+            let r = rand.split_byte(i as u8);
+            results.push(self.play_deploy_with_cost_accounting(d, &r).await?);
+        }
+        let checkpoint = self.runtime.create_checkpoint().await.map_err(|e| e)?;
+        Ok((checkpoint.root, results))
+    }
+
     /// Compute the genesis state from deploys (port of `computeGenesis`).
     pub async fn compute_genesis(
         &self,
@@ -208,7 +281,7 @@ impl RuntimeManager {
     }
 
     /// Compute the post-state from user deploys + block-level system deploys (port of
-    /// `computeState`; per-deploy pre-charge/refund cost accounting is deferred).
+    /// `computeState`).
     pub async fn compute_state(
         &self,
         start_hash: &Blake2b256Hash,
@@ -225,7 +298,8 @@ impl RuntimeManager {
         String,
     > {
         self.runtime.set_block_data(block_data);
-        let (mut state_hash, processed_deploys) = self.play_deploys(start_hash, terms, rand).await?;
+        let (mut state_hash, processed_deploys) =
+            self.play_deploys_with_cost_accounting(start_hash, terms, rand).await?;
         let mut processed_system_deploys = Vec::new();
         for sd in system_deploys {
             let (new_hash, processed) = self.play_system_deploy(&state_hash, sd).await?;
