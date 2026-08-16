@@ -379,6 +379,24 @@ where
         .collect()
 }
 
+/// Encode a single datum (port of `encodeDatum`).
+pub fn encode_datum_bytes<A>(datum: &Datum<A>) -> Vec<u8>
+where
+    A: Serialize<A>,
+{
+    let mut w = BitWriter::new();
+    encode_datum(&mut w, datum);
+    w.finish()
+}
+
+/// Decode a single datum (port of `decodeDatum`).
+pub fn decode_datum<A>(bytes: &[u8]) -> Result<Datum<A>, RSpaceError>
+where
+    A: Serialize<A>,
+{
+    read_datum(&mut BitReader::new(bytes))
+}
+
 /// Decode a list of raw data (port of `decodeDatumsBinary`).
 pub fn decode_datums_binary<A>(bytes: &[u8]) -> Result<Vec<DatumB<A>>, RSpaceError>
 where

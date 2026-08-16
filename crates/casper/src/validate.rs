@@ -432,7 +432,7 @@ mod effectful_tests {
     use rchain_models::casper::protocol::casper_message::{
         DeployData, PCost, ProcessedDeploy, SignedDeployData,
     };
-    use rchain_shared::store::{InMemoryKeyValueStore, KeyValueStore};
+    use rchain_shared::store::InMemoryKeyValueStore;
     use rchain_shared::typed_store::KeyValueTypedStoreCodec;
     use std::collections::BTreeSet;
     use std::sync::Arc;

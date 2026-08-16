@@ -16,13 +16,23 @@ use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
     Event, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
+use rchain_models::ast::Par;
+use rchain_models::fringe_data::FringeData;
+use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::validator::Validator;
+use rchain_rholang::merging::{calculate_number_channel_merge, read_mergeable_values};
+use rchain_rholang::storage::RhoHistoryRepository;
 use rchain_rspace::history::history_repository::HistoryRepository;
+use rchain_rspace::hot_store_trie_action::HotStoreTrieAction;
 use rchain_rspace::merger::event_log_index::{EventLogIndex, NumberChannelsDiff};
 use rchain_rspace::merger::event_log_merging_logic::{are_conflicting, depends};
 use rchain_rspace::merger::state_change::StateChange;
+use rchain_rspace::merger::state_change_merger::compute_trie_actions;
 use rchain_rspace::trace::event::{Event as REvent, Produce};
-use rchain_sdk::dag::merging::{compute_dependency_map, compute_greedy_non_intersecting_branches};
+use rchain_sdk::dag::merging::{
+    compute_dependency_map, compute_greedy_non_intersecting_branches,
+    compute_relation_map_for_merge_set, resolve_conflict_set,
+};
 use rchain_shared::serialize::Serialize;
 
 use crate::event_converter::to_rspace_event;
@@ -108,6 +118,20 @@ impl Eq for DeployChainIndex {}
 impl Hash for DeployChainIndex {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.deploys_with_cost.hash(state);
+    }
+}
+
+// Ordering is over `(hostBlock, postStateHash)` (the Scala `Ordering.by`), distinct from equality
+// (which is over `deploysWithCost`).
+impl PartialOrd for DeployChainIndex {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DeployChainIndex {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.host_block, self.post_state_hash).cmp(&(other.host_block, other.post_state_hash))
     }
 }
 
@@ -453,6 +477,161 @@ impl MergeScope {
             },
             base_msg,
         )
+    }
+
+    /// Merge the conflict scope into the base state, returning the new state hash + rejected
+    /// deploy ids (port of `MergeScope.merge`).
+    pub async fn merge<F, Fut>(
+        merge_scope: &MergeScope,
+        base_state: Blake2b256Hash,
+        fringe_states: &BTreeMap<BTreeSet<BlockHash>, FringeData>,
+        history_repository: &RhoHistoryRepository,
+        block_index: F,
+        rejection_cost: impl Fn(&DeployChainIndex) -> i64,
+    ) -> Result<(Blake2b256Hash, BTreeSet<Vec<u8>>), String>
+    where
+        F: Fn(BlockHash) -> Fut,
+        Fut: std::future::Future<Output = Result<BlockIndex, String>>,
+    {
+        let conflict_indices: Vec<BlockIndex> = {
+            let mut v = Vec::new();
+            for h in &merge_scope.conflict_scope {
+                v.push(block_index(*h).await?);
+            }
+            v
+        };
+        let final_indices: Vec<BlockIndex> = {
+            let mut v = Vec::new();
+            for h in &merge_scope.final_scope {
+                v.push(block_index(*h).await?);
+            }
+            v
+        };
+
+        let conflict_set: BTreeSet<DeployChainIndex> = conflict_indices
+            .iter()
+            .flat_map(|b| b.deploy_chains.iter().cloned())
+            .collect();
+        let final_set: BTreeSet<DeployChainIndex> = final_indices
+            .iter()
+            .flat_map(|b| b.deploy_chains.iter().cloned())
+            .collect();
+
+        // Finalization decisions made in the final set.
+        let mut rejections_map: BTreeMap<BlockHash, BTreeSet<Vec<u8>>> = BTreeMap::new();
+        for (fringe, fd) in fringe_states {
+            for h in fringe {
+                rejections_map.insert(*h, fd.rejected_deploys.clone());
+            }
+        }
+        let mut rejected_finally: BTreeSet<DeployChainIndex> = BTreeSet::new();
+        let mut accepted_finally: BTreeSet<DeployChainIndex> = BTreeSet::new();
+        for b in &final_indices {
+            let rejected = rejections_map.get(&b.block_hash);
+            for chain in &b.deploy_chains {
+                let first_id = chain.deploys_with_cost.iter().next().map(|d| d.id.clone());
+                let is_rejected = match (rejected, &first_id) {
+                    (Some(rej), Some(id)) => rej.contains(id),
+                    _ => false,
+                };
+                if is_rejected {
+                    rejected_finally.insert(chain.clone());
+                } else {
+                    accepted_finally.insert(chain.clone());
+                }
+            }
+        }
+
+        // Mergeable channels.
+        let mergeable_diffs_map: BTreeMap<DeployChainIndex, NumberChannelsDiff> = conflict_set
+            .iter()
+            .map(|b| (b.clone(), b.event_log_index.number_channels_data.clone()))
+            .collect();
+        let mut all_channel_hashes: BTreeSet<Blake2b256Hash> = BTreeSet::new();
+        for diffs in mergeable_diffs_map.values() {
+            all_channel_hashes.extend(diffs.keys().copied());
+        }
+        let init_mergeable_values =
+            read_mergeable_values(history_repository, base_state, &all_channel_hashes).await?;
+
+        let (conflicts_map, dependency_map) = compute_relation_map_for_merge_set(
+            &conflict_set,
+            &final_set,
+            DeployChainIndex::deploys_are_conflicting,
+            DeployChainIndex::depends,
+        );
+
+        let (to_merge, rejected) = resolve_conflict_set(
+            &conflict_set,
+            &accepted_finally,
+            &rejected_finally,
+            rejection_cost,
+            &conflicts_map,
+            &dependency_map,
+            &mergeable_diffs_map,
+            &init_mergeable_values,
+        );
+
+        let new_state =
+            MergeScope::compute_merged_state(&to_merge, base_state, history_repository).await?;
+        let rejected_ids: BTreeSet<Vec<u8>> = rejected
+            .iter()
+            .flat_map(|d| d.deploys_with_cost.iter().map(|x| x.id.clone()))
+            .collect();
+        Ok((new_state, rejected_ids))
+    }
+
+    /// Merge a set of deploy chains into the base state and produce the new state hash (port of
+    /// `MergeScope.computeMergedState`).
+    pub async fn compute_merged_state(
+        to_merge: &BTreeSet<DeployChainIndex>,
+        base_state: Blake2b256Hash,
+        history_repository: &RhoHistoryRepository,
+    ) -> Result<Blake2b256Hash, String> {
+        let history_reader = history_repository.get_history_reader(base_state).await;
+        let base_reader = history_reader.reader_binary();
+
+        // Combine all state changes + mergeable diffs.
+        let all_changes = to_merge
+            .iter()
+            .fold(StateChange::empty(), |acc, b| StateChange::combine(&acc, &b.state_changes));
+        let mut mergeable_diffs: NumberChannelsDiff = BTreeMap::new();
+        for b in to_merge {
+            for (k, v) in &b.event_log_index.number_channels_data {
+                *mergeable_diffs.entry(*k).or_insert(0) += v;
+            }
+        }
+
+        // Pre-compute the mergeable-channel override actions.
+        let mut overrides: BTreeMap<
+            Blake2b256Hash,
+            HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        > = BTreeMap::new();
+        for (hash, diff) in &mergeable_diffs {
+            let changes = all_changes.datums_changes.get(hash).cloned().unwrap_or_default();
+            let action =
+                calculate_number_channel_merge(*hash, *diff, &changes, history_reader.as_ref())
+                    .await?;
+            overrides.insert(*hash, action);
+        }
+
+        let trie_actions = compute_trie_actions(
+            &all_changes,
+            base_reader.as_ref(),
+            mergeable_diffs.clone(),
+            |hash, _changes, _chs| overrides.get(hash).cloned(),
+        )
+        .await?;
+
+        let reset_repo = history_repository
+            .reset(base_state)
+            .await
+            .map_err(|e| e.to_string())?;
+        let new_repo = reset_repo
+            .do_checkpoint(&trie_actions)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(new_repo.root())
     }
 }
 
