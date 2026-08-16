@@ -12,6 +12,7 @@ use rchain_crypto::public_key::PublicKey;
 use rchain_crypto::signatures::ed25519::Ed25519;
 use rchain_crypto::signatures::secp256k1::Secp256k1;
 use rchain_models::ast::Par;
+use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_models::rholang::RhoType::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
@@ -122,6 +123,15 @@ impl BlockData {
             block_number: 0,
             sender: PublicKey::new(vec![0]),
             seq_num: 0,
+        }
+    }
+
+    /// Build the per-block data from a block message (port of `BlockData.fromBlock`).
+    pub fn from_block(block: &BlockMessage) -> Self {
+        BlockData {
+            block_number: block.block_number,
+            sender: PublicKey::new(block.sender.as_bytes().to_vec()),
+            seq_num: block.seq_num,
         }
     }
 }

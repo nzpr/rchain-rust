@@ -10,6 +10,7 @@ pub mod conf;
 pub mod construct_deploy;
 pub mod dag;
 pub mod event_converter;
+pub mod interpreter_util;
 pub mod merging;
 pub mod multi_parent_casper;
 pub mod protocol;
