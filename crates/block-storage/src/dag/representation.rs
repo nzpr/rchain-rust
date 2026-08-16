@@ -9,6 +9,8 @@ use rchain_models::fringe_data::FringeData;
 use rchain_models::validator::Validator;
 use rchain_shared::base16;
 
+use crate::errors::StorageError;
+
 use super::finalizer::Message;
 use super::message_state::DagMessageState;
 
@@ -91,9 +93,23 @@ impl DagRepresentation {
         }
     }
 
+    /// Blocks grouped by height in the requested range, or an error for an invalid range (port of
+    /// `DagRepresentationSyntax.topoSortUnsafe`).
+    pub fn topo_sort_unsafe(
+        &self,
+        start_block_number: i64,
+        maybe_end_block_number: Option<i64>,
+    ) -> Result<Vec<Vec<BlockHash>>, StorageError> {
+        self.topo_sort(start_block_number, maybe_end_block_number)
+            .ok_or(StorageError::TopoSortFragmentParameterError {
+                start_block_number,
+                end_block_number: i64::MAX,
+            })
+    }
+
     /// Find a block hash by (possibly truncated) hex prefix.
     pub fn find(&self, truncated_hash: &str) -> Option<BlockHash> {
-        if truncated_hash.len() % 2 == 0 {
+        if truncated_hash.len().is_multiple_of(2) {
             let bytes = base16::unsafe_decode(truncated_hash);
             self.dag_set.iter().find(|h| h.starts_with(&bytes)).copied()
         } else {

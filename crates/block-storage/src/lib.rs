@@ -13,3 +13,4 @@ pub mod approved_store;
 pub mod block_store;
 pub mod dag;
 pub mod errors;
+pub mod syntax;
