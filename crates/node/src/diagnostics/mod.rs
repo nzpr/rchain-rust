@@ -7,7 +7,9 @@
 pub mod effects;
 pub mod influxdb;
 pub mod model;
+pub mod prometheus_reporter;
 pub mod scrape_data_builder;
 pub mod trace;
 
+pub use prometheus_reporter::{NewPrometheusReporter, PeriodSnapshotAccumulator};
 pub use trace::{Trace, TraceId};
