@@ -5,12 +5,13 @@
 //! until the lexer is ported; the structural processes (`PSend`/`PNew`/`PInput`/…) are deferred.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use num_bigint::BigInt;
 
 use rchain_models::ast::{
-    AlwaysEqual, Bundle, Connective, ConnectiveBody, Expr, Match, MatchCase, New, Par, Receive,
-    ReceiveBind, Send, Var, VarRef,
+    AlwaysEqual, Bundle, Connective, ConnectiveBody, EList, ETuple, Expr, Match, MatchCase, New,
+    Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
 };
 use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
@@ -18,12 +19,14 @@ use rchain_models::par_ops::{
 };
 
 use crate::compiler::{
-    FreeMap, NameVisitInputs, NameVisitOutputs, ProcVisitInputs, ProcVisitOutputs, VarSort,
+    CollectVisitInputs, CollectVisitOutputs, FreeMap, NameVisitInputs, NameVisitOutputs,
+    ProcVisitInputs, ProcVisitOutputs, VarSort,
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
-    BoolLiteral, Bundle as BundleKind, Case, Ground, Name, NameDecl, NameRemainder, Proc,
-    ProcRemainder, ProcVar, Send as SendKind, SimpleType, VarRefKind,
+    BoolLiteral, Bundle as BundleKind, Case, Collection, Ground, KeyValuePair, LinearBind, Name,
+    NameDecl, NameRemainder, NameSource, Proc, ProcRemainder, ProcVar, Receipt, ReceiptLinearImpl,
+    Send as SendKind, SimpleType, SynchSendCont, Tuple, VarRefKind,
 };
 
 fn pos() -> SourcePosition {
@@ -215,6 +218,20 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
             normalize_contr(name, formals, remainder, body, input)
         }
         Proc::PBundle(kind, body) => normalize_bundle(kind, body, input),
+        Proc::PSendSynch(name, data, cont) => normalize_send_synch(name, data, cont, input),
+        Proc::PCollect(c) => {
+            let collect_result = normalize_collection(
+                c,
+                CollectVisitInputs {
+                    bound_map_chain: input.bound_map_chain.clone(),
+                    free_map: input.free_map.clone(),
+                },
+            )?;
+            Ok(ProcVisitOutputs {
+                par: prepend_expr(&input.par, collect_result.expr, input.bound_map_chain.depth()),
+                free_map: collect_result.free_map,
+            })
+        }
         _ => Err(defer("process")),
     }
 }
@@ -982,6 +999,182 @@ fn normalize_bundle(
         par: prepend_bundle(&input.par, new_bundle),
         free_map: input.free_map,
     })
+}
+
+static FRESH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn fresh_identifier() -> String {
+    let n = FRESH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("$synch{n}")
+}
+
+/// Normalize a synchronous send by desugaring to `new` + `PPar` of a `PSend` and a `PInput` (port
+/// of `PSendSynchNormalizer.normalize`).
+fn normalize_send_synch(
+    name: &Name,
+    data: &[Proc],
+    cont: &SynchSendCont,
+    input: ProcVisitInputs,
+) -> Result<ProcVisitOutputs, RholangError> {
+    let identifier = fresh_identifier();
+
+    let mut send_data = vec![Proc::PEval(Name::NameVar(identifier.clone()))];
+    send_data.extend(data.iter().cloned());
+    let send = Proc::PSend(name.clone(), SendKind::SendSingle, send_data);
+
+    let linear_bind = LinearBind(
+        vec![Name::NameWildcard],
+        NameRemainder::NameRemainderEmpty,
+        NameSource::SimpleSource(Name::NameVar(identifier.clone())),
+    );
+    let receipt = Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(vec![linear_bind]));
+    let continuation = match cont {
+        SynchSendCont::EmptyCont => Proc::PNil,
+        SynchSendCont::NonEmptyCont(p) => (**p).clone(),
+    };
+    let receive = Proc::PInput(vec![receipt], Box::new(continuation));
+
+    let ppar = Proc::PPar(Box::new(send), Box::new(receive));
+    let pnew = Proc::PNew(
+        vec![NameDecl::NameDeclSimpl(identifier)],
+        Box::new(ppar),
+    );
+    normalize_proc(&pnew, input)
+}
+
+fn fold_collection(
+    procs: &[Proc],
+    known_free: FreeMap<VarSort>,
+    input: &CollectVisitInputs,
+    constructor: impl Fn(Vec<Par>, Vec<i32>, bool) -> Expr,
+) -> Result<CollectVisitOutputs, RholangError> {
+    let mut pars: Vec<Par> = Vec::new();
+    let mut locally_free: Vec<i32> = Vec::new();
+    let mut connective_used = false;
+    let mut free_map = known_free;
+    for proc in procs {
+        let result = normalize_proc(
+            proc,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map,
+            },
+        )?;
+        pars.push(result.par.clone());
+        locally_free = union_free(&locally_free, &result.par.locally_free.0);
+        connective_used = connective_used || result.par.connective_used;
+        free_map = result.free_map;
+    }
+    Ok(CollectVisitOutputs {
+        expr: constructor(pars, locally_free, connective_used),
+        free_map,
+    })
+}
+
+fn fold_collection_map(
+    kvps: &[KeyValuePair],
+    known_free: FreeMap<VarSort>,
+    remainder: Option<Var>,
+    input: &CollectVisitInputs,
+) -> Result<CollectVisitOutputs, RholangError> {
+    let mut pairs: Vec<(Par, Par)> = Vec::new();
+    let mut locally_free: Vec<i32> = Vec::new();
+    let mut connective_used = false;
+    let mut free_map = known_free;
+    for kv in kvps {
+        let key_result = normalize_proc(
+            &kv.0,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map,
+            },
+        )?;
+        let val_result = normalize_proc(
+            &kv.1,
+            ProcVisitInputs {
+                par: Par::default(),
+                bound_map_chain: input.bound_map_chain.clone(),
+                free_map: key_result.free_map.clone(),
+            },
+        )?;
+        pairs.push((key_result.par.clone(), val_result.par.clone()));
+        locally_free = union_free(&locally_free, &key_result.par.locally_free.0);
+        locally_free = union_free(&locally_free, &val_result.par.locally_free.0);
+        connective_used = connective_used
+            || key_result.par.connective_used
+            || val_result.par.connective_used;
+        free_map = val_result.free_map;
+    }
+    Ok(CollectVisitOutputs {
+        expr: Expr::EMap(ParMap {
+            kvs: pairs,
+            connective_used,
+            locally_free: AlwaysEqual(locally_free),
+            remainder: remainder.map(Box::new),
+        }),
+        free_map,
+    })
+}
+
+/// Normalize a collection (port of `CollectionNormalizeMatcher.normalizeMatch`).
+fn normalize_collection(
+    c: &Collection,
+    input: CollectVisitInputs,
+) -> Result<CollectVisitOutputs, RholangError> {
+    match c {
+        Collection::CollectList(procs, remainder) => {
+            let (opt_rem, known_free) =
+                normalize_remainder_proc(remainder, input.free_map.clone())?;
+            let has_rem = opt_rem.is_some();
+            let rem = opt_rem;
+            fold_collection(procs, known_free, &input, move |ps, lf, cu| {
+                Expr::EList(EList {
+                    ps,
+                    locally_free: AlwaysEqual(lf),
+                    connective_used: cu || has_rem,
+                    remainder: rem.clone().map(Box::new),
+                })
+            })
+        }
+        Collection::CollectTuple(tuple) => {
+            let procs: Vec<Proc> = match tuple {
+                Tuple::TupleSingle(p) => vec![(**p).clone()],
+                Tuple::TupleMultiple(p, rest) => {
+                    let mut v = vec![(**p).clone()];
+                    v.extend(rest.iter().cloned());
+                    v
+                }
+            };
+            fold_collection(&procs, input.free_map.clone(), &input, |ps, lf, cu| {
+                Expr::ETuple(ETuple {
+                    ps,
+                    locally_free: AlwaysEqual(lf),
+                    connective_used: cu,
+                })
+            })
+        }
+        Collection::CollectSet(procs, remainder) => {
+            let (opt_rem, known_free) =
+                normalize_remainder_proc(remainder, input.free_map.clone())?;
+            let has_rem = opt_rem.is_some();
+            let rem = opt_rem;
+            fold_collection(procs, known_free, &input, move |ps, lf, cu| {
+                Expr::ESet(ParSet {
+                    ps,
+                    connective_used: cu || has_rem,
+                    locally_free: AlwaysEqual(lf),
+                    remainder: rem.clone().map(Box::new),
+                })
+            })
+        }
+        Collection::CollectMap(kvps, remainder) => {
+            let (opt_rem, known_free) =
+                normalize_remainder_proc(remainder, input.free_map.clone())?;
+            fold_collection_map(kvps, known_free, opt_rem, &input)
+        }
+    }
 }
 
 #[cfg(test)]
