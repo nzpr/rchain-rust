@@ -88,11 +88,19 @@ pub fn phlo_price(b: &BlockMessage, min_phlo_price: i64) -> BlockStatus {
 // `repeatDeploy` (needs `BlockStore` + `DagOps`) and `bondsCache` (needs `RuntimeManager`) are
 // deferred.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
+use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_block_storage::dag::finalizer::Message;
+use rchain_models::block::state_hash::StateHash;
+use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::validator::Validator;
+
+use crate::proto_util::{
+    get_parent_metadatas_above_block_number, get_parents_metadata, max_block_number_metadata,
+};
+use crate::runtime_manager::RuntimeManager;
 
 /// A block-validation outcome: `Ok(())` is valid, `Err(status)` is the invalid status (port of
 /// `ValidBlockProcessing`).
@@ -219,10 +227,75 @@ pub async fn neglected_invalid_block(
     }
 }
 
-/// Compose the effectful + pure checks (port of `blockSummary`); `repeatDeploy` and `bondsCache`
-/// are deferred.
+/// Look up a block from the block store, failing if absent (port of `BlockStore.getUnsafe`).
+async fn get_block_unsafe(block_store: &BlockStore, hash: &BlockHash) -> Result<BlockMessage, String> {
+    let mut vals = block_store.get(&[*hash]).await?;
+    vals.pop()
+        .flatten()
+        .ok_or_else(|| format!("missing block {}", hash.to_hex()))
+}
+
+/// Validate that no deploy with the same sig has been produced in the chain within the expiration
+/// window (port of `repeatDeploy`).
+pub async fn repeat_deploy(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    block: &BlockMessage,
+    expiration_threshold: i64,
+) -> Result<ValidBlockProcessing, String> {
+    let deploy_key_set: BTreeSet<Vec<u8>> =
+        block.state.deploys.iter().map(|d| d.deploy.sig.clone()).collect();
+
+    let block_metadata = BlockMetadata::from_block(block);
+    let init_parents = get_parents_metadata(dag, &block_metadata).await?;
+    let max_block_number = max_block_number_metadata(&init_parents);
+    let earliest_block_number = max_block_number + 1 - expiration_threshold;
+
+    // Breadth-first traversal of the parent chain above the expiration horizon (port of
+    // `DagOps.bfTraverseF(...).findF(...)`).
+    let mut queue: VecDeque<BlockMetadata> = init_parents.into_iter().collect();
+    let mut visited: HashSet<BlockHash> = HashSet::new();
+    while let Some(curr) = queue.pop_front() {
+        if visited.contains(&curr.block_hash) {
+            continue;
+        }
+        visited.insert(curr.block_hash);
+
+        let b = get_block_unsafe(block_store, &curr.block_hash).await?;
+        if b.state.deploys.iter().any(|d| deploy_key_set.contains(&d.deploy.sig)) {
+            return Ok(Err(BlockStatus::InvalidRepeatDeploy));
+        }
+
+        let parents =
+            get_parent_metadatas_above_block_number(dag, &curr, earliest_block_number).await?;
+        for p in parents {
+            if !visited.contains(&p.block_hash) {
+                queue.push_back(p);
+            }
+        }
+    }
+    Ok(Ok(()))
+}
+
+/// Validate that the block's bond cache matches the proof-of-stake contract's bonds at the post
+/// state (port of `bondsCache`).
+pub async fn bonds_cache(
+    runtime: &RuntimeManager,
+    block: &BlockMessage,
+) -> Result<ValidBlockProcessing, String> {
+    let tuplespace_hash = StateHash::from_slice(&block.post_state_hash);
+    let computed_bonds = runtime.compute_bonds(&tuplespace_hash).await?;
+    if block.bonds == computed_bonds {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(BlockStatus::InvalidBondsCache))
+    }
+}
+
+/// Compose the effectful + pure checks (port of `blockSummary`).
 pub async fn block_summary(
     dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
     block: &BlockMessage,
     shard_id: &str,
     expiration_threshold: i64,
@@ -246,7 +319,7 @@ pub async fn block_summary(
             return Ok(Err(status));
         }
     }
-    Ok(Ok(()))
+    repeat_deploy(dag, block_store, block, expiration_threshold).await
 }
 
 #[cfg(test)]
@@ -351,12 +424,18 @@ mod tests {
 mod effectful_tests {
     use super::*;
     use async_trait::async_trait;
+    use rchain_block_storage::dag::codecs::{BlockHashCodec, BlockMessageCodec};
     use rchain_block_storage::dag::dag_storage::DeployId;
     use rchain_block_storage::dag::message_state::DagMessageState;
     use rchain_block_storage::dag::representation::DagRepresentation;
     use rchain_models::block_metadata::BlockMetadata;
-    use rchain_models::casper::protocol::casper_message::SignedDeployData;
+    use rchain_models::casper::protocol::casper_message::{
+        DeployData, PCost, ProcessedDeploy, SignedDeployData,
+    };
+    use rchain_shared::store::{InMemoryKeyValueStore, KeyValueStore};
+    use rchain_shared::typed_store::KeyValueTypedStoreCodec;
     use std::collections::BTreeSet;
+    use std::sync::Arc;
 
     fn hash(byte: u8) -> BlockHash {
         let mut bytes = [0u8; 32];
@@ -485,5 +564,75 @@ mod effectful_tests {
 
         b.bonds.clear();
         assert_eq!(neglected_invalid_block(&dag, &b).await.unwrap(), Ok(()));
+    }
+
+    fn deploy(sig: u8) -> ProcessedDeploy {
+        ProcessedDeploy {
+            deploy: SignedDeployData {
+                data: DeployData {
+                    term: "Nil".to_string(),
+                    timestamp: 0,
+                    phlo_price: 1,
+                    phlo_limit: 1,
+                    valid_after_block_number: 0,
+                    shard_id: "root".to_string(),
+                },
+                deployer: vec![],
+                sig: vec![sig],
+                sig_algorithm: "secp256k1".to_string(),
+            },
+            cost: PCost { cost: 0 },
+            deploy_log: vec![],
+            is_failed: false,
+            system_deploy_error: None,
+        }
+    }
+
+    async fn block_store(blocks: Vec<BlockMessage>) -> BlockStore {
+        let store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+            Arc::new(tokio::sync::Mutex::new(Box::new(
+                InMemoryKeyValueStore::default(),
+            ))),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        let pairs: Vec<(BlockHash, BlockMessage)> =
+            blocks.into_iter().map(|b| (b.block_hash, b)).collect();
+        store.put(&pairs).await;
+        store
+    }
+
+    #[tokio::test]
+    async fn repeat_deploy_detects_duplicate_sig_in_parent_chain() {
+        let genesis = hash(1);
+        let parent = hash(2);
+        let dag = mock(BTreeMap::from([
+            (genesis, meta(genesis, 0, 1, 0, false)),
+            (parent, meta(parent, 1, 1, 1, false)),
+        ]));
+
+        let mut genesis_block = block(1, 0, 0, vec![]);
+        genesis_block.block_hash = genesis;
+        genesis_block.state.deploys = vec![deploy(9)];
+        let mut parent_block = block(1, 1, 1, vec![genesis]);
+        parent_block.block_hash = parent;
+        parent_block.state.deploys = vec![deploy(1)];
+        let store = block_store(vec![genesis_block, parent_block]).await;
+
+        // Current block reuses the parent's deploy sig [1].
+        let mut current = block(1, 2, 2, vec![parent]);
+        current.state.deploys = vec![deploy(1)];
+        assert_eq!(
+            repeat_deploy(&dag, &store, &current, 100).await.unwrap(),
+            Err(BlockStatus::InvalidRepeatDeploy)
+        );
+
+        // Current block with a fresh deploy sig is valid.
+        let mut current = block(1, 2, 2, vec![parent]);
+        current.state.deploys = vec![deploy(7)];
+        assert_eq!(
+            repeat_deploy(&dag, &store, &current, 100).await.unwrap(),
+            Ok(())
+        );
     }
 }

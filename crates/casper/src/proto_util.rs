@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
@@ -12,6 +13,38 @@ use rchain_models::validator::Validator;
 /// `maxBlockNumberMetadata`).
 pub fn max_block_number_metadata(blocks: &[BlockMetadata]) -> i64 {
     blocks.iter().fold(-1, |acc, b| acc.max(b.block_num))
+}
+
+/// Look up a block's (non-failed) parent metadata (port of `ProtoUtil.getParentsMetadata`).
+pub async fn get_parents_metadata(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMetadata,
+) -> Result<Vec<BlockMetadata>, String> {
+    let mut parents = Vec::new();
+    for j in &b.justifications {
+        let meta = dag
+            .lookup(j)
+            .await?
+            .ok_or_else(|| format!("missing justification {}", j.to_hex()))?;
+        if !meta.validation_failed {
+            parents.push(meta);
+        }
+    }
+    Ok(parents)
+}
+
+/// Look up a block's parents with block number at or above `block_number` (port of
+/// `ProtoUtil.getParentMetadatasAboveBlockNumber`).
+pub async fn get_parent_metadatas_above_block_number(
+    dag: &dyn BlockDagStorage,
+    b: &BlockMetadata,
+    block_number: i64,
+) -> Result<Vec<BlockMetadata>, String> {
+    let parents = get_parents_metadata(dag, b).await?;
+    Ok(parents
+        .into_iter()
+        .filter(|p| p.block_num >= block_number)
+        .collect())
 }
 
 /// Create the hash of a `BlockMessage`; all fields except `sig` are included (port of `hashBlock`).
