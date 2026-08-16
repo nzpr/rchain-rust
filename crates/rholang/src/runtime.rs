@@ -21,6 +21,7 @@ use crate::accounting::CostAccounting;
 use crate::dispatch::RholangAndScalaDispatcher;
 use crate::env::Env;
 use crate::errors::RholangError;
+use crate::evaluate_result::EvaluateResult;
 use crate::reduce::DebruijnInterpreter;
 use crate::storage::{ChargingRSpace, RhoHistoryRepository};
 use crate::system_processes::{BlockData, FixedChannels, SystemProcesses};
@@ -171,6 +172,21 @@ impl RhoRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer.eval(par, env, rand, self.cost.as_ref())
+    }
+
+    /// Parse + run a rholang term (port of `evaluate`).
+    pub fn evaluate(
+        &self,
+        term: &str,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError> {
+        let par = crate::normalizer::source_to_adt(term)?;
+        self.inj(&par, &Env::new(), rand)?;
+        Ok(EvaluateResult {
+            cost: crate::accounting::Cost::new(0, "evaluate"),
+            errors: Vec::new(),
+            mergeable: BTreeSet::new(),
+        })
     }
 
     pub fn space(&self) -> &RhoSpace {

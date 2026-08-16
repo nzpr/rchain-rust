@@ -12,6 +12,7 @@ pub mod merging;
 pub mod protocol;
 pub mod proto_util;
 pub mod rholang;
+pub mod runtime_manager;
 pub mod validate;
 
 pub use conf::{CasperConf, GenesisBlockData};
