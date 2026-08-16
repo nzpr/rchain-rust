@@ -4,3 +4,4 @@
 
 pub mod data;
 pub mod merging;
+pub mod syntax;
