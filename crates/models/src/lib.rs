@@ -22,6 +22,7 @@ pub mod casper;
 pub mod comm;
 pub mod errors;
 pub mod fringe_data;
+pub mod pretty;
 mod proto;
 pub mod runtime;
 pub mod sorter;
