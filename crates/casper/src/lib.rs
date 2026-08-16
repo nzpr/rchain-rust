@@ -9,6 +9,7 @@ pub mod conf;
 pub mod dag;
 pub mod event_converter;
 pub mod merging;
+pub mod multi_parent_casper;
 pub mod protocol;
 pub mod proto_util;
 pub mod rholang;
@@ -16,5 +17,6 @@ pub mod runtime_manager;
 pub mod runtime_replay;
 pub mod system_deploy;
 pub mod validate;
+pub mod validator_identity;
 
 pub use conf::{CasperConf, GenesisBlockData};
