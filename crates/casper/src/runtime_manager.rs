@@ -1,6 +1,7 @@
 //! The runtime manager façade (port of `casper/rholang/RuntimeManager.scala`, read-only surface).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
@@ -15,10 +16,15 @@ use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::validator::Validator;
 use rchain_rholang::evaluate_result::EvaluateResult;
+use rchain_rholang::merging::{
+    calculate_num_channel_diff, encode_mergeable_key, get_number_with_rnd, DeployMergeableData,
+    NumberChannel,
+};
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::storage::RhoHistoryRepository;
 use rchain_rholang::system_processes::BlockData;
 use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
+use rchain_shared::typed_store::KeyValueTypedStore;
 
 use crate::event_converter::to_casper_event;
 use crate::rholang::{ReplayFailure, SystemDeployRuntimeResult, UserDeployRuntimeResult};
@@ -28,10 +34,14 @@ use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, Sys
 /// The runtime manager (port of `RuntimeManager`). Deploy execution (user deploys + system
 /// deploys), genesis/state computation, and bond/validator queries are implemented; replay is
 /// deferred pending the replay-runtime wiring.
+/// The mergeable-channel store (port of `RuntimeManager.MergeableStore`).
+pub type MergeableStore = Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<DeployMergeableData>>>;
+
 pub struct RuntimeManager {
     runtime: RhoRuntime,
     replay_runtime: ReplayRhoRuntime,
     history_repo: RhoHistoryRepository,
+    mergeable_store: MergeableStore,
 }
 
 impl RuntimeManager {
@@ -39,16 +49,22 @@ impl RuntimeManager {
         runtime: RhoRuntime,
         replay_runtime: ReplayRhoRuntime,
         history_repo: RhoHistoryRepository,
+        mergeable_store: MergeableStore,
     ) -> Self {
         RuntimeManager {
             runtime,
             replay_runtime,
             history_repo,
+            mergeable_store,
         }
     }
 
     pub fn get_history_repo(&self) -> &RhoHistoryRepository {
         &self.history_repo
+    }
+
+    pub fn get_mergeable_store(&self) -> &MergeableStore {
+        &self.mergeable_store
     }
 
     pub fn runtime(&self) -> &RhoRuntime {
@@ -57,6 +73,73 @@ impl RuntimeManager {
 
     pub fn replay_runtime(&self) -> &ReplayRhoRuntime {
         &self.replay_runtime
+    }
+
+    /// Load mergeable channels from the store (port of `loadMergeableChannels`).
+    pub async fn load_mergeable_channels(
+        &self,
+        state_hash: &[u8],
+        creator: &[u8],
+        seq_num: i64,
+    ) -> Result<Vec<NumberChannelsDiff>, String> {
+        let state_hash = Blake2b256Hash::from_byte_array(state_hash);
+        let key = encode_mergeable_key(&state_hash, creator, seq_num);
+        let vals = self.mergeable_store.get(&[key]).await?;
+        let res = vals.into_iter().next().flatten().ok_or_else(|| {
+            format!("Mergeable store invalid state hash {:?}.", state_hash)
+        })?;
+        Ok(res
+            .into_iter()
+            .map(|d| d.channels.into_iter().map(|c| (c.hash, c.diff)).collect())
+            .collect())
+    }
+
+    /// Convert final mergeable-channel values to diffs and persist them (port of
+    /// `saveMergeableChannels`).
+    pub async fn save_mergeable_channels(
+        &self,
+        post_state_hash: Blake2b256Hash,
+        creator: &[u8],
+        seq_num: i64,
+        channels_data: &[NumberChannelsDiff],
+        pre_state_hash: Blake2b256Hash,
+    ) -> Result<(), String> {
+        let diffs = self
+            .convert_number_channels_to_diff(channels_data, pre_state_hash)
+            .await?;
+        let deploy_channels: Vec<DeployMergeableData> = diffs
+            .into_iter()
+            .map(|data| DeployMergeableData {
+                channels: data
+                    .into_iter()
+                    .map(|(hash, diff)| NumberChannel { hash, diff })
+                    .collect(),
+            })
+            .collect();
+        let key = encode_mergeable_key(&post_state_hash, creator, seq_num);
+        self.mergeable_store.put(&[(key, deploy_channels)]).await;
+        Ok(())
+    }
+
+    /// Convert final number-channel values to per-deploy diffs (port of
+    /// `convertNumberChannelsToDiff`).
+    async fn convert_number_channels_to_diff(
+        &self,
+        channels_data: &[NumberChannelsDiff],
+        pre_state_hash: Blake2b256Hash,
+    ) -> Result<Vec<NumberChannelsDiff>, String> {
+        let history_reader = self.history_repo.get_history_reader(pre_state_hash).await;
+        let mut keys: BTreeSet<Blake2b256Hash> = BTreeSet::new();
+        for m in channels_data {
+            keys.extend(m.keys().copied());
+        }
+        let mut init_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
+        for k in &keys {
+            let data = history_reader.get_data(*k).await.map_err(|e| e.to_string())?;
+            let num = data.first().map(|d| get_number_with_rnd(&d.a).0).unwrap_or(0);
+            init_values.insert(*k, num);
+        }
+        Ok(calculate_num_channel_diff(channels_data, &init_values))
     }
 
     /// Read the `Par`s at a channel in the state identified by `hash` (port of `getData`).

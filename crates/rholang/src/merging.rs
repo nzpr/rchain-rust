@@ -18,6 +18,7 @@ use rchain_rspace::internal::Datum;
 use rchain_rspace::merger::channel_change::ChannelChange;
 use rchain_rspace::serializers::scodec_serialize::{decode_datum, encode_datum_bytes};
 use rchain_rspace::trace::event::Produce;
+use rchain_shared::typed_store::Codec;
 
 use crate::storage::RhoHistoryRepository;
 
@@ -131,4 +132,206 @@ pub async fn read_mergeable_values(
         out.insert(*ch, num);
     }
     Ok(out)
+}
+
+/// A single mergeable (number) channel diff (port of `NumberChannel`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NumberChannel {
+    pub hash: Blake2b256Hash,
+    pub diff: i64,
+}
+
+/// A deploy's mergeable-channel data (port of `DeployMergeableData`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeployMergeableData {
+    pub channels: Vec<NumberChannel>,
+}
+
+/// Zigzag-encode an `i64` into `u64`.
+pub fn zigzag_encode(n: i64) -> u64 {
+    ((n << 1) ^ (n >> 63)) as u64
+}
+
+/// LEB128 varint-encode a `u64`.
+pub fn varint_encode(mut n: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    while n >= 0x80 {
+        out.push((n as u8 & 0x7f) | 0x80);
+        n >>= 7;
+    }
+    out.push(n as u8);
+    out
+}
+
+/// scodec `vlong` — zigzag + LEB128 varint.
+pub fn vlong_encode(n: i64) -> Vec<u8> {
+    varint_encode(zigzag_encode(n))
+}
+
+fn uint16_be(n: u16) -> [u8; 2] {
+    n.to_be_bytes()
+}
+
+fn int64_be(n: i64) -> [u8; 8] {
+    n.to_be_bytes()
+}
+
+/// `variableSizeBytes(uint16, bytes)` — a 2-byte length prefix followed by the bytes.
+fn var_size_u16(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + 2);
+    out.extend_from_slice(&uint16_be(bytes.len() as u16));
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// Encode the mergeable-store key (port of `codecMergeableKey`).
+pub fn encode_mergeable_key(
+    state_hash: &Blake2b256Hash,
+    creator: &[u8],
+    seq_num: i64,
+) -> Vec<u8> {
+    let mut out = var_size_u16(state_hash.as_bytes());
+    out.extend(var_size_u16(creator));
+    out.extend(vlong_encode(seq_num));
+    out
+}
+
+/// Encode a deploy's mergeable-channel data (port of `deployMergeableDataCodec`).
+pub fn encode_deploy_mergeable_data(data: &DeployMergeableData) -> Vec<u8> {
+    let mut out = uint16_be(data.channels.len() as u16).to_vec();
+    for ch in &data.channels {
+        out.extend_from_slice(ch.hash.as_bytes());
+        out.extend_from_slice(&int64_be(ch.diff));
+    }
+    out
+}
+
+/// Encode a sequence of deploy mergeable data (port of `deployMergeableDataSeqCodec`).
+pub fn encode_deploy_mergeable_data_seq(seq: &[DeployMergeableData]) -> Vec<u8> {
+    let mut out = uint16_be(seq.len() as u16).to_vec();
+    for d in seq {
+        out.extend(encode_deploy_mergeable_data(d));
+    }
+    out
+}
+
+fn read_u16(bytes: &[u8], idx: &mut usize) -> Result<u16, String> {
+    if *idx + 2 > bytes.len() {
+        return Err("mergeable data: unexpected end of input".to_string());
+    }
+    let v = u16::from_be_bytes([bytes[*idx], bytes[*idx + 1]]);
+    *idx += 2;
+    Ok(v)
+}
+
+fn read_i64(bytes: &[u8], idx: &mut usize) -> Result<i64, String> {
+    if *idx + 8 > bytes.len() {
+        return Err("mergeable data: unexpected end of input".to_string());
+    }
+    let mut arr = [0u8; 8];
+    arr.copy_from_slice(&bytes[*idx..*idx + 8]);
+    *idx += 8;
+    Ok(i64::from_be_bytes(arr))
+}
+
+/// Decode a sequence of deploy mergeable data (inverse of `encode_deploy_mergeable_data_seq`).
+pub fn decode_deploy_mergeable_data_seq(bytes: &[u8]) -> Result<Vec<DeployMergeableData>, String> {
+    let mut idx = 0usize;
+    let count = read_u16(bytes, &mut idx)? as usize;
+    let mut seq = Vec::with_capacity(count);
+    for _ in 0..count {
+        let channel_count = read_u16(bytes, &mut idx)? as usize;
+        let mut channels = Vec::with_capacity(channel_count);
+        for _ in 0..channel_count {
+            if idx + 32 > bytes.len() {
+                return Err("mergeable data: unexpected end of input".to_string());
+            }
+            let hash = Blake2b256Hash::from_byte_array(&bytes[idx..idx + 32]);
+            idx += 32;
+            let diff = read_i64(bytes, &mut idx)?;
+            channels.push(NumberChannel { hash, diff });
+        }
+        seq.push(DeployMergeableData { channels });
+    }
+    Ok(seq)
+}
+
+/// A codec for the mergeable store value `Vec<DeployMergeableData>`.
+pub struct DeployMergeableDataCodec;
+
+impl Codec<Vec<DeployMergeableData>> for DeployMergeableDataCodec {
+    fn encode(&self, value: &Vec<DeployMergeableData>) -> Vec<u8> {
+        encode_deploy_mergeable_data_seq(value)
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<Vec<DeployMergeableData>, String> {
+        decode_deploy_mergeable_data_seq(bytes)
+    }
+}
+
+/// Convert final number-channel values to per-deploy diffs (port of `calculateNumChannelDiff`).
+///
+/// `init_values` are the pre-state values for every channel key (default `0` when absent).
+pub fn calculate_num_channel_diff(
+    channel_values: &[BTreeMap<Blake2b256Hash, i64>],
+    init_values: &BTreeMap<Blake2b256Hash, i64>,
+) -> Vec<BTreeMap<Blake2b256Hash, i64>> {
+    let mut prev_vals = init_values.clone();
+    let mut result = Vec::with_capacity(channel_values.len());
+    for end_vals in channel_values {
+        let mut diff_map = BTreeMap::new();
+        for (ch, end_val) in end_vals {
+            if let Some(prev) = prev_vals.get(ch) {
+                diff_map.insert(*ch, end_val - prev);
+            }
+        }
+        for (ch, end_val) in end_vals {
+            prev_vals.insert(*ch, *end_val);
+        }
+        result.push(diff_map);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn h(byte: u8) -> Blake2b256Hash {
+        Blake2b256Hash::from_bytes([byte; 32])
+    }
+
+    #[test]
+    fn mergeable_data_round_trips() {
+        let seq = vec![
+            DeployMergeableData {
+                channels: vec![NumberChannel { hash: h(1), diff: 10 }],
+            },
+            DeployMergeableData {
+                channels: vec![
+                    NumberChannel { hash: h(1), diff: -5 },
+                    NumberChannel { hash: h(2), diff: 7 },
+                ],
+            },
+        ];
+        let bytes = encode_deploy_mergeable_data_seq(&seq);
+        assert_eq!(decode_deploy_mergeable_data_seq(&bytes).unwrap(), seq);
+    }
+
+    #[test]
+    fn calculate_diff_accumulates_values() {
+        let a = h(1);
+        let values = vec![
+            BTreeMap::from([(a, 20i64)]),
+            BTreeMap::from([(a, 25i64)]),
+            BTreeMap::from([(a, 15i64)]),
+        ];
+        let init = BTreeMap::from([(a, 10i64)]);
+        let diffs = calculate_num_channel_diff(&values, &init);
+        assert_eq!(diffs, vec![
+            BTreeMap::from([(a, 10i64)]),
+            BTreeMap::from([(a, 5i64)]),
+            BTreeMap::from([(a, -10i64)]),
+        ]);
+    }
 }

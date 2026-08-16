@@ -7,14 +7,16 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 
+use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::finalizer::Message;
 use rchain_block_storage::dag::message_map;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
-    Event, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
+    BlockMessage, Event, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
 use rchain_models::ast::Par;
 use rchain_models::fringe_data::FringeData;
@@ -36,6 +38,7 @@ use rchain_sdk::dag::merging::{
 use rchain_shared::serialize::Serialize;
 
 use crate::event_converter::to_rspace_event;
+use crate::runtime_manager::RuntimeManager;
 
 /// A deploy id paired with its execution cost (port of `DeployIdWithCost`).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -408,6 +411,50 @@ fn sys_deploy_id(block_hash: &BlockHash, prefix: u8) -> Vec<u8> {
     let mut id = block_hash.as_bytes().to_vec();
     id.push(prefix);
     id
+}
+
+/// The in-memory block-index cache (port of `BlockIndex.cache`).
+static BLOCK_INDEX_CACHE: OnceLock<Mutex<BTreeMap<BlockHash, BlockIndex>>> = OnceLock::new();
+
+async fn get_block_unsafe(block_store: &BlockStore, hash: &BlockHash) -> Result<BlockMessage, String> {
+    let mut vals = block_store.get(&[*hash]).await?;
+    vals.pop()
+        .flatten()
+        .ok_or_else(|| format!("missing block {}", hash.to_hex()))
+}
+
+impl BlockIndex {
+    /// Load (or compute + cache) a block index (port of `BlockIndex.getBlockIndex`).
+    pub async fn get_block_index(
+        runtime: &RuntimeManager,
+        block_store: &BlockStore,
+        block_hash: BlockHash,
+    ) -> Result<BlockIndex, String> {
+        let cache = BLOCK_INDEX_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+        if let Some(idx) = cache.lock().unwrap().get(&block_hash) {
+            return Ok(idx.clone());
+        }
+
+        let block = get_block_unsafe(block_store, &block_hash).await?;
+        let sender = block.sender.as_bytes().to_vec();
+        let mergeable_chs = runtime
+            .load_mergeable_channels(&block.post_state_hash, &sender, block.seq_num)
+            .await?;
+
+        let index = BlockIndex::apply(
+            block.block_hash,
+            &block.state.deploys,
+            &block.state.system_deploys,
+            Blake2b256Hash::from_byte_array(&block.pre_state_hash),
+            Blake2b256Hash::from_byte_array(&block.post_state_hash),
+            runtime.get_history_repo(),
+            &mergeable_chs,
+        )
+        .await?;
+
+        cache.lock().unwrap().insert(block_hash, index.clone());
+        Ok(index)
+    }
 }
 
 /// The scope of a merge: final (immutable) and conflict (alterable) blocks (port of `MergeScope`).
