@@ -4,5 +4,6 @@
 //! (no internal dependencies) and carries two formal laws from [`spec/INVENTORY.md`]:
 //! Law 14 (the >2/3 supermajority threshold) and Law 17 (deterministic merge/conflict resolution).
 
+pub mod block;
 pub mod consensus;
 pub mod dag;
