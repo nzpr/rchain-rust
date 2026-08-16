@@ -10,7 +10,7 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 
 | Crate | Source module | Status |
 |-------|---------------|--------|
-| `sdk` | `sdk/` | **done** (root leaf; Laws 14 & 17; DAG interface: `BlockRequester`/`DagManager`/`DagView`/`DagData`) |
+| `sdk` | `sdk/` | **done** (root leaf; Laws 14 & 17; DAG interface: `BlockRequester`/`DagManager`/`DagView`/`DagData` + Casper validation syntax) |
 | `shared` | `shared/` | **core done** (Base16/Serialize/DagOps/store); LMDB FFI deferred |
 | `regex` | `regex/` | **done** (FSM engine + regex AST/parser + path-to-regex tokenizer) |
 | `crypto` | `crypto/` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519) |

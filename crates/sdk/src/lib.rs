@@ -5,5 +5,6 @@
 //! Law 14 (the >2/3 supermajority threshold) and Law 17 (deterministic merge/conflict resolution).
 
 pub mod block;
+pub mod casper_syntax;
 pub mod consensus;
 pub mod dag;
