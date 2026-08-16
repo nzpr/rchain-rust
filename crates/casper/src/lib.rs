@@ -6,6 +6,7 @@
 pub mod block_metadata_store;
 pub mod block_random_seed;
 pub mod block_status;
+pub mod blocks;
 pub mod bonds_parser;
 pub mod conf;
 pub mod construct_deploy;
