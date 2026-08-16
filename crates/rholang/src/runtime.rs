@@ -10,7 +10,7 @@ use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{Bundle, Expr, Par, Var};
 use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
-use rchain_rspace::checkpoint::Checkpoint;
+use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::i_space::ISpace;
 use rchain_rspace::internal::{Datum, Row, WaitingContinuation};
@@ -228,6 +228,21 @@ impl RhoRuntime {
 
     pub async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
         self.space.reset(root).await
+    }
+
+    /// Capture a soft (in-memory) checkpoint for rollback (port of `createSoftCheckpoint`).
+    pub async fn create_soft_checkpoint(
+        &self,
+    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+        self.space.create_soft_checkpoint().await
+    }
+
+    /// Roll back to a soft checkpoint (port of `revertToSoftCheckpoint`).
+    pub async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    ) {
+        self.space.revert_to_soft_checkpoint(checkpoint).await
     }
 
     pub async fn get_data(
