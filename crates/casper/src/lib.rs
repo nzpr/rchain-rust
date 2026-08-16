@@ -17,6 +17,7 @@ pub mod merging;
 pub mod multi_parent_casper;
 pub mod protocol;
 pub mod proto_util;
+pub mod reporting;
 pub mod rholang;
 pub mod runtime_manager;
 pub mod runtime_replay;
