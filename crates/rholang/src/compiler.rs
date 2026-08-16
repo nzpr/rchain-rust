@@ -277,6 +277,9 @@ pub struct ProcVisitInputs {
     pub par: Par,
     pub bound_map_chain: BoundMapChain<VarSort>,
     pub free_map: FreeMap<VarSort>,
+    /// The normalizer environment: URI names (e.g. `sys:casper:deployerId`) to `Par` values, used
+    /// to populate `New.injections`.
+    pub env: BTreeMap<String, Par>,
 }
 
 /// Output of the process normalizer (port of `ProcVisitOutputs`).
@@ -291,6 +294,7 @@ pub struct ProcVisitOutputs {
 pub struct NameVisitInputs {
     pub bound_map_chain: BoundMapChain<VarSort>,
     pub free_map: FreeMap<VarSort>,
+    pub env: BTreeMap<String, Par>,
 }
 
 /// Output of the name normalizer (port of `NameVisitOutputs`).
@@ -305,6 +309,7 @@ pub struct NameVisitOutputs {
 pub struct CollectVisitInputs {
     pub bound_map_chain: BoundMapChain<VarSort>,
     pub free_map: FreeMap<VarSort>,
+    pub env: BTreeMap<String, Par>,
 }
 
 /// Output of the collection normalizer (port of `CollectVisitOutputs`).

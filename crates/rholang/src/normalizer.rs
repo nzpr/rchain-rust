@@ -135,7 +135,8 @@ pub fn normalize_name(n: &Name, input: NameVisitInputs) -> Result<NameVisitOutpu
                     par: Par::default(),
                     bound_map_chain: input.bound_map_chain,
                     free_map: input.free_map,
-                },
+                        env: input.env.clone(),
+    },
             )?;
             Ok(NameVisitOutputs {
                 par: result.par,
@@ -167,9 +168,9 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
                 par,
                 bound_map_chain,
                 free_map,
+                env,
             } = input;
-            let name_result =
-                normalize_name(name, NameVisitInputs { bound_map_chain, free_map })?;
+            let name_result = normalize_name(name, NameVisitInputs { bound_map_chain, free_map, env })?;
             Ok(ProcVisitOutputs {
                 par: par_concat(&par, &name_result.par),
                 free_map: name_result.free_map,
@@ -177,11 +178,13 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
         }
         Proc::PPar(l, r) => {
             let bound_map_chain = input.bound_map_chain.clone();
+            let env = input.env.clone();
             let result = normalize_proc(l, input)?;
             let chained = ProcVisitInputs {
                 par: result.par,
                 bound_map_chain,
                 free_map: result.free_map,
+                env,
             };
             normalize_proc(r, chained)
         }
@@ -227,7 +230,8 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
                 CollectVisitInputs {
                     bound_map_chain: input.bound_map_chain.clone(),
                     free_map: input.free_map.clone(),
-                },
+                        env: input.env.clone(),
+    },
             )?;
             Ok(ProcVisitOutputs {
                 par: prepend_expr(&input.par, collect_result.expr, input.bound_map_chain.depth()),
@@ -346,7 +350,8 @@ fn normalize_negation(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::empty(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let connective = Connective::ConnNot(Box::new(body.par.clone()));
     Ok(ProcVisitOutputs {
@@ -366,7 +371,8 @@ fn normalize_conjunction(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let right = normalize_proc(
         r,
@@ -374,7 +380,8 @@ fn normalize_conjunction(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: left.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let connective = match single_connective(&left.par) {
         Some(Connective::ConnAnd(body)) => {
@@ -403,7 +410,8 @@ fn normalize_disjunction(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::empty(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let right = normalize_proc(
         r,
@@ -411,7 +419,8 @@ fn normalize_disjunction(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: FreeMap::empty(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let connective = match single_connective(&left.par) {
         Some(Connective::ConnOr(body)) => {
@@ -462,7 +471,8 @@ fn unary_exp(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     Ok(ProcVisitOutputs {
         par: prepend_expr(
@@ -486,7 +496,8 @@ fn binary_exp(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let right = normalize_proc(
         r,
@@ -494,7 +505,8 @@ fn binary_exp(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: left.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     Ok(ProcVisitOutputs {
         par: prepend_expr(
@@ -520,7 +532,8 @@ fn normalize_pmatches(
             par: Par::default(),
             bound_map_chain: bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let right = normalize_proc(
         r,
@@ -528,7 +541,8 @@ fn normalize_pmatches(
             par: Par::default(),
             bound_map_chain: bound_map_chain.push(),
             free_map: FreeMap::empty(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     Ok(ProcVisitOutputs {
         par: prepend_expr(
@@ -625,14 +639,15 @@ fn normalize_new(
             par: Par::default(),
             bound_map_chain: new_env,
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let n = New {
         bind_count: new_count,
         p: Box::new(body_result.par.clone()),
         uri: uris,
-        injections: BTreeMap::new(),
+        injections: input.env.clone(),
         locally_free: AlwaysEqual(from_free(&body_result.par.locally_free.0, new_count)),
     };
     Ok(ProcVisitOutputs {
@@ -654,7 +669,8 @@ fn normalize_match(
             par: Par::default(),
             bound_map_chain: bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let mut match_cases: Vec<MatchCase> = Vec::new();
@@ -669,7 +685,8 @@ fn normalize_match(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.push(),
                 free_map: FreeMap::empty(),
-            },
+                    env: input.env.clone(),
+    },
         )?;
         let case_env = input.bound_map_chain.absorb_free(&pattern_result.free_map);
         let bound_count = pattern_result.free_map.count_no_wildcards();
@@ -679,7 +696,8 @@ fn normalize_match(
                 par: Par::default(),
                 bound_map_chain: case_env,
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         match_cases.insert(
             0,
@@ -747,7 +765,8 @@ fn normalize_contr(
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let mut formal_pars: Vec<Par> = Vec::new();
@@ -759,7 +778,8 @@ fn normalize_contr(
             NameVisitInputs {
                 bound_map_chain: input.bound_map_chain.push(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         fail_on_invalid_connective(&input, &res)?;
         formal_pars.insert(0, res.par.clone());
@@ -776,7 +796,8 @@ fn normalize_contr(
             par: Par::default(),
             bound_map_chain: new_env,
             free_map: name_result.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let receive = Receive {
@@ -814,7 +835,8 @@ fn normalize_send(
         NameVisitInputs {
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let mut data_pars: Vec<Par> = Vec::new();
@@ -828,7 +850,8 @@ fn normalize_send(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         data_pars.insert(0, result.par.clone());
         data_locally_free = union_free(&data_locally_free, &result.par.locally_free.0);
@@ -866,7 +889,8 @@ fn normalize_method(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.clone(),
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
     let target = target_result.par.clone();
 
@@ -881,7 +905,8 @@ fn normalize_method(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         arg_pars.insert(0, result.par.clone());
         arg_locally_free = union_free(&arg_locally_free, &result.par.locally_free.0);
@@ -911,6 +936,7 @@ fn normalize_if(
 ) -> Result<ProcVisitOutputs, RholangError> {
     let input_par = input.par.clone();
     let bound_map_chain = input.bound_map_chain.clone();
+    let env = input.env.clone();
     let target = normalize_proc(value, input)?;
     let true_result = normalize_proc(
         true_body,
@@ -918,6 +944,7 @@ fn normalize_if(
             par: Par::default(),
             bound_map_chain: bound_map_chain.clone(),
             free_map: target.free_map.clone(),
+            env: env.clone(),
         },
     )?;
     let false_result = normalize_proc(
@@ -926,6 +953,7 @@ fn normalize_if(
             par: Par::default(),
             bound_map_chain,
             free_map: true_result.free_map.clone(),
+            env,
         },
     )?;
 
@@ -970,7 +998,8 @@ fn normalize_bundle(
             par: Par::default(),
             bound_map_chain,
             free_map: input.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let (write_flag, read_flag) = match kind {
@@ -1103,7 +1132,8 @@ fn normalize_input(
             NameVisitInputs {
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map: sources_free,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         source_pars.push(res.par.clone());
         sources_free = res.free_map;
@@ -1123,7 +1153,8 @@ fn normalize_input(
                 NameVisitInputs {
                     bound_map_chain: input.bound_map_chain.push(),
                     free_map: pattern_free,
-                },
+                        env: input.env.clone(),
+    },
             )?;
             fail_on_invalid_connective(&input, &res)?;
             pattern_pars.push(res.par.clone());
@@ -1174,7 +1205,8 @@ fn normalize_input(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.absorb_free(&receive_binds_free_map),
             free_map: sources_free,
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let bind_count = receive_binds_free_map.count_no_wildcards();
@@ -1237,7 +1269,8 @@ fn normalize_let(
             par: Par::default(),
             bound_map_chain: input.bound_map_chain.absorb_free(&pattern_par.free_map),
             free_map: value_par.free_map.clone(),
-        },
+                env: input.env.clone(),
+    },
     )?;
 
     let m = Match {
@@ -1275,7 +1308,8 @@ fn list_proc_to_elist(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         pars.push(result.par.clone());
         locally_free = union_free(&locally_free, &result.par.locally_free.0);
@@ -1307,7 +1341,8 @@ fn list_name_to_elist(
             NameVisitInputs {
                 bound_map_chain: input.bound_map_chain.push(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         pars.push(res.par.clone());
         locally_free = union_free(&locally_free, &res.par.locally_free.0);
@@ -1341,7 +1376,8 @@ fn fold_collection(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         pars.push(result.par.clone());
         locally_free = union_free(&locally_free, &result.par.locally_free.0);
@@ -1371,7 +1407,8 @@ fn fold_collection_map(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map,
-            },
+                    env: input.env.clone(),
+    },
         )?;
         let val_result = normalize_proc(
             &kv.1,
@@ -1379,7 +1416,8 @@ fn fold_collection_map(
                 par: Par::default(),
                 bound_map_chain: input.bound_map_chain.clone(),
                 free_map: key_result.free_map.clone(),
-            },
+                    env: input.env.clone(),
+    },
         )?;
         pairs.push((key_result.par.clone(), val_result.par.clone()));
         locally_free = union_free(&locally_free, &key_result.par.locally_free.0);
@@ -1465,26 +1503,33 @@ pub fn source_to_ast(source: &str) -> Result<Proc, RholangError> {
 }
 
 /// Normalize a `Proc` into a sorted `Par` (port of `Compiler.astToADT`).
-pub fn ast_to_adt(proc: &Proc) -> Result<Par, RholangError> {
-    let par = normalize_term(proc)?;
+pub fn ast_to_adt(proc: &Proc, env: &BTreeMap<String, Par>) -> Result<Par, RholangError> {
+    let par = normalize_term(proc, env)?;
     Ok(sort_par_term(&par))
 }
 
-/// Parse + normalize source into a sorted `Par` (port of `Compiler.sourceToADT`).
+/// Parse + normalize source into a sorted `Par` with an empty normalizer environment (port of
+/// `Compiler.sourceToADT`).
 pub fn source_to_adt(source: &str) -> Result<Par, RholangError> {
+    source_to_adt_with_env(source, &BTreeMap::new())
+}
+
+/// Parse + normalize source with an explicit normalizer environment.
+pub fn source_to_adt_with_env(source: &str, env: &BTreeMap<String, Par>) -> Result<Par, RholangError> {
     let proc = source_to_ast(source)?;
-    ast_to_adt(&proc)
+    ast_to_adt(&proc, env)
 }
 
 /// Normalize a top-level process, rejecting top-level free variables, logical connectives, and
 /// wildcards (port of `Compiler.normalizeTerm`).
-fn normalize_term(term: &Proc) -> Result<Par, RholangError> {
+fn normalize_term(term: &Proc, env: &BTreeMap<String, Par>) -> Result<Par, RholangError> {
     let normalized = normalize_proc(
         term,
         ProcVisitInputs {
             par: Par::default(),
             bound_map_chain: BoundMapChain::empty(),
             free_map: FreeMap::empty(),
+            env: env.clone(),
         },
     )?;
     if normalized.free_map.count() > 0 {
@@ -1558,6 +1603,7 @@ mod tests {
             par: Par::default(),
             bound_map_chain: crate::compiler::BoundMapChain::empty(),
             free_map: FreeMap::empty(),
+            env: BTreeMap::new(),
         })
         .unwrap();
         assert_eq!(out.par.exprs, vec![Expr::GInt(42)]);
@@ -1573,6 +1619,7 @@ mod tests {
             par: Par::default(),
             bound_map_chain: crate::compiler::BoundMapChain::empty(),
             free_map: FreeMap::empty(),
+            env: BTreeMap::new(),
         })
         .unwrap();
         assert_eq!(
