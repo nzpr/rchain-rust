@@ -25,6 +25,7 @@ pub mod fringe_data;
 mod proto;
 pub mod runtime;
 pub mod sorter;
+pub mod string_syntax;
 pub mod types;
 pub mod validator;
 pub mod wire;
