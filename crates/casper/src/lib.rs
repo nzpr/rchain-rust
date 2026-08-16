@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod proto_util;
 pub mod rholang;
 pub mod runtime_manager;
+pub mod runtime_replay;
 pub mod system_deploy;
 pub mod validate;
 

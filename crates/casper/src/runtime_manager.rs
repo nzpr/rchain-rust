@@ -15,12 +15,14 @@ use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::validator::Validator;
 use rchain_rholang::evaluate_result::EvaluateResult;
-use rchain_rholang::runtime::RhoRuntime;
+use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::storage::RhoHistoryRepository;
 use rchain_rholang::system_processes::BlockData;
+use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
 
 use crate::event_converter::to_casper_event;
-use crate::rholang::{SystemDeployRuntimeResult, UserDeployRuntimeResult};
+use crate::rholang::{ReplayFailure, SystemDeployRuntimeResult, UserDeployRuntimeResult};
+use crate::runtime_replay::RuntimeReplayOps;
 use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, SystemDeployUserError};
 
 /// The runtime manager (port of `RuntimeManager`). Deploy execution (user deploys + system
@@ -28,13 +30,19 @@ use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, Sys
 /// deferred pending the replay-runtime wiring.
 pub struct RuntimeManager {
     runtime: RhoRuntime,
+    replay_runtime: ReplayRhoRuntime,
     history_repo: RhoHistoryRepository,
 }
 
 impl RuntimeManager {
-    pub fn new(runtime: RhoRuntime, history_repo: RhoHistoryRepository) -> Self {
+    pub fn new(
+        runtime: RhoRuntime,
+        replay_runtime: ReplayRhoRuntime,
+        history_repo: RhoHistoryRepository,
+    ) -> Self {
         RuntimeManager {
             runtime,
+            replay_runtime,
             history_repo,
         }
     }
@@ -45,6 +53,10 @@ impl RuntimeManager {
 
     pub fn runtime(&self) -> &RhoRuntime {
         &self.runtime
+    }
+
+    pub fn replay_runtime(&self) -> &ReplayRhoRuntime {
+        &self.replay_runtime
     }
 
     /// Read the `Par`s at a channel in the state identified by `hash` (port of `getData`).
@@ -310,6 +322,29 @@ impl RuntimeManager {
             processed_system_deploys.push(processed);
         }
         Ok((state_hash, processed_deploys, processed_system_deploys))
+    }
+
+    /// Replay processed deploys + system deploys and verify the replayed state hash + mergeable
+    /// channels (port of `replayComputeState`).
+    pub async fn replay_compute_state(
+        &self,
+        start_hash: &Blake2b256Hash,
+        terms: &[ProcessedDeploy],
+        system_deploys: &[ProcessedSystemDeploy],
+        rand: &Blake2b512Random,
+        block_data: BlockData,
+        with_cost_accounting: bool,
+    ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
+        RuntimeReplayOps::new(&self.replay_runtime)
+            .replay_compute_state(
+                start_hash,
+                rand,
+                terms,
+                system_deploys,
+                block_data,
+                with_cost_accounting,
+            )
+            .await
     }
 
     /// Run a read-only exploratory deploy and capture its result (port of `playExploratoryDeploy`).
