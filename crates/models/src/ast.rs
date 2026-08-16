@@ -10,6 +10,22 @@ use std::hash::{Hash, Hasher};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 
+/// serde helpers encoding byte vectors as lowercase hex (the Scala `encodeByteString`/
+/// `decodeByteString` via `Base16`).
+mod hex_serde {
+    use rchain_shared::base16;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base16::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        base16::decode(&s).ok_or_else(|| serde::de::Error::custom("invalid hex"))
+    }
+}
+
 /// A bitset of free-variable levels (the Scala `scala.collection.immutable.BitSet`).
 pub type BitSet = Vec<i32>;
 
@@ -200,7 +216,7 @@ pub enum Expr {
     GBigInt(BigInt),
     GString(String),
     GUri(String),
-    GByteArray(Vec<u8>),
+    GByteArray(#[serde(with = "hex_serde")] Vec<u8>),
     ENot(Box<Par>),
     ENeg(Box<Par>),
     EVar(Box<Var>),
@@ -326,16 +342,19 @@ pub enum GUnforgeable {
 
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct GPrivate {
+    #[serde(with = "hex_serde")]
     pub id: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct GDeployId {
+    #[serde(with = "hex_serde")]
     pub sig: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct GDeployerId {
+    #[serde(with = "hex_serde")]
     pub public_key: Vec<u8>,
 }
 
@@ -412,5 +431,14 @@ mod tests {
         let ps2: ParSet = serde_json::from_str(&json).unwrap();
         assert_eq!(ps2.ps.len(), 1);
         assert!(!ps2.connective_used);
+    }
+
+    #[test]
+    fn byte_array_serializes_as_hex() {
+        let expr = Expr::GByteArray(vec![0xde, 0xad, 0xbe, 0xef]);
+        let json = serde_json::to_string(&expr).unwrap();
+        assert_eq!(json, "{\"GByteArray\":\"deadbeef\"}");
+        let expr2: Expr = serde_json::from_str(&json).unwrap();
+        assert_eq!(expr, expr2);
     }
 }
