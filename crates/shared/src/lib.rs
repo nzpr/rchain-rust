@@ -8,6 +8,7 @@
 
 pub mod base16;
 pub mod dag;
+pub mod key_value_cache;
 pub mod long_ops;
 pub mod path_ops;
 pub mod seq_ops;
