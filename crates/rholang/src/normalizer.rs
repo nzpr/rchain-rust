@@ -17,11 +17,11 @@ use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
     prepend_new, prepend_receive, prepend_send, single_bundle, single_connective,
 };
-use rchain_models::sorter::sort_receive_binds_with;
+use rchain_models::sorter::{sort_par_term, sort_receive_binds_with};
 
 use crate::compiler::{
-    CollectVisitInputs, CollectVisitOutputs, FreeMap, NameVisitInputs, NameVisitOutputs,
-    ProcVisitInputs, ProcVisitOutputs, VarSort,
+    BoundMapChain, CollectVisitInputs, CollectVisitOutputs, FreeMap, NameVisitInputs,
+    NameVisitOutputs, ProcVisitInputs, ProcVisitOutputs, VarSort,
 };
 use crate::errors::{RholangError, SourcePosition};
 use crate::proc_ast::{
@@ -1459,6 +1459,51 @@ fn normalize_collection(
     }
 }
 
+/// Parse source into a `Proc` (port of `Compiler.sourceToAST`).
+pub fn source_to_ast(source: &str) -> Result<Proc, RholangError> {
+    crate::parser::parse(source)
+}
+
+/// Normalize a `Proc` into a sorted `Par` (port of `Compiler.astToADT`).
+pub fn ast_to_adt(proc: &Proc) -> Result<Par, RholangError> {
+    let par = normalize_term(proc)?;
+    Ok(sort_par_term(&par))
+}
+
+/// Parse + normalize source into a sorted `Par` (port of `Compiler.sourceToADT`).
+pub fn source_to_adt(source: &str) -> Result<Par, RholangError> {
+    let proc = source_to_ast(source)?;
+    ast_to_adt(&proc)
+}
+
+/// Normalize a top-level process, rejecting top-level free variables, logical connectives, and
+/// wildcards (port of `Compiler.normalizeTerm`).
+fn normalize_term(term: &Proc) -> Result<Par, RholangError> {
+    let normalized = normalize_proc(
+        term,
+        ProcVisitInputs {
+            par: Par::default(),
+            bound_map_chain: BoundMapChain::empty(),
+            free_map: FreeMap::empty(),
+        },
+    )?;
+    if normalized.free_map.count() > 0 {
+        if normalized.free_map.wildcards.is_empty() && normalized.free_map.connectives.is_empty() {
+            Err(RholangError::TopLevelFreeVariablesNotAllowedError(
+                normalized.par,
+            ))
+        } else if !normalized.free_map.connectives.is_empty() {
+            Err(RholangError::TopLevelLogicalConnectivesNotAllowedError(
+                normalized.par,
+            ))
+        } else {
+            Err(RholangError::TopLevelWildcardsNotAllowedError(normalized.par))
+        }
+    } else {
+        Ok(normalized.par)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1537,5 +1582,30 @@ mod tests {
                 Box::new(Par { exprs: vec![Expr::GInt(2)], ..Par::default() }),
             )]
         );
+    }
+
+    #[test]
+    fn compiler_round_trips_int() {
+        let par = source_to_adt("42").unwrap();
+        assert_eq!(par.exprs, vec![Expr::GInt(42)]);
+    }
+
+    #[test]
+    fn compiler_round_trips_send() {
+        let par = source_to_adt("new x in { x!(1) }").unwrap();
+        assert_eq!(par.news.len(), 1);
+        assert_eq!(par.news[0].p.sends.len(), 1);
+        assert_eq!(par.news[0].p.sends[0].data, vec![Par {
+            exprs: vec![Expr::GInt(1)],
+            ..Par::default()
+        }]);
+    }
+
+    #[test]
+    fn compiler_rejects_top_level_free_var() {
+        assert!(matches!(
+            source_to_adt("x!(1)"),
+            Err(RholangError::TopLevelFreeVariablesNotAllowedError(_))
+        ));
     }
 }
