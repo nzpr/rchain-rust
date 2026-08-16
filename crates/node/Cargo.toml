@@ -13,6 +13,8 @@ rchain-casper = { path = "../casper" }
 rchain-comm = { path = "../comm" }
 rchain-crypto = { path = "../crypto" }
 rchain-models = { path = "../models" }
+rchain-rholang = { path = "../rholang" }
+rchain-rspace = { path = "../rspace" }
 rchain-sdk = { path = "../sdk" }
 rchain-shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }

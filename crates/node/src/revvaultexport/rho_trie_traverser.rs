@@ -1,13 +1,12 @@
 //! Rholang trie traversal (port of `node/revvaultexport/RhoTrieTraverser.scala`).
-//!
-//! The effectful traversal (`traverseTrie` + `TreeHashMapGetter`) is deferred; only the pure
-//! key/node helpers are ported.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use rchain_crypto::hash::keccak256;
-use rchain_models::ast::{EList, Expr, Par, ParMap};
+use rchain_models::ast::{EList, ETuple, Expr, Par, ParMap};
 use rchain_models::rholang::RhoType::RhoByteArray;
+use rchain_rholang::runtime::RhoRuntime;
+use rchain_rspace::errors::RSpaceError;
 use rchain_shared::serialize::Serialize;
 
 fn keccak_hash(input: &[u8]) -> Par {
@@ -85,6 +84,97 @@ pub fn vec_par_map_to_map<K: Ord, V>(
         }
     }
     out
+}
+
+/// A trie node value: a child pointer (int) or a leaf map (port of the `Left`/`Right` in
+/// `TreeHashMapGetter`).
+enum NodeValue {
+    Pointer(i64),
+    Map(ParMap),
+}
+
+fn node_map_list(map_par: &Par, store_token_par: &Par, nyb_list: &[i32]) -> Par {
+    let map_with_nyb = Par {
+        exprs: vec![Expr::ETuple(ETuple {
+            ps: vec![map_par.clone(), node_list(nyb_list)],
+            ..ETuple::default()
+        })],
+        ..Par::default()
+    };
+    node_map_store(&map_with_nyb, store_token_par)
+}
+
+fn node_map_store(map_with_nyb: &Par, store_token_par: &Par) -> Par {
+    Par {
+        exprs: vec![Expr::EList(EList {
+            ps: vec![map_with_nyb.clone(), store_token_par.clone()],
+            ..EList::default()
+        })],
+        ..Par::default()
+    }
+}
+
+/// Extend a key with each set bit of `value` (port of `extendKey`).
+fn extend_key(head: &[i32], value: i64) -> Vec<Vec<i32>> {
+    (0..16i32)
+        .filter(|i| (value >> i) & 1 != 0)
+        .map(|i| {
+            let mut new_head = head.to_vec();
+            new_head.push(i);
+            new_head
+        })
+        .collect()
+}
+
+/// Read the trie node at `nyb_list` (port of `TreeHashMapGetter`).
+async fn tree_hash_map_getter(
+    map_par: &Par,
+    store_token_par: &Par,
+    nyb_list: &[i32],
+    runtime: &RhoRuntime,
+) -> Result<Option<NodeValue>, RSpaceError> {
+    let channel = node_map_list(map_par, store_token_par, nyb_list);
+    let data = runtime.get_data(&channel).await?;
+    Ok(data.first().and_then(|datum| {
+        let head_par = match datum.a.pars.as_slice() {
+            [single] => single,
+            _ => return None,
+        };
+        let head_expr = match head_par.exprs.as_slice() {
+            [single] => single,
+            _ => return None,
+        };
+        match head_expr {
+            Expr::GInt(i) => Some(NodeValue::Pointer(*i)),
+            Expr::EMap(value) => Some(NodeValue::Map(value.clone())),
+            _ => None,
+        }
+    }))
+}
+
+/// Traverse the TreeHashMap trie and collect the leaf maps (port of `traverseTrie`).
+pub async fn traverse_trie(
+    depth: i32,
+    map_par: &Par,
+    store_token_par: &Par,
+    runtime: &RhoRuntime,
+) -> Result<Vec<ParMap>, RSpaceError> {
+    let depth = depth as usize * 2;
+    let mut keys: VecDeque<Vec<i32>> = VecDeque::from([Vec::new()]);
+    let mut collected: Vec<ParMap> = Vec::new();
+
+    while let Some(key) = keys.pop_front() {
+        match tree_hash_map_getter(map_par, store_token_par, &key, runtime).await? {
+            Some(NodeValue::Pointer(i)) => {
+                if key.is_empty() || depth != key.len() {
+                    keys.extend(extend_key(&key, i));
+                }
+            }
+            Some(NodeValue::Map(map)) => collected.push(map),
+            None => {}
+        }
+    }
+    Ok(collected)
 }
 
 #[cfg(test)]
