@@ -16,6 +16,8 @@ use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_models::validator::Validator;
 
+use crate::block_status::BlockStatus;
+use crate::interpreter_util::validate_block_checkpoint;
 use crate::merging::{BlockIndex, DeployChainIndex, MergeScope, ParentsMergedState};
 use crate::runtime_manager::RuntimeManager;
 
@@ -243,4 +245,70 @@ where
         .map(|m| m.id)
         .collect();
     get_pre_state_for_parents(dag, block_store, runtime, &parent_hashes, block_index).await
+}
+
+/// Validate a block: block summary, replay checkpoint, bonds cache, neglected-invalid-block, and
+/// phlo price (port of `MultiParentCasper.validate`).
+pub async fn validate<F, Fut>(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    runtime: &RuntimeManager,
+    block: &BlockMessage,
+    shard_id: &str,
+    min_phlo_price: i64,
+    block_index: &F,
+) -> Result<BlockMetadata, (BlockMetadata, BlockStatus)>
+where
+    F: Fn(BlockHash) -> Fut,
+    Fut: std::future::Future<Output = Result<BlockIndex, String>>,
+{
+    let init_block_meta = BlockMetadata::from_block(block);
+
+    // Block summary (justification regression, sequence/block number, deploy checks).
+    match crate::validate::block_summary(dag, block_store, block, shard_id, DEPLOY_LIFESPAN).await {
+        Ok(Ok(())) => {}
+        Ok(Err(status)) => return Err((mark_failed(&init_block_meta), status)),
+        Err(e) => panic!("block summary failed: {e}"),
+    }
+
+    // Replay validation.
+    let (block_metadata, validated) =
+        validate_block_checkpoint(runtime, dag, block_store, block, block_index)
+            .await
+            .expect("validateBlockCheckpoint failed");
+    match validated {
+        Err(status) => return Err((mark_failed(&block_metadata), status)),
+        Ok(true) => {}
+        Ok(false) => return Err((mark_failed(&block_metadata), BlockStatus::InvalidStateHash)),
+    }
+
+    // Bonds cache.
+    match crate::validate::bonds_cache(runtime, block).await {
+        Ok(Ok(())) => {}
+        Ok(Err(status)) => return Err((mark_failed(&block_metadata), status)),
+        Err(e) => panic!("bondsCache failed: {e}"),
+    }
+
+    // Neglected invalid block.
+    match crate::validate::neglected_invalid_block(dag, block).await {
+        Ok(Ok(())) => {}
+        Ok(Err(status)) => return Err((mark_failed(&block_metadata), status)),
+        Err(e) => panic!("neglectedInvalidBlock failed: {e}"),
+    }
+
+    // Phlo price (best-effort; treated as valid on failure, per the Scala recoverWith).
+    let _ = crate::validate::phlo_price(block, min_phlo_price);
+
+    // Build/cache the block index.
+    let _ = BlockIndex::get_block_index(runtime, block_store, block.block_hash).await;
+
+    Ok(block_metadata)
+}
+
+fn mark_failed(meta: &BlockMetadata) -> BlockMetadata {
+    BlockMetadata {
+        validated: true,
+        validation_failed: true,
+        ..meta.clone()
+    }
 }

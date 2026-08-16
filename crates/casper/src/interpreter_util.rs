@@ -3,15 +3,25 @@
 //! `validateBlockCheckpoint` is deferred pending `MultiParentCasper.getPreStateForParents` and
 //! `BlockRandomSeed`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use rchain_block_storage::block_store::BlockStore;
+use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
+use rchain_models::block::state_hash::StateHash;
+use rchain_models::block_hash::BlockHash;
+use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_rholang::errors::RholangError;
 use rchain_rholang::system_processes::BlockData;
+use rchain_shared::base16;
 
+use crate::block_random_seed::BlockRandomSeed;
+use crate::block_status::BlockStatus;
+use crate::merging::{BlockIndex, ParentsMergedState};
+use crate::multi_parent_casper::get_pre_state_for_parents;
 use crate::rholang::{ReplayFailure, SystemDeployRuntimeResult, UserDeployRuntimeResult};
 use crate::runtime_manager::RuntimeManager;
 use crate::system_deploy::SystemDeploy;
@@ -84,6 +94,84 @@ pub async fn compute_deploys_checkpoint(
     runtime
         .compute_state(pre_state_hash, deploys, system_deploys, rand, block_data)
         .await
+}
+
+/// The hard-coded empty-state (genesis pre-state) hash (port of `emptyStateHashFixed`).
+pub fn empty_state_hash_fixed() -> Blake2b256Hash {
+    Blake2b256Hash::from_byte_array(&base16::unsafe_decode(
+        "9619d9a34bdaf56d5de8cfb7c2304d63cd9e469a0bfc5600fd2f5b9808e290f1",
+    ))
+}
+
+/// Validate a block by recomputing its pre-state and replaying its deploys (port of
+/// `validateBlockCheckpoint`). Returns the block metadata plus a `bool` (valid) / `BlockStatus`
+/// (rejectable) outcome.
+pub async fn validate_block_checkpoint<F, Fut>(
+    runtime: &RuntimeManager,
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    block: &BlockMessage,
+    block_index: &F,
+) -> Result<(BlockMetadata, Result<bool, BlockStatus>), String>
+where
+    F: Fn(BlockHash) -> Fut,
+    Fut: std::future::Future<Output = Result<BlockIndex, String>>,
+{
+    // Non-failed parent hashes.
+    let mut parents: Vec<BlockHash> = Vec::new();
+    for j in &block.justifications {
+        if let Some(meta) = dag.lookup(j).await? {
+            if !meta.validation_failed {
+                parents.push(meta.block_hash);
+            }
+        }
+    }
+    let parents_set: BTreeSet<BlockHash> = parents.iter().copied().collect();
+
+    let pre_state = if !parents_set.is_empty() {
+        get_pre_state_for_parents(dag, block_store, runtime, &parents_set, block_index).await?
+    } else {
+        // Genesis block: no parents.
+        let genesis_pre_state_hash = empty_state_hash_fixed();
+        ParentsMergedState {
+            justifications: Vec::new(),
+            max_block_num: 0,
+            max_seq_nums: BTreeMap::from([(block.sender, 0)]),
+            fringe: BTreeSet::new(),
+            fringe_state: genesis_pre_state_hash,
+            fringe_bonds_map: block.bonds.clone(),
+            fringe_rejected_deploys: BTreeSet::new(),
+            pre_state_hash: genesis_pre_state_hash,
+            rejected_deploys: BTreeSet::new(),
+        }
+    };
+
+    let incoming_pre_state_hash = Blake2b256Hash::from_byte_array(&block.pre_state_hash);
+    let result: Result<bool, BlockStatus> = if incoming_pre_state_hash != pre_state.pre_state_hash {
+        Ok(false)
+    } else if pre_state.fringe_rejected_deploys != block.rejected_deploys {
+        Err(BlockStatus::InvalidRejectedDeploy)
+    } else {
+        let rand = BlockRandomSeed::random_generator_from_block(block);
+        let post_state_hash = Blake2b256Hash::from_byte_array(&block.post_state_hash);
+        let replay_result = replay_block(runtime, block, &rand).await;
+        let handled = handle_errors(&post_state_hash, replay_result)?;
+        Ok(handled.is_some())
+    };
+
+    let validation_failed = match &result {
+        Err(_) => true,
+        Ok(valid) => !*valid,
+    };
+    let bmd = BlockMetadata {
+        validated: true,
+        validation_failed,
+        fringe: pre_state.fringe,
+        fringe_state_hash: StateHash::from_slice(pre_state.fringe_state.as_bytes()),
+        ..BlockMetadata::from_block(block)
+    };
+
+    Ok((bmd, result))
 }
 
 #[cfg(test)]
