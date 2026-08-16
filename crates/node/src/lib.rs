@@ -6,4 +6,6 @@
 pub mod api;
 pub mod configuration;
 pub mod diagnostics;
+pub mod effects;
+pub mod runtime;
 pub mod web;

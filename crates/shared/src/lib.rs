@@ -11,6 +11,8 @@ pub mod dag;
 pub mod serialize;
 pub mod state;
 pub mod store;
+pub mod string_ops;
+pub mod terminal_mode;
 
 #[cfg(feature = "tokio")]
 pub mod compression;
