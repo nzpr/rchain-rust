@@ -189,6 +189,24 @@ impl RhoRuntime {
         })
     }
 
+    /// The empty-state hash: reset to the empty root, bootstrap the registry, and checkpoint (port
+    /// of `emptyStateHash`).
+    pub async fn empty_state_hash(&self) -> Result<Blake2b256Hash, String> {
+        self.space
+            .reset(rchain_rspace::history::history::empty_root_hash_value())
+            .await
+            .map_err(|e| e.to_string())?;
+        let rand = Blake2b512Random::default_random();
+        self.inj(
+            &crate::registry::registry_bootstrap_ast(),
+            &Env::new(),
+            &rand,
+        )
+        .map_err(|e| e.to_string())?;
+        let checkpoint = self.space.create_checkpoint().await.map_err(|e| e.to_string())?;
+        Ok(checkpoint.root)
+    }
+
     pub fn space(&self) -> &RhoSpace {
         &self.space
     }
