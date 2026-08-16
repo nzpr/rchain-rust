@@ -1,0 +1,14 @@
+[package]
+name = "rchain-node"
+version = "0.1.0"
+edition = "2021"
+description = "Faithful Rust port of the RChain node module (glue: configuration, runtime, API)."
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+hocon = "0.9"
+linked-hash-map = "0.5"
+rchain-casper = { path = "../casper" }
+rchain-comm = { path = "../comm" }
+rchain-crypto = { path = "../crypto" }
+rchain-shared = { path = "../shared" }

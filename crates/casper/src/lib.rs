@@ -5,9 +5,13 @@
 
 pub mod block_metadata_store;
 pub mod block_status;
+pub mod conf;
 pub mod dag;
 pub mod event_converter;
 pub mod merging;
+pub mod protocol;
 pub mod proto_util;
 pub mod rholang;
 pub mod validate;
+
+pub use conf::{CasperConf, GenesisBlockData};
