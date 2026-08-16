@@ -4,6 +4,7 @@
 //! so that it is excluded from equality, exactly as in the Scala `AlwaysEqual[BitSet]` mapper.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use num_bigint::BigInt;
@@ -162,6 +163,19 @@ impl Bundle {
     }
 }
 
+impl fmt::Display for Bundle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Port of `BundleOps.showInstance`: a left-justified `bundle` plus the read/write sign.
+        let sign = match (self.read_flag, self.write_flag) {
+            (true, true) => "",
+            (true, false) => "-",
+            (false, true) => "+",
+            (false, false) => "0",
+        };
+        write!(f, "{:<8}", format!("bundle{sign}"))
+    }
+}
+
 /// An expression.
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq)]
 pub enum Expr {
@@ -297,4 +311,22 @@ pub struct ConnectiveBody {
 pub struct VarRef {
     pub index: i32,
     pub depth: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_display_shows_read_write_sign() {
+        let mk = |read: bool, write: bool| Bundle {
+            body: Box::new(Par::default()),
+            write_flag: write,
+            read_flag: read,
+        };
+        assert_eq!(mk(true, true).to_string(), "bundle  ");
+        assert_eq!(mk(true, false).to_string(), "bundle- ");
+        assert_eq!(mk(false, true).to_string(), "bundle+ ");
+        assert_eq!(mk(false, false).to_string(), "bundle0 ");
+    }
 }
