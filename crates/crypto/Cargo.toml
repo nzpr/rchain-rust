@@ -10,6 +10,8 @@ blake2 = "0.10"
 sha2 = "0.10"
 sha3 = "0.10"
 k256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
+pkcs8 = { version = "0.10", features = ["encryption", "pem"] }
+pkcs5 = { version = "0.7", features = ["alloc", "pbes2"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 crypto_box = "0.9"
 rand = "0.8"

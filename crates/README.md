@@ -13,7 +13,7 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `sdk` | `sdk/` | **done** (root leaf; Laws 14 & 17; DAG interface: `BlockRequester`/`DagManager`/`DagView`/`DagData` + Casper validation syntax + `FatalError` + primitive syntax) |
 | `shared` | `shared/` | **core done** (Base16/Serialize/DagOps/store+KeyValueCache/Stopwatch/LongOps/PathOps/SeqOps/Matcher/Language); LMDB FFI deferred |
 | `regex` | `regex/` | **done** (FSM engine + regex AST/parser + path-to-regex tokenizer) |
-| `crypto` | `crypto/` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519) |
+| `crypto` | `crypto/` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519, PEM key writing) |
 | `graphz` | `graphz/` | **done** (DOT builder) |
 | `models` | `models/` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer) |
 | `block-storage` | `block-storage/` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
