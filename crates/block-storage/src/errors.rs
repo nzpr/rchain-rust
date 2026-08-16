@@ -32,3 +32,45 @@ impl fmt::Display for StorageError {
 }
 
 impl std::error::Error for StorageError {}
+
+/// A block-store inconsistency: the store is missing a hash it was expected to contain (port of
+/// `BlockStoreInconsistencyError`). Signals a fatal error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockStoreInconsistencyError(pub String);
+
+impl fmt::Display for BlockStoreInconsistencyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for BlockStoreInconsistencyError {}
+
+/// A block-DAG inconsistency (port of `BlockDagInconsistencyError`). Signals a fatal error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockDagInconsistencyError(pub String);
+
+impl fmt::Display for BlockDagInconsistencyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for BlockDagInconsistencyError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inconsistency_errors_carry_messages() {
+        assert_eq!(
+            BlockStoreInconsistencyError("boom".to_string()).to_string(),
+            "boom"
+        );
+        assert_eq!(
+            BlockDagInconsistencyError("boom".to_string()).to_string(),
+            "boom"
+        );
+    }
+}

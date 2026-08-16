@@ -47,6 +47,13 @@ impl DagRepresentation {
             .map(|(_, id)| id)
     }
 
+    /// The last finalized block hash, or an error if no fringe is available (port of
+    /// `DagRepresentationSyntax.lastFinalizedBlockUnsafe`).
+    pub fn last_finalized_block_unsafe(&self) -> Result<BlockHash, String> {
+        self.last_finalized_block_hash()
+            .ok_or_else(|| "Finalized fringe is not available.".to_string())
+    }
+
     pub fn contains(&self, block_hash: &BlockHash) -> bool {
         self.dag_set.contains(block_hash)
     }
