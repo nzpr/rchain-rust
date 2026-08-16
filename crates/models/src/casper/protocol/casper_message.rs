@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 
 use prost::Message as _;
+use rchain_shared::serialize::Serialize;
 
 use crate::block::state_hash::StateHash;
 use crate::block_hash::BlockHash;
@@ -77,6 +78,18 @@ impl DeployData {
             shard_id: self.shard_id.clone(),
             ..DeployDataProto::default()
         }
+    }
+}
+
+impl Serialize<DeployData> for DeployData {
+    fn encode(a: &DeployData) -> Vec<u8> {
+        a.to_proto_data().encode_to_vec()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<DeployData, String> {
+        DeployDataProto::decode(bytes)
+            .map(|p| DeployData::from_proto_data(&p))
+            .map_err(|e| e.to_string())
     }
 }
 
