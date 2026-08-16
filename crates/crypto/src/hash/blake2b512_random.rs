@@ -231,6 +231,22 @@ impl PartialEq for Blake2b512Random {
 
 impl Eq for Blake2b512Random {}
 
+// `Blake2b512Random` serializes as JSON unit (`null`) and deserializes to `defaultRandom`, matching
+// the Scala `encodeBlake2b512Random`/`decodeDummyBlake2b512Random` (`Encoder.encodeUnit` /
+// `Decoder.decodeUnit`).
+impl serde::Serialize for Blake2b512Random {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Blake2b512Random {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let () = <() as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Blake2b512Random::default_random())
+    }
+}
+
 fn internal_merge(children: &[Blake2b512Random]) -> Blake2b512Random {
     let mut squashed = Vec::new();
     let mut chain_block = [0u8; 128];

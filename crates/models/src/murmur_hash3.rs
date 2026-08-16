@@ -12,6 +12,20 @@ pub fn string_hash_code(s: &str) -> i32 {
         .fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(c as i32))
 }
 
+/// Java `Long.hashCode` (used by `HashM.LongHash` via `.##`).
+pub fn long_hash_code(value: i64) -> i32 {
+    (value ^ (value as u64 >> 32) as i64) as i32
+}
+
+/// Java `Boolean.hashCode` (used by `HashM.BooleanHash` via `.##`).
+pub fn boolean_hash_code(value: bool) -> i32 {
+    if value {
+        1231
+    } else {
+        1237
+    }
+}
+
 /// Scala's `MurmurHash3.productHash` for case classes (port of `HashMDerivation.productHash`).
 ///
 /// `elements` are the already-computed field hashes; `prefix` is the case-class name, used only
@@ -77,5 +91,19 @@ mod tests {
     fn product_hash_is_deterministic() {
         assert_eq!(product_hash("Par", &[1, 2, 3]), product_hash("Par", &[1, 2, 3]));
         assert_ne!(product_hash("Par", &[1, 2, 3]), product_hash("Par", &[1, 2, 4]));
+    }
+
+    #[test]
+    fn long_hash_code_matches_java() {
+        assert_eq!(long_hash_code(42), 42);
+        assert_eq!(long_hash_code(0), 0);
+        assert_eq!(long_hash_code(-1), 0);
+        assert_eq!(long_hash_code(1i64 << 32), 1);
+    }
+
+    #[test]
+    fn boolean_hash_code_matches_java() {
+        assert_eq!(boolean_hash_code(true), 1231);
+        assert_eq!(boolean_hash_code(false), 1237);
     }
 }

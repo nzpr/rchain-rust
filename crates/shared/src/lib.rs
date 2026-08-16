@@ -8,6 +8,7 @@
 
 pub mod base16;
 pub mod dag;
+pub mod debug;
 pub mod key_value_cache;
 pub mod language;
 pub mod long_ops;
