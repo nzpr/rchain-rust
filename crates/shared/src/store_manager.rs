@@ -13,6 +13,43 @@ use async_trait::async_trait;
 use crate::store::{InMemoryKeyValueStore, KeyValueStore};
 use crate::typed_store::{Codec, KeyValueTypedStoreCodec, SharedStore};
 
+/// A database identifier (port of `LmdbDirStoreManager.Db`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Db {
+    pub id: String,
+    pub name_override: Option<String>,
+}
+
+impl Db {
+    pub fn new(id: impl Into<String>) -> Self {
+        Db {
+            id: id.into(),
+            name_override: None,
+        }
+    }
+}
+
+/// Mega, giga and tera bytes (port of `LmdbDirStoreManager.mb/gb/tb`).
+pub const MB: i64 = 1024 * 1024;
+pub const GB: i64 = 1024 * MB;
+pub const TB: i64 = 1024 * GB;
+
+/// An LMDB environment config (port of `LmdbDirStoreManager.LmdbEnvConfig`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LmdbEnvConfig {
+    pub name: String,
+    pub max_env_size: i64,
+}
+
+impl LmdbEnvConfig {
+    pub fn new(name: impl Into<String>, max_env_size: i64) -> Self {
+        LmdbEnvConfig {
+            name: name.into(),
+            max_env_size,
+        }
+    }
+}
+
 /// A key-value store manager (port of `KeyValueStoreManager[F]`).
 #[async_trait]
 pub trait KeyValueStoreManager: Send + Sync {

@@ -24,6 +24,7 @@ pub mod rholang;
 pub mod runtime_manager;
 pub mod runtime_replay;
 pub mod state;
+pub mod storage;
 pub mod system_deploy;
 pub mod validate;
 pub mod validator_identity;
