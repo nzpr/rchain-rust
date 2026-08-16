@@ -12,6 +12,7 @@ rchain-crypto = { path = "../crypto" }
 rchain-block-storage = { path = "../block-storage" }
 rchain-rholang = { path = "../rholang" }
 rchain-rspace = { path = "../rspace" }
+rchain-sdk = { path = "../sdk" }
 rchain-shared = { path = "../shared" }
 
 [dev-dependencies]

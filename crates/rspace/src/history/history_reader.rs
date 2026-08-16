@@ -27,6 +27,9 @@ pub trait HistoryReader<C, P, A, K>: Send + Sync {
 
     /// A reader that hashes channels internally (port of `base`).
     fn base(&self) -> Arc<dyn HistoryReaderBase<C, P, A, K>>;
+
+    /// A reader returning raw bytes alongside decoded values (port of `readerBinary`).
+    fn reader_binary(&self) -> Arc<dyn HistoryReaderBinary<C, P, A, K>>;
 }
 
 /// A reader keyed by raw (unhashed) channels (port of `HistoryReaderBase`).

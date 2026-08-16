@@ -379,6 +379,54 @@ where
         .collect()
 }
 
+/// Decode a list of raw data (port of `decodeDatumsBinary`).
+pub fn decode_datums_binary<A>(bytes: &[u8]) -> Result<Vec<DatumB<A>>, RSpaceError>
+where
+    A: Serialize<A>,
+{
+    decode_seq_byte_vectors(bytes)
+        .into_iter()
+        .map(|raw| {
+            let decoded = read_datum(&mut BitReader::new(&raw))?;
+            Ok(DatumB { decoded, raw })
+        })
+        .collect()
+}
+
+/// Decode a list of raw continuations (port of `decodeContinuationsBinary`).
+pub fn decode_continuations_binary<P, K>(
+    bytes: &[u8],
+) -> Result<Vec<WaitingContinuationB<P, K>>, RSpaceError>
+where
+    P: Serialize<P>,
+    K: Serialize<K>,
+{
+    decode_seq_byte_vectors(bytes)
+        .into_iter()
+        .map(|raw| {
+            let decoded = read_waiting_continuation(&mut BitReader::new(&raw))?;
+            Ok(WaitingContinuationB { decoded, raw })
+        })
+        .collect()
+}
+
+/// Decode a list of raw joins (port of `decodeJoinsBinary`).
+pub fn decode_joins_binary<C>(bytes: &[u8]) -> Result<Vec<JoinsB<C>>, RSpaceError>
+where
+    C: Serialize<C>,
+{
+    decode_seq_byte_vectors(bytes)
+        .into_iter()
+        .map(|raw| {
+            let decoded = decode_seq_byte_vectors(&raw)
+                .into_iter()
+                .map(|c| <C as Serialize<C>>::decode(&c).map_err(|_| RSpaceError::Codec("channel")))
+                .collect::<Result<Vec<C>, RSpaceError>>()?;
+            Ok(JoinsB { decoded, raw })
+        })
+        .collect()
+}
+
 /// A datum with its raw encoded bytes (port of `DatumB`).
 #[derive(Clone, Debug)]
 pub struct DatumB<A> {

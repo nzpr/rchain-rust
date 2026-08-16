@@ -13,10 +13,19 @@ use rchain_block_storage::dag::message_map;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
+use rchain_models::casper::protocol::casper_message::{
+    Event, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
+};
 use rchain_models::validator::Validator;
-use rchain_rspace::merger::event_log_index::EventLogIndex;
+use rchain_rspace::history::history_repository::HistoryRepository;
+use rchain_rspace::merger::event_log_index::{EventLogIndex, NumberChannelsDiff};
 use rchain_rspace::merger::event_log_merging_logic::{are_conflicting, depends};
 use rchain_rspace::merger::state_change::StateChange;
+use rchain_rspace::trace::event::{Event as REvent, Produce};
+use rchain_sdk::dag::merging::{compute_dependency_map, compute_greedy_non_intersecting_branches};
+use rchain_shared::serialize::Serialize;
+
+use crate::event_converter::to_rspace_event;
 
 /// A deploy id paired with its execution cost (port of `DeployIdWithCost`).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -141,6 +150,54 @@ impl DeployChainIndex {
         let b_ids: BTreeSet<&Vec<u8>> = b.deploys_with_cost.iter().map(|x| &x.id).collect();
         !a_ids.is_disjoint(&b_ids) || are_conflicting(&a.event_log_index, &b.event_log_index)
     }
+
+    /// Build a deploy chain from its member deploys + pre/post state (port of
+    /// `DeployChainIndex.apply`).
+    pub async fn apply<C, P, A, K>(
+        host_block: Blake2b256Hash,
+        deploys: &BTreeSet<DeployIndex>,
+        pre_state_hash: Blake2b256Hash,
+        post_state_hash: Blake2b256Hash,
+        history_repository: &HistoryRepository<C, P, A, K>,
+    ) -> Result<DeployChainIndex, String>
+    where
+        C: Serialize<C> + Send + Sync + 'static,
+        P: Serialize<P> + Send + Sync + 'static,
+        A: Serialize<A> + Send + Sync + 'static,
+        K: Serialize<K> + Send + Sync + 'static,
+    {
+        let deploys_with_cost: BTreeSet<DeployIdWithCost> = deploys
+            .iter()
+            .map(|d| DeployIdWithCost {
+                id: d.deploy_id.clone(),
+                cost: d.cost,
+            })
+            .collect();
+        let event_log_index = deploys.iter().fold(EventLogIndex::empty(), |acc, d| {
+            EventLogIndex::combine(&acc, &d.event_log_index)
+        });
+
+        let pre_reader = history_repository.get_history_reader(pre_state_hash).await;
+        let pre_binary = pre_reader.reader_binary();
+        let post_reader = history_repository.get_history_reader(post_state_hash).await;
+        let post_binary = post_reader.reader_binary();
+
+        let state_changes = StateChange::apply(
+            pre_binary.as_ref(),
+            post_binary.as_ref(),
+            &event_log_index,
+        )
+        .await?;
+
+        Ok(DeployChainIndex {
+            host_block,
+            deploys_with_cost,
+            pre_state_hash,
+            post_state_hash,
+            event_log_index,
+            state_changes,
+        })
+    }
 }
 
 /// The index of a block: its deploy chains (port of `BlockIndex`).
@@ -148,6 +205,185 @@ impl DeployChainIndex {
 pub struct BlockIndex {
     pub block_hash: BlockHash,
     pub deploy_chains: Vec<DeployChainIndex>,
+}
+
+impl BlockIndex {
+    /// Build an `EventLogIndex` from a deploy's events against the pre-state (port of
+    /// `BlockIndex.createEventLogIndex`).
+    pub async fn create_event_log_index<C, P, A, K>(
+        events: &[Event],
+        history_repository: &HistoryRepository<C, P, A, K>,
+        pre_state_hash: Blake2b256Hash,
+        mergeable_chs: NumberChannelsDiff,
+    ) -> Result<EventLogIndex, String>
+    where
+        C: Serialize<C> + Send + Sync + 'static,
+        P: Serialize<P> + Send + Sync + 'static,
+        A: Serialize<A> + Send + Sync + 'static,
+        K: Serialize<K> + Send + Sync + 'static,
+    {
+        let pre_reader = history_repository.get_history_reader(pre_state_hash).await;
+        let rspace_events: Vec<REvent> = events.iter().map(to_rspace_event).collect();
+
+        // Collect the distinct produces referenced by the trace to resolve the two pre-state
+        // predicates (`produceExistsInPreState` and `produceTouchesPreStateJoin`).
+        let mut produces: BTreeSet<Produce> = BTreeSet::new();
+        for e in &rspace_events {
+            match e {
+                REvent::Produce(p) => {
+                    produces.insert(p.clone());
+                }
+                REvent::Comm(c) => {
+                    for p in &c.produces {
+                        produces.insert(p.clone());
+                    }
+                }
+                REvent::Consume(_) => {}
+            }
+        }
+
+        let mut exists_in_pre_state: BTreeSet<Produce> = BTreeSet::new();
+        let mut touches_pre_state_join: BTreeSet<Produce> = BTreeSet::new();
+        for p in &produces {
+            let data = pre_reader
+                .get_data(p.channels_hash)
+                .await
+                .map_err(|e| e.to_string())?;
+            if data.iter().any(|d| d.source == *p) {
+                exists_in_pre_state.insert(p.clone());
+            }
+            let joins = pre_reader
+                .get_joins(p.channels_hash)
+                .await
+                .map_err(|e| e.to_string())?;
+            if joins.iter().any(|j| j.len() > 1) {
+                touches_pre_state_join.insert(p.clone());
+            }
+        }
+
+        Ok(EventLogIndex::apply(
+            &rspace_events,
+            |p| exists_in_pre_state.contains(p),
+            |p| touches_pre_state_join.contains(p),
+            mergeable_chs,
+        ))
+    }
+
+    /// Build a `BlockIndex` from the processed deploys + mergeable-channel data (port of
+    /// `BlockIndex.apply`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn apply<C, P, A, K>(
+        block_hash: BlockHash,
+        usr_processed_deploys: &[ProcessedDeploy],
+        sys_processed_deploys: &[ProcessedSystemDeploy],
+        pre_state_hash: Blake2b256Hash,
+        post_state_hash: Blake2b256Hash,
+        history_repository: &HistoryRepository<C, P, A, K>,
+        mergeable_chan_data: &[NumberChannelsDiff],
+    ) -> Result<BlockIndex, String>
+    where
+        C: Serialize<C> + Send + Sync + 'static,
+        P: Serialize<P> + Send + Sync + 'static,
+        A: Serialize<A> + Send + Sync + 'static,
+        K: Serialize<K> + Send + Sync + 'static,
+    {
+        let usr_count = usr_processed_deploys.len();
+        let deploy_count = usr_count + sys_processed_deploys.len();
+        let mrg_count = mergeable_chan_data.len();
+        assert_eq!(
+            deploy_count, mrg_count,
+            "Cache of mergeable channels ({mrg_count}) doesn't match deploys count ({deploy_count})."
+        );
+
+        let (usr_mergeable, sys_mergeable) = mergeable_chan_data.split_at(usr_count);
+
+        let mut deploy_indices: BTreeSet<DeployIndex> = BTreeSet::new();
+
+        // User deploy indices (failed deploys are skipped).
+        for (d, merge_chs) in usr_processed_deploys.iter().zip(usr_mergeable.iter()) {
+            if d.is_failed {
+                continue;
+            }
+            let event_log_index = Self::create_event_log_index(
+                &d.deploy_log,
+                history_repository,
+                pre_state_hash,
+                merge_chs.clone(),
+            )
+            .await?;
+            deploy_indices.insert(DeployIndex {
+                deploy_id: d.deploy.sig.clone(),
+                cost: d.cost.cost as i64,
+                event_log_index,
+            });
+        }
+
+        // System deploy indices (only `Succeeded` blocks contribute).
+        for (sd, merge_chs) in sys_processed_deploys.iter().zip(sys_mergeable.iter()) {
+            let (id, log) = match sd {
+                ProcessedSystemDeploy::Succeeded {
+                    event_list,
+                    system_deploy: SystemDeployData::Slash(_),
+                } => (sys_deploy_id(&block_hash, 1), event_list),
+                ProcessedSystemDeploy::Succeeded {
+                    event_list,
+                    system_deploy: SystemDeployData::CloseBlock,
+                } => (sys_deploy_id(&block_hash, 2), event_list),
+                ProcessedSystemDeploy::Succeeded {
+                    event_list,
+                    system_deploy: SystemDeployData::Empty,
+                } => (sys_deploy_id(&block_hash, 3), event_list),
+                ProcessedSystemDeploy::Failed { .. } => continue,
+            };
+            let event_log_index = Self::create_event_log_index(
+                log,
+                history_repository,
+                pre_state_hash,
+                merge_chs.clone(),
+            )
+            .await?;
+            deploy_indices.insert(DeployIndex {
+                deploy_id: id,
+                cost: 0,
+                event_log_index,
+            });
+        }
+
+        // Deploys in a block execute sequentially, so there are only dependencies (no conflicts).
+        let dependency_map =
+            compute_dependency_map(&deploy_indices, &deploy_indices, |l, r| {
+                depends(&l.event_log_index, &r.event_log_index)
+            });
+        let deploy_chains =
+            compute_greedy_non_intersecting_branches(&deploy_indices, &dependency_map);
+
+        let host_block = Blake2b256Hash::from_bytes(*block_hash.as_bytes());
+        let mut chains = Vec::new();
+        for chain in &deploy_chains {
+            chains.push(
+                DeployChainIndex::apply(
+                    host_block,
+                    chain,
+                    pre_state_hash,
+                    post_state_hash,
+                    history_repository,
+                )
+                .await?,
+            );
+        }
+
+        Ok(BlockIndex {
+            block_hash,
+            deploy_chains: chains,
+        })
+    }
+}
+
+/// Build the system-deploy id as `blockHash ++ prefix` (port of `blockHash.concat(SYS_*_DEPLOY_ID)`).
+fn sys_deploy_id(block_hash: &BlockHash, prefix: u8) -> Vec<u8> {
+    let mut id = block_hash.as_bytes().to_vec();
+    id.push(prefix);
+    id
 }
 
 /// The scope of a merge: final (immutable) and conflict (alterable) blocks (port of `MergeScope`).

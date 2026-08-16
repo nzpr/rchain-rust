@@ -12,11 +12,12 @@ use crate::errors::RSpaceError;
 use crate::hashing::stable_hash_provider::{hash_channel, hash_channels};
 use crate::history::cold_store::{ColdKeyValueStore, PersistedData};
 use crate::history::history::History;
-use crate::history::history_reader::{HistoryReader, HistoryReaderBase};
+use crate::history::history_reader::{HistoryReader, HistoryReaderBase, HistoryReaderBinary};
 use crate::history::key_segment::KeySegment;
 use crate::internal::{Datum, WaitingContinuation};
 use crate::serializers::scodec_serialize::{
-    decode_continuations, decode_datums, decode_joins,
+    decode_continuations, decode_continuations_binary, decode_datums, decode_datums_binary,
+    decode_joins, decode_joins_binary,
 };
 
 const PREFIX_DATUM: u8 = 0x00;
@@ -106,6 +107,69 @@ where
             }),
         })
     }
+
+    fn reader_binary(&self) -> Arc<dyn HistoryReaderBinary<C, P, A, K>> {
+        Arc::new(RSpaceHistoryReaderImpl {
+            target_history: self.target_history.clone(),
+            leaf_store: self.leaf_store.clone(),
+            marker: std::marker::PhantomData,
+        })
+    }
+}
+
+#[async_trait]
+impl<C, P, A, K> HistoryReaderBinary<C, P, A, K> for RSpaceHistoryReaderImpl<C, P, A, K>
+where
+    C: Serialize<C> + Send + Sync + 'static,
+    P: Serialize<P> + Send + Sync + 'static,
+    A: Serialize<A> + Send + Sync + 'static,
+    K: Serialize<K> + Send + Sync + 'static,
+{
+    async fn get_data(
+        &self,
+        key: Blake2b256Hash,
+    ) -> Result<Vec<crate::serializers::scodec_serialize::DatumB<A>>, RSpaceError> {
+        match self
+            .fetch_data(PREFIX_DATUM, key)
+            .await
+            .map_err(|_| RSpaceError::Codec("persisted data"))?
+        {
+            Some(PersistedData::DataLeaf(bytes)) => decode_datums_binary(&bytes),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("data")),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn get_continuations(
+        &self,
+        key: Blake2b256Hash,
+    ) -> Result<Vec<crate::serializers::scodec_serialize::WaitingContinuationB<P, K>>, RSpaceError>
+    {
+        match self
+            .fetch_data(PREFIX_KONT, key)
+            .await
+            .map_err(|_| RSpaceError::Codec("persisted data"))?
+        {
+            Some(PersistedData::ContinuationsLeaf(bytes)) => decode_continuations_binary(&bytes),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("continuations")),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    async fn get_joins(
+        &self,
+        key: Blake2b256Hash,
+    ) -> Result<Vec<crate::serializers::scodec_serialize::JoinsB<C>>, RSpaceError> {
+        match self
+            .fetch_data(PREFIX_JOINS, key)
+            .await
+            .map_err(|_| RSpaceError::Codec("persisted data"))?
+        {
+            Some(PersistedData::JoinsLeaf(bytes)) => decode_joins_binary(&bytes),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("joins")),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 struct BaseReader<C, P, A, K> {
@@ -121,14 +185,14 @@ where
     K: Serialize<K> + Send + Sync + 'static,
 {
     async fn get_data(&self, key: &C) -> Result<Vec<Datum<A>>, RSpaceError> {
-        self.reader.get_data(hash_channel(key)).await
+        HistoryReader::get_data(self.reader.as_ref(), hash_channel(key)).await
     }
 
     async fn get_continuations(&self, key: &[C]) -> Result<Vec<WaitingContinuation<P, K>>, RSpaceError> {
-        self.reader.get_continuations(hash_channels(key)).await
+        HistoryReader::get_continuations(self.reader.as_ref(), hash_channels(key)).await
     }
 
     async fn get_joins(&self, key: &C) -> Result<Vec<Vec<C>>, RSpaceError> {
-        self.reader.get_joins(hash_channel(key)).await
+        HistoryReader::get_joins(self.reader.as_ref(), hash_channel(key)).await
     }
 }
