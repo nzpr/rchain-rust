@@ -37,6 +37,23 @@ impl PacketTypeTag {
             PacketTypeTag::StoreItemsMessage => "StoreItemsMessage",
         }
     }
+
+    /// Parse a wire tag string back into a tag (port of `PacketTypeTag.withNameOption`).
+    pub fn from_tag(tag: &str) -> Option<PacketTypeTag> {
+        match tag {
+            "BlockHashMessage" => Some(PacketTypeTag::BlockHashMessage),
+            "BlockMessage" => Some(PacketTypeTag::BlockMessage),
+            "HasBlockRequest" => Some(PacketTypeTag::HasBlockRequest),
+            "HasBlock" => Some(PacketTypeTag::HasBlock),
+            "BlockRequest" => Some(PacketTypeTag::BlockRequest),
+            "ForkChoiceTipRequest" => Some(PacketTypeTag::ForkChoiceTipRequest),
+            "FinalizedFringeRequest" => Some(PacketTypeTag::FinalizedFringeRequest),
+            "FinalizedFringe" => Some(PacketTypeTag::FinalizedFringe),
+            "StoreItemsMessageRequest" => Some(PacketTypeTag::StoreItemsMessageRequest),
+            "StoreItemsMessage" => Some(PacketTypeTag::StoreItemsMessage),
+            _ => None,
+        }
+    }
 }
 
 /// A packet parse result (port of `PacketParseResult`).

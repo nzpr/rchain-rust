@@ -636,6 +636,124 @@ pub struct BlockHashMessage {
     pub block_creator: Vec<u8>,
 }
 
+impl FinalizedFringeRequest {
+    pub fn from_proto(m: &FinalizedFringeRequestProto) -> Self {
+        FinalizedFringeRequest {
+            identifier: m.identifier.clone(),
+            trim_state: m.trim_state,
+        }
+    }
+    pub fn to_proto(&self) -> FinalizedFringeRequestProto {
+        FinalizedFringeRequestProto {
+            identifier: self.identifier.clone(),
+            trim_state: self.trim_state,
+        }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = FinalizedFringeRequestProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(FinalizedFringeRequest::from_proto(&proto))
+    }
+}
+
+impl ForkChoiceTipRequest {
+    pub fn to_proto(&self) -> ForkChoiceTipRequestProto {
+        ForkChoiceTipRequestProto {}
+    }
+    pub fn from_proto(_m: &ForkChoiceTipRequestProto) -> Self {
+        ForkChoiceTipRequest
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = ForkChoiceTipRequestProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(ForkChoiceTipRequest::from_proto(&proto))
+    }
+}
+
+impl HasBlockRequest {
+    pub fn from_proto(m: &HasBlockRequestProto) -> Self {
+        HasBlockRequest { hash: m.hash.clone() }
+    }
+    pub fn to_proto(&self) -> HasBlockRequestProto {
+        HasBlockRequestProto {
+            hash: self.hash.clone(),
+        }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = HasBlockRequestProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(HasBlockRequest::from_proto(&proto))
+    }
+}
+
+impl HasBlock {
+    pub fn from_proto(m: &HasBlockProto) -> Self {
+        HasBlock { hash: m.hash.clone() }
+    }
+    pub fn to_proto(&self) -> HasBlockProto {
+        HasBlockProto { hash: self.hash.clone() }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = HasBlockProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(HasBlock::from_proto(&proto))
+    }
+}
+
+impl BlockRequest {
+    pub fn from_proto(m: &BlockRequestProto) -> Self {
+        BlockRequest { hash: m.hash.clone() }
+    }
+    pub fn to_proto(&self) -> BlockRequestProto {
+        BlockRequestProto {
+            hash: self.hash.clone(),
+        }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = BlockRequestProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(BlockRequest::from_proto(&proto))
+    }
+}
+
+impl BlockHashMessage {
+    pub fn from_proto(m: &BlockHashMessageProto) -> Self {
+        BlockHashMessage {
+            block_hash: BlockHash::from_slice(&m.hash),
+            block_creator: m.block_creator.clone(),
+        }
+    }
+    pub fn to_proto(&self) -> BlockHashMessageProto {
+        BlockHashMessageProto {
+            hash: self.block_hash.as_bytes().to_vec(),
+            block_creator: self.block_creator.clone(),
+        }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = BlockHashMessageProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(BlockHashMessage::from_proto(&proto))
+    }
+}
+
 // -------------------------------------------------------------------------------------------------
 // Casper message (sum type)
 // -------------------------------------------------------------------------------------------------
