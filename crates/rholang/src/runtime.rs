@@ -187,7 +187,17 @@ impl RhoRuntime {
         term: &str,
         rand: &Blake2b512Random,
     ) -> Result<EvaluateResult, RholangError> {
-        let par = crate::normalizer::source_to_adt(term)?;
+        self.evaluate_with_env(term, &BTreeMap::new(), rand)
+    }
+
+    /// Parse + run a rholang term with an explicit normalizer environment (port of `evaluate`).
+    pub fn evaluate_with_env(
+        &self,
+        term: &str,
+        env: &BTreeMap<String, Par>,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError> {
+        let par = crate::normalizer::source_to_adt_with_env(term, env)?;
         self.inj(&par, &Env::new(), rand)?;
         Ok(EvaluateResult {
             cost: crate::accounting::Cost::new(0, "evaluate"),

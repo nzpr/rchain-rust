@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
-use rchain_models::ast::Par;
+use rchain_models::ast::{Expr, Par, Var};
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::casper_message::{Event, PCost, ProcessedDeploy, SignedDeployData};
-use rchain_models::runtime::BindPattern;
+use rchain_models::par_ops::from_expr;
+use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_rholang::evaluate_result::EvaluateResult;
 use rchain_rholang::runtime::RhoRuntime;
 use rchain_rholang::storage::RhoHistoryRepository;
@@ -15,6 +16,7 @@ use rchain_rholang::system_processes::BlockData;
 
 use crate::event_converter::to_casper_event;
 use crate::rholang::UserDeployRuntimeResult;
+use crate::system_deploy::{process_bool_result, SystemDeploy, SystemDeployUserError};
 
 /// The runtime manager (port of `RuntimeManager`). The deploy-execution, replay, and bond-computation
 /// methods are deferred pending the system deploys + replay runtime wiring.
@@ -126,6 +128,52 @@ impl RuntimeManager {
         let pre_state_hash = self.runtime.empty_state_hash().await?;
         let (post_state_hash, processed) = self.play_deploys(&pre_state_hash, terms, rand).await?;
         Ok((pre_state_hash, post_state_hash, processed))
+    }
+
+    /// Run a system deploy's source (port of `evaluateSystemSource`).
+    fn evaluate_system_source(&self, deploy: &SystemDeploy) -> Result<EvaluateResult, String> {
+        self.runtime
+            .evaluate_with_env(deploy.source, &deploy.normalizer_env, &deploy.rand)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Consume the result produced on the system deploy's return channel (port of
+    /// `consumeSystemResult`).
+    async fn consume_system_result(
+        &self,
+        deploy: &SystemDeploy,
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, String> {
+        let pattern = BindPattern {
+            patterns: vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0))))],
+            remainder: None,
+            free_count: 1,
+        };
+        self.runtime
+            .consume_result(&[deploy.return_channel.clone()], &[pattern])
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Evaluate a system deploy and extract its result (port of `evalSystemDeploy`).
+    pub async fn eval_system_deploy(
+        &self,
+        deploy: &SystemDeploy,
+    ) -> Result<(Result<(), SystemDeployUserError>, EvaluateResult), String> {
+        let eval_result = self.evaluate_system_source(deploy)?;
+        if !eval_result.errors.is_empty() {
+            return Err(format!("Unexpected system errors: {:?}", eval_result.errors));
+        }
+        let consumed = self.consume_system_result(deploy).await?;
+        match consumed {
+            Some((_, data)) => match data.as_slice() {
+                [single] if single.pars.len() == 1 => {
+                    let result = process_bool_result(&single.pars[0]);
+                    Ok((result, eval_result))
+                }
+                _ => Err("Unexpected system-deploy result".to_string()),
+            },
+            None => Err("Unable to consume results of system deploy".to_string()),
+        }
     }
 }
 
