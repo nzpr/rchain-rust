@@ -10,6 +10,7 @@ pub mod base16;
 pub mod dag;
 pub mod long_ops;
 pub mod path_ops;
+pub mod seq_ops;
 pub mod serialize;
 pub mod state;
 pub mod stopwatch;
