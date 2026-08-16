@@ -20,6 +20,7 @@ pub mod stopwatch;
 pub mod store;
 pub mod string_ops;
 pub mod terminal_mode;
+pub mod throwable_ops;
 
 #[cfg(feature = "tokio")]
 pub mod compression;
