@@ -280,6 +280,11 @@ impl CostAccounting {
         Cost::new(self.value.get(), "get")
     }
 
+    /// Set the current cost balance (port of `_cost.set`).
+    pub fn set(&self, cost: Cost) {
+        self.value.set(cost.value);
+    }
+
     /// Charge `amount` phlogistons, raising `OutOfPhlogistonsError` if the balance goes negative
     /// (port of `charge`).
     pub fn charge(&self, amount: Cost) -> Result<(), RholangError> {
