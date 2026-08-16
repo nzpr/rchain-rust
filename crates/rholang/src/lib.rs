@@ -14,6 +14,7 @@ pub mod errors;
 pub mod evaluate_result;
 pub mod matcher;
 pub mod normalizer;
+pub mod parser;
 pub mod pretty_printer;
 pub mod proc_ast;
 pub mod reduce;
