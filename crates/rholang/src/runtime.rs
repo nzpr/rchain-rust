@@ -61,6 +61,7 @@ pub struct RhoRuntime {
     reducer: Rc<RhoReducer>,
     space: RhoSpace,
     cost: Rc<CostAccounting>,
+    block_data: Rc<RefCell<BlockData>>,
     _history: RhoHistoryRepository,
 }
 
@@ -116,7 +117,7 @@ impl RhoRuntime {
 
         // Build the dispatcher (empty), then the system processes, then wire them together.
         let dispatcher = Rc::new(RholangAndScalaDispatcher::new(BTreeMap::new()));
-        let system_processes = SystemProcesses::new(charging_space.clone(), dispatcher.clone(), block_data);
+        let system_processes = SystemProcesses::new(charging_space.clone(), dispatcher.clone(), block_data.clone());
 
         let mut dispatch_table = BTreeMap::new();
         let mut urn_map = BTreeMap::new();
@@ -160,8 +161,14 @@ impl RhoRuntime {
             reducer,
             space,
             cost,
+            block_data,
             _history: history,
         })
+    }
+
+    /// Set the per-block data exposed to the `rho:block:data` contract (port of `setBlockData`).
+    pub fn set_block_data(&self, block_data: BlockData) {
+        *self.block_data.borrow_mut() = block_data;
     }
 
     /// Execute a `Par` in the given environment (port of `inj`).
