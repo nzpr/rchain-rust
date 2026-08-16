@@ -15,6 +15,7 @@ const KEY_HASH_LENGTH: usize = 32;
 const ETH_ADDRESS_LENGTH: usize = 40;
 
 /// A derived address: `prefix ++ keyHash ++ checksum` (port of `Address`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address {
     prefix: Vec<u8>,
     key_hash: Vec<u8>,
@@ -122,6 +123,7 @@ impl AddressTools {
 }
 
 /// A REV address (port of `RevAddress`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RevAddress(Address);
 
 impl RevAddress {
