@@ -8,6 +8,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use num_bigint::BigInt;
+use serde::{Deserialize, Serialize};
 
 /// A bitset of free-variable levels (the Scala `scala.collection.immutable.BitSet`).
 pub type BitSet = Vec<i32>;
@@ -44,8 +45,23 @@ impl<T> Ord for AlwaysEqual<T> {
     }
 }
 
+// `AlwaysEqual` serializes as JSON unit (`null`), matching the Scala `encodeAlwaysEqual`/
+// `decodeAlwaysEqual` (`Encoder.encodeUnit` / `Decoder.decodeUnit`).
+impl<T> Serialize for AlwaysEqual<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de, T: Default> Deserialize<'de> for AlwaysEqual<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let () = <() as Deserialize>::deserialize(deserializer)?;
+        Ok(AlwaysEqual(T::default()))
+    }
+}
+
 /// A variable (de Bruijn levels).
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub enum Var {
     BoundVar(i32),
     FreeVar(i32),
@@ -55,7 +71,7 @@ pub enum Var {
 }
 
 /// A `Par` — the top-level process, a flat record of eight list fields.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Par {
     pub sends: Vec<Send>,
     pub receives: Vec<Receive>,
@@ -87,7 +103,7 @@ impl Par {
 }
 
 /// A send: `chan!(data)` (or `chan!!(data)` when persistent).
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Send {
     pub chan: Box<Par>,
     pub data: Vec<Par>,
@@ -97,7 +113,7 @@ pub struct Send {
 }
 
 /// A receive bind: `patterns <- source`.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct ReceiveBind {
     pub patterns: Vec<Par>,
     pub source: Box<Par>,
@@ -106,7 +122,7 @@ pub struct ReceiveBind {
 }
 
 /// A receive: `for (binds) { body }`.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Receive {
     pub binds: Vec<ReceiveBind>,
     pub body: Box<Par>,
@@ -118,7 +134,7 @@ pub struct Receive {
 }
 
 /// A `new x1, ..., xn in { p }`.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct New {
     pub bind_count: i32,
     pub p: Box<Par>,
@@ -128,7 +144,7 @@ pub struct New {
 }
 
 /// A match case: `pattern => source`.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct MatchCase {
     pub pattern: Box<Par>,
     pub source: Box<Par>,
@@ -136,7 +152,7 @@ pub struct MatchCase {
 }
 
 /// A `match target { cases }`.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Match {
     pub target: Box<Par>,
     pub cases: Vec<MatchCase>,
@@ -145,7 +161,7 @@ pub struct Match {
 }
 
 /// A quoted/unquoted bundle.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Bundle {
     pub body: Box<Par>,
     pub write_flag: bool,
@@ -177,7 +193,7 @@ impl fmt::Display for Bundle {
 }
 
 /// An expression.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Serialize, Deserialize)]
 pub enum Expr {
     GBool(bool),
     GInt(i64),
@@ -215,7 +231,7 @@ pub enum Expr {
 }
 
 /// A list expression.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct EList {
     pub ps: Vec<Par>,
     pub locally_free: AlwaysEqual<BitSet>,
@@ -224,7 +240,7 @@ pub struct EList {
 }
 
 /// A tuple expression.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct ETuple {
     pub ps: Vec<Par>,
     pub locally_free: AlwaysEqual<BitSet>,
@@ -249,8 +265,46 @@ pub struct ParMap {
     pub remainder: Option<Box<Var>>,
 }
 
+// `ParSet`/`ParMap` serialize as a list (of `Par` / `(Par, Par)`), matching the Scala
+// `Encoder.encodeList.contramap` / `Decoder.decodeList` instances.
+impl Serialize for ParSet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.ps.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let ps = Vec::<Par>::deserialize(deserializer)?;
+        Ok(ParSet {
+            ps,
+            connective_used: false,
+            locally_free: AlwaysEqual(BitSet::default()),
+            remainder: None,
+        })
+    }
+}
+
+impl Serialize for ParMap {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.kvs.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ParMap {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let kvs = Vec::<(Par, Par)>::deserialize(deserializer)?;
+        Ok(ParMap {
+            kvs,
+            connective_used: false,
+            locally_free: AlwaysEqual(BitSet::default()),
+            remainder: None,
+        })
+    }
+}
+
 /// A method call: `target.methodName(arguments)`.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct EMethod {
     pub method_name: String,
     pub target: Box<Par>,
@@ -260,7 +314,7 @@ pub struct EMethod {
 }
 
 /// An unforgeable name.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub enum GUnforgeable {
     GPrivate(GPrivate),
     GDeployId(GDeployId),
@@ -270,23 +324,23 @@ pub enum GUnforgeable {
     Empty,
 }
 
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct GPrivate {
     pub id: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct GDeployId {
     pub sig: Vec<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct GDeployerId {
     pub public_key: Vec<u8>,
 }
 
 /// A logical connective.
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub enum Connective {
     ConnAnd(ConnectiveBody),
     ConnOr(ConnectiveBody),
@@ -302,12 +356,12 @@ pub enum Connective {
     Empty,
 }
 
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct ConnectiveBody {
     pub ps: Vec<Par>,
 }
 
-#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct VarRef {
     pub index: i32,
     pub depth: i32,
@@ -328,5 +382,35 @@ mod tests {
         assert_eq!(mk(true, false).to_string(), "bundle- ");
         assert_eq!(mk(false, true).to_string(), "bundle+ ");
         assert_eq!(mk(false, false).to_string(), "bundle0 ");
+    }
+
+    #[test]
+    fn par_serde_round_trips() {
+        let par = Par::default();
+        let json = serde_json::to_string(&par).unwrap();
+        let par2: Par = serde_json::from_str(&json).unwrap();
+        assert_eq!(par, par2);
+    }
+
+    #[test]
+    fn always_equal_serializes_as_null() {
+        let ae = AlwaysEqual(vec![1, 2, 3]);
+        assert_eq!(serde_json::to_string(&ae).unwrap(), "null");
+        let ae2: AlwaysEqual<BitSet> = serde_json::from_str("null").unwrap();
+        assert!(ae2.0.is_empty());
+    }
+
+    #[test]
+    fn par_set_serializes_as_list() {
+        let ps = ParSet {
+            ps: vec![Par::default()],
+            connective_used: false,
+            locally_free: AlwaysEqual(BitSet::default()),
+            remainder: None,
+        };
+        let json = serde_json::to_string(&ps).unwrap();
+        let ps2: ParSet = serde_json::from_str(&json).unwrap();
+        assert_eq!(ps2.ps.len(), 1);
+        assert!(!ps2.connective_used);
     }
 }
