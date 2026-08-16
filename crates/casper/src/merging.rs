@@ -486,7 +486,7 @@ impl MergeScope {
         base_state: Blake2b256Hash,
         fringe_states: &BTreeMap<BTreeSet<BlockHash>, FringeData>,
         history_repository: &RhoHistoryRepository,
-        block_index: F,
+        block_index: &F,
         rejection_cost: impl Fn(&DeployChainIndex) -> i64,
     ) -> Result<(Blake2b256Hash, BTreeSet<Vec<u8>>), String>
     where

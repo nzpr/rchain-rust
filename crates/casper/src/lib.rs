@@ -4,6 +4,7 @@
 //! monotonicity, block numbering/content-addressing, merge determinism, height-map contiguity).
 
 pub mod block_metadata_store;
+pub mod block_random_seed;
 pub mod block_status;
 pub mod bonds_parser;
 pub mod conf;
