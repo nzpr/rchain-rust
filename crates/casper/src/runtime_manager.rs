@@ -11,7 +11,9 @@ use rchain_models::casper::protocol::casper_message::{
     Event, PCost, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData, SystemDeployData,
 };
 use rchain_models::par_ops::from_expr;
+use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::validator::Validator;
 use rchain_rholang::evaluate_result::EvaluateResult;
 use rchain_rholang::runtime::RhoRuntime;
 use rchain_rholang::storage::RhoHistoryRepository;
@@ -308,7 +310,97 @@ impl RuntimeManager {
         }
         Ok((state_hash, processed_deploys, processed_system_deploys))
     }
+
+    /// Run a read-only exploratory deploy and capture its result (port of `playExploratoryDeploy`).
+    pub async fn play_exploratory_deploy(
+        &self,
+        term: &str,
+        hash: &StateHash,
+    ) -> Result<Vec<Par>, String> {
+        let rand = Blake2b512Random::default_random();
+        let mut return_rand = rand.copy();
+        let return_channel = RhoName::apply_bytes(return_rand.next());
+        self.capture_results(hash, term, &rand, &return_channel).await
+    }
+
+    async fn capture_results(
+        &self,
+        start: &StateHash,
+        term: &str,
+        rand: &Blake2b512Random,
+        return_channel: &Par,
+    ) -> Result<Vec<Par>, String> {
+        self.runtime.reset(to_blake(start)).await.map_err(|e| e)?;
+        let eval = self.runtime.evaluate(term, rand).map_err(|e| e.to_string())?;
+        if !eval.errors.is_empty() {
+            return Err(format!("{:?}", eval.errors));
+        }
+        self.runtime
+            .get_data_par(return_channel)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Query the current active validators at `hash` (port of `getActiveValidators`).
+    pub async fn get_active_validators(&self, hash: &StateHash) -> Result<Vec<Validator>, String> {
+        let pars = self
+            .play_exploratory_deploy(ACTIVATE_VALIDATOR_QUERY_SOURCE, hash)
+            .await?;
+        if pars.len() != 1 {
+            return Err(format!("Incorrect number of results: {}", pars.len()));
+        }
+        Ok(to_validator_seq(&pars[0]))
+    }
+
+    /// Query the current bonds at `hash` (port of `computeBonds`).
+    pub async fn compute_bonds(&self, hash: &StateHash) -> Result<BTreeMap<Validator, i64>, String> {
+        let pars = self.play_exploratory_deploy(BONDS_QUERY_SOURCE, hash).await?;
+        if pars.len() != 1 {
+            return Err(format!("Incorrect number of results: {}", pars.len()));
+        }
+        Ok(to_bond_map(&pars[0]))
+    }
 }
+
+fn to_validator_seq(p: &Par) -> Vec<Validator> {
+    let mut out = Vec::new();
+    if let Some(Expr::ESet(set)) = p.exprs.first() {
+        for v in &set.ps {
+            if let Some(Expr::GByteArray(bytes)) = v.exprs.first() {
+                out.push(Validator::from_slice(bytes));
+            }
+        }
+    }
+    out
+}
+
+fn to_bond_map(p: &Par) -> BTreeMap<Validator, i64> {
+    let mut out = BTreeMap::new();
+    if let Some(Expr::EMap(map)) = p.exprs.first() {
+        for (k, v) in &map.kvs {
+            if let (Some(Expr::GByteArray(vb)), Some(Expr::GInt(bond))) =
+                (k.exprs.first(), v.exprs.first())
+            {
+                out.insert(Validator::from_slice(vb), *bond);
+            }
+        }
+    }
+    out
+}
+
+const ACTIVATE_VALIDATOR_QUERY_SOURCE: &str = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:rchain:pos`, *poSCh) |
+  for(@(_, Pos) <- poSCh) {
+    @Pos!("getActiveValidators", *return)
+  }
+}"#;
+
+const BONDS_QUERY_SOURCE: &str = r#"new return, rl(`rho:registry:lookup`), poSCh in {
+  rl!(`rho:rchain:pos`, *poSCh) |
+  for(@(_, Pos) <- poSCh) {
+    @Pos!("getBonds", *return)
+  }
+}"#;
 
 fn to_blake(hash: &StateHash) -> Blake2b256Hash {
     Blake2b256Hash::from_byte_array(hash.as_bytes())
