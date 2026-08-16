@@ -11,4 +11,5 @@ linked-hash-map = "0.5"
 rchain-casper = { path = "../casper" }
 rchain-comm = { path = "../comm" }
 rchain-crypto = { path = "../crypto" }
+rchain-models = { path = "../models" }
 rchain-shared = { path = "../shared" }

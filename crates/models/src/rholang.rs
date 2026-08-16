@@ -4,7 +4,9 @@
 //! (or single-`GUnforgeable`) `Par`, and `unapply` recovers the underlying Scala value when the
 //! `Par` is exactly that shape.
 
-use crate::ast::{Expr, GDeployId, GDeployerId, GPrivate, GUnforgeable, Par};
+use crate::ast::{
+    EList, ETuple, Expr, GDeployId, GDeployerId, GPrivate, GUnforgeable, Par, ParMap, ParSet,
+};
 use crate::par_ops::{from_expr, is_nil, single_expr, single_unforgeable};
 
 /// Wrap a single unforgeable in a `Par` (the `GUnforgeable` → `Par` implicit).
@@ -96,6 +98,74 @@ pub mod RhoType {
         pub fn unapply(p: &Par) -> Option<&str> {
             match single_expr(p) {
                 Some(Expr::GUri(s)) => Some(s.as_str()),
+                _ => None,
+            }
+        }
+    }
+
+    /// `RhoTupleN` — a tuple of processes.
+    pub struct RhoTupleN;
+    impl RhoTupleN {
+        pub fn apply(ps: Vec<Par>) -> Par {
+            from_expr(Expr::ETuple(ETuple {
+                ps,
+                ..ETuple::default()
+            }))
+        }
+        pub fn unapply(p: &Par) -> Option<&[Par]> {
+            match single_expr(p) {
+                Some(Expr::ETuple(t)) => Some(&t.ps),
+                _ => None,
+            }
+        }
+    }
+
+    /// `RhoList` — a list of processes.
+    pub struct RhoList;
+    impl RhoList {
+        pub fn apply(ps: Vec<Par>) -> Par {
+            from_expr(Expr::EList(EList {
+                ps,
+                ..EList::default()
+            }))
+        }
+        pub fn unapply(p: &Par) -> Option<&[Par]> {
+            match single_expr(p) {
+                Some(Expr::EList(l)) => Some(&l.ps),
+                _ => None,
+            }
+        }
+    }
+
+    /// `RhoSet` — a set of processes.
+    pub struct RhoSet;
+    impl RhoSet {
+        pub fn apply(ps: Vec<Par>) -> Par {
+            from_expr(Expr::ESet(ParSet {
+                ps,
+                ..ParSet::default()
+            }))
+        }
+        pub fn unapply(p: &Par) -> Option<&[Par]> {
+            match single_expr(p) {
+                Some(Expr::ESet(s)) => Some(&s.ps),
+                _ => None,
+            }
+        }
+    }
+
+    /// `RhoMap` — a map from process keys to process values.
+    pub struct RhoMap;
+    impl RhoMap {
+        pub fn apply(kvs: Vec<(Par, Par)>) -> Par {
+            from_expr(Expr::EMap(ParMap {
+                kvs,
+                ..ParMap::default()
+            }))
+        }
+        pub fn unapply(p: &Par) -> Option<&[(Par, Par)]> {
+            match single_expr(p) {
+                Some(Expr::EMap(m)) => Some(&m.kvs),
                 _ => None,
             }
         }

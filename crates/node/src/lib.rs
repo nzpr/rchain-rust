@@ -3,5 +3,6 @@
 //! Mirrors `node/src/main/scala/coop/rchain/node/`. The first slice is the `configuration`
 //! sub-package (CLI + HOCON config).
 
+pub mod api;
 pub mod configuration;
 pub mod diagnostics;
