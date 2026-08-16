@@ -21,7 +21,7 @@ Ported in dependency-respecting order (easiest/leaf modules first):
 | `comm` | `comm/` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages); UPnP/WhoAmI deferred |
 | `rholang` | `rholang/` | **in progress** (Env + errors; `par_ops` moved into `models`); Substitute/accounting/Reduce/matcher/dispatch pending |
 | `casper` | `casper/` | **in progress** (block-validation, DAG storage/message, merge index); `CasperConf`/`GenesisBlockData`/`ListenAtName.Name` added |
-| `node` | `node/` | **in progress** (configuration: CLI + HOCON merge + `NodeConf`; diagnostics: metric registry + Prometheus/InfluxDB encoders; api: `RhoExpr` Par⇄JSON tree); runtime/web/gRPC pending |
+| `node` | `node/` | **in progress** (configuration: CLI + HOCON merge + `NodeConf`; diagnostics: metric registry + Prometheus/InfluxDB encoders; api: `RhoExpr` Par⇄JSON tree; web: transaction DTOs); runtime/gRPC pending |
 | `rspace-bench` | `rspace-bench/` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `roscala/`, `rosette/` (C++ VM).
