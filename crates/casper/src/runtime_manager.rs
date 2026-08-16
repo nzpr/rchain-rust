@@ -6,7 +6,9 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{Expr, Par, Var};
 use rchain_models::block::state_hash::StateHash;
-use rchain_models::casper::protocol::casper_message::{Event, PCost, ProcessedDeploy, SignedDeployData};
+use rchain_models::casper::protocol::casper_message::{
+    Event, PCost, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData, SystemDeployData,
+};
 use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_rholang::evaluate_result::EvaluateResult;
@@ -15,7 +17,7 @@ use rchain_rholang::storage::RhoHistoryRepository;
 use rchain_rholang::system_processes::BlockData;
 
 use crate::event_converter::to_casper_event;
-use crate::rholang::UserDeployRuntimeResult;
+use crate::rholang::{SystemDeployRuntimeResult, UserDeployRuntimeResult};
 use crate::system_deploy::{process_bool_result, SystemDeploy, SystemDeployUserError};
 
 /// The runtime manager (port of `RuntimeManager`). The deploy-execution, replay, and bond-computation
@@ -174,6 +176,63 @@ impl RuntimeManager {
             },
             None => Err("Unable to consume results of system deploy".to_string()),
         }
+    }
+
+    /// Play a single block-level system deploy from `state_hash` (port of `playSystemDeploy`).
+    pub async fn play_system_deploy(
+        &self,
+        state_hash: &Blake2b256Hash,
+        deploy: &SystemDeploy,
+    ) -> Result<(Blake2b256Hash, SystemDeployRuntimeResult), String> {
+        self.runtime.reset(*state_hash).await.map_err(|e| e)?;
+        let (result, _eval_result) = self.eval_system_deploy(deploy).await?;
+        let checkpoint = self.runtime.create_soft_checkpoint().await;
+        let event_list: Vec<Event> = checkpoint.log.iter().map(to_casper_event).collect();
+        let final_hash = self.runtime.create_checkpoint().await.map_err(|e| e)?.root;
+        match result {
+            Ok(()) => {
+                let processed = ProcessedSystemDeploy::Succeeded {
+                    event_list,
+                    system_deploy: SystemDeployData::Empty,
+                };
+                Ok((
+                    final_hash,
+                    SystemDeployRuntimeResult {
+                        deploy: processed,
+                        mergeable: BTreeMap::new(),
+                    },
+                ))
+            }
+            Err(e) => Err(format!("System deploy failed: {}", e.0)),
+        }
+    }
+
+    /// Compute the post-state from user deploys + block-level system deploys (port of
+    /// `computeState`; per-deploy pre-charge/refund cost accounting is deferred).
+    pub async fn compute_state(
+        &self,
+        start_hash: &Blake2b256Hash,
+        terms: &[SignedDeployData],
+        system_deploys: &[SystemDeploy],
+        rand: &Blake2b512Random,
+        block_data: BlockData,
+    ) -> Result<
+        (
+            Blake2b256Hash,
+            Vec<UserDeployRuntimeResult>,
+            Vec<SystemDeployRuntimeResult>,
+        ),
+        String,
+    > {
+        self.runtime.set_block_data(block_data);
+        let (mut state_hash, processed_deploys) = self.play_deploys(start_hash, terms, rand).await?;
+        let mut processed_system_deploys = Vec::new();
+        for sd in system_deploys {
+            let (new_hash, processed) = self.play_system_deploy(&state_hash, sd).await?;
+            state_hash = new_hash;
+            processed_system_deploys.push(processed);
+        }
+        Ok((state_hash, processed_deploys, processed_system_deploys))
     }
 }
 
