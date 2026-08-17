@@ -102,5 +102,6 @@ pure/API surface. Remaining (Phase 4):
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).
-- **A7 property tests** — RSpace Laws 7–11 property tests are pending.
+- **A7 property tests** — RSpace Laws 7/8/9/10 are property-tested (`rspace/src/property_tests.rs`);
+  Law 11 (replay determinism) is covered by the rholang `replay_matches_play` integration test.
 - **`rspace-bench`** — gated.
