@@ -13,6 +13,7 @@ pub mod key_value_cache;
 pub mod language;
 pub mod long_ops;
 pub mod matcher;
+pub mod maybe_cell;
 pub mod path_ops;
 pub mod printer;
 pub mod seq_ops;
