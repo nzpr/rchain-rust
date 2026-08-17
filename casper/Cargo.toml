@@ -14,7 +14,7 @@ rchain-block-storage = { path = "../block-storage" }
 rchain-rholang = { path = "../rholang" }
 rchain-rspace = { path = "../rspace" }
 rchain-sdk = { path = "../sdk" }
-rchain-shared = { path = "../shared" }
+rchain-shared = { path = "../shared", features = ["lmdb"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
