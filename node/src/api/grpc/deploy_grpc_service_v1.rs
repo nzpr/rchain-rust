@@ -1,13 +1,14 @@
 //! The deploy gRPC service (port of `DeployGrpcServiceV1.scala`).
 //!
 //! Streaming responses (`visualizeDag`/`getBlocks`/`getBlocksByHeights`) collapse to `Vec<_>`
-//! (the monix `Observable` layer is transport). `getEventByHash` is deferred pending
-//! `BlockReportApi` + the report protos.
+//! (the monix `Observable` layer is transport).
 
 use std::sync::Arc;
 
 use rchain_casper::api::block_api::BlockApi;
+use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_models::ast::Par;
+use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::SignedDeployData;
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, BlockQuery, BlocksQuery, BlocksQueryByHeight, BondStatusQuery,
@@ -15,15 +16,21 @@ use rchain_models::casper::protocol::deploy_service::{
     DataWithBlockInfo, DeployExecStatus, ExploratoryDeployQuery, FindDeployQuery, IsFinalizedQuery,
     LightBlockInfo, MachineVerifyQuery, ReportQuery, ServiceError, Status, VisualizeDagQuery,
 };
+use rchain_models::casper::protocol::report::BlockEventInfo;
+use rchain_shared::base16;
 
 /// The deploy service (port of `DeployGrpcServiceV1`).
 pub struct DeployGrpcServiceV1 {
     block_api: Arc<dyn BlockApi>,
+    block_report_api: Arc<BlockReportApi>,
 }
 
 impl DeployGrpcServiceV1 {
-    pub fn new(block_api: Arc<dyn BlockApi>) -> Self {
-        DeployGrpcServiceV1 { block_api }
+    pub fn new(block_api: Arc<dyn BlockApi>, block_report_api: Arc<BlockReportApi>) -> Self {
+        DeployGrpcServiceV1 {
+            block_api,
+            block_report_api,
+        }
     }
 
     /// Queue a deploy (port of `doDeploy`).
@@ -171,11 +178,22 @@ impl DeployGrpcServiceV1 {
             .map_err(ServiceError::new)
     }
 
-    /// Get a block's report events (deferred pending `BlockReportApi`).
-    pub async fn get_event_by_hash(&self, _request: &ReportQuery) -> Result<(), ServiceError> {
-        Err(ServiceError::new(
-            "getEventByHash is deferred pending BlockReportApi",
-        ))
+    /// Get a block's report events (port of `getEventByHash`).
+    pub async fn get_event_by_hash(
+        &self,
+        request: &ReportQuery,
+    ) -> Result<BlockEventInfo, ServiceError> {
+        let bytes = base16::decode(&request.hash).ok_or_else(|| {
+            ServiceError::new(format!(
+                "Request hash: {} is not valid hex string",
+                request.hash
+            ))
+        })?;
+        let hash = BlockHash::from_slice(&bytes);
+        self.block_report_api
+            .block_report(&hash, request.force_replay)
+            .await
+            .map_err(ServiceError::new)
     }
 
     /// List blocks in a height range (port of `getBlocksByHeights`).

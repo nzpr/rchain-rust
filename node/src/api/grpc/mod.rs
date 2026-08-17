@@ -17,6 +17,7 @@ pub use repl_grpc_service::{CmdRequest, EvalRequest, ReplGrpcService, ReplRespon
 use std::sync::Arc;
 
 use rchain_casper::api::block_api::BlockApi;
+use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_rholang::runtime::RhoRuntime;
 
 /// The trio of node gRPC services (port of `GrpcServices`).
@@ -27,10 +28,14 @@ pub struct GrpcServices {
 }
 
 impl GrpcServices {
-    /// Build the service trio from the block API + runtime (port of `GrpcServices.build`).
-    pub fn build(block_api: Arc<dyn BlockApi>, runtime: Arc<RhoRuntime>) -> GrpcServices {
+    /// Build the service trio from the block APIs + runtime (port of `GrpcServices.build`).
+    pub fn build(
+        block_api: Arc<dyn BlockApi>,
+        block_report_api: Arc<BlockReportApi>,
+        runtime: Arc<RhoRuntime>,
+    ) -> GrpcServices {
         let repl = ReplGrpcService::new(runtime);
-        let deploy = DeployGrpcServiceV1::new(block_api.clone());
+        let deploy = DeployGrpcServiceV1::new(block_api.clone(), block_report_api);
         let propose = ProposeGrpcServiceV1::new(block_api);
         GrpcServices {
             deploy,
