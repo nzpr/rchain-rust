@@ -25,7 +25,7 @@ pub mod fringe_data;
 pub mod murmur_hash3;
 pub mod normalizer_env;
 pub mod pretty;
-mod proto;
+pub mod proto;
 pub mod runtime;
 pub mod sorter;
 pub mod string_syntax;

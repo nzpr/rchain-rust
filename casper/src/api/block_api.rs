@@ -20,7 +20,7 @@ pub type ApiErr<A> = Result<A, String>;
 /// The block API (port of `BlockApi[F]`). Implementations read from the block store/DAG and drive
 /// propose via the runtime.
 #[async_trait]
-pub trait BlockApi {
+pub trait BlockApi: Send + Sync {
     async fn status(&self) -> Status;
 
     async fn deploy(&self, deploy: &SignedDeployData) -> ApiErr<String>;
