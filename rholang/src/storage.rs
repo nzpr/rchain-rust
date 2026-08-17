@@ -1,12 +1,12 @@
 //! The rholang↔rspace runtime bridge (port of `interpreter/storage/`).
 //!
 //! `RhoHistoryRepository` specializes `rspace::HistoryRepository` to the rholang types;
-//! [`ChargingRSpace`] adapts the async rspace `Tuplespace` to the synchronous rholang
-//! `reduce::Tuplespace` via `block_on` (the "sync-over-async" bridge).
+//! [`ChargingRSpace`] adapts the async rspace `Tuplespace` to the async rholang `reduce::Tuplespace`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use rchain_models::ast::{EList, Expr, Par, Var};
 use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
@@ -18,7 +18,7 @@ use rchain_rspace::tuple_space::{
 
 use crate::errors::RholangError;
 use crate::matcher::{fold_match, spatial_match, FreeMap};
-use crate::reduce::{Application, Tuplespace as ReduceTuplespace};
+use crate::reduce::{Application, Tuplespace};
 
 /// The rholang history repository (port of `RhoHistoryRepository`).
 pub type RhoHistoryRepository =
@@ -84,55 +84,49 @@ impl Match<BindPattern, ListParWithRandom> for RhoMatch {
     }
 }
 
-/// The charging tuplespace bridge: adapts the async rspace to the sync rholang `Tuplespace` (port
+/// The charging tuplespace bridge: adapts the async rspace to the async rholang `Tuplespace` (port
 /// of `ChargingRSpace`). Gas charging for storage/events is deferred; this delegates produce/consume
 /// and converts the result.
 #[derive(Clone)]
 pub struct ChargingRSpace {
     space: RhoTuplespace,
-    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl ChargingRSpace {
-    /// Wrap `space`, driving its async produce/consume through `runtime` (the sync-over-async
-    /// bridge). The runtime is shared (`Arc`) so the reducer and system-process `ContractCall` can
-    /// operate on the same underlying space, and so installation can `block_on` the same handle.
-    pub fn new(space: RhoTuplespace, runtime: Arc<tokio::runtime::Runtime>) -> Self {
-        ChargingRSpace { space, runtime }
+    /// Wrap `space`, delegating its async produce/consume directly (no `block_on` bridge).
+    pub fn new(space: RhoTuplespace) -> Self {
+        ChargingRSpace { space }
     }
 }
 
-impl ReduceTuplespace for ChargingRSpace {
-    fn produce(
+#[async_trait]
+impl Tuplespace for ChargingRSpace {
+    async fn produce(
         &self,
         channel: &Par,
         data: ListParWithRandom,
         persist: bool,
     ) -> Result<Application, RholangError> {
         let result = self
-            .runtime
-            .block_on(self.space.produce(channel.clone(), data, persist))
+            .space
+            .produce(channel.clone(), data, persist)
+            .await
             .map_err(|e| RholangError::ReduceError(e.to_string()))?;
         Ok(to_application(result))
     }
 
-    fn consume(
+    async fn consume(
         &self,
         channels: &[Par],
         patterns: &[BindPattern],
         continuation: TaggedContinuation,
         persist: bool,
-        peeks: &BTreeSet<usize>,
+        peeks: BTreeSet<usize>,
     ) -> Result<Application, RholangError> {
         let result = self
-            .runtime
-            .block_on(self.space.consume(
-                channels,
-                patterns,
-                continuation,
-                persist,
-                peeks.clone(),
-            ))
+            .space
+            .consume(channels, patterns, continuation, persist, peeks)
+            .await
             .map_err(|e| RholangError::ReduceError(e.to_string()))?;
         Ok(to_application(result))
     }

@@ -49,6 +49,7 @@ pub async fn get_balance_from_vault_par(
             &Env::new(),
             &Blake2b512Random::default_random(),
         )
+        .await
         .map_err(|e| e.to_string())?;
     let data = runtime.get_data(&ret).await.map_err(|e| e.to_string())?;
     Ok(data.first().and_then(|d| {

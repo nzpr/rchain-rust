@@ -176,6 +176,7 @@ impl RuntimeManager {
         let eval_result = self
             .runtime
             .evaluate(&deploy.data.term, rand)
+            .await
             .map_err(|e| e.to_string())?;
         let checkpoint = self.runtime.create_soft_checkpoint().await;
         let succeeded = eval_result.errors.is_empty();
@@ -206,7 +207,9 @@ impl RuntimeManager {
         self.runtime.reset(*start_hash).await.map_err(|e| e)?;
         let mut results = Vec::new();
         for (i, d) in terms.iter().enumerate() {
-            let r = rand.split_byte(i as u8);
+            // The user-deploy split index (1) matches `processDeployWithMergeableData`, so the
+            // genesis play random agrees with the replay (`RuntimeReplayOps`).
+            let r = rand.split_byte(i as u8).split_byte(1);
             let (processed, eval_result) = self.process_deploy(d, &r).await?;
             results.push(UserDeployRuntimeResult {
                 deploy: processed,
@@ -304,9 +307,10 @@ impl RuntimeManager {
     }
 
     /// Run a system deploy's source (port of `evaluateSystemSource`).
-    fn evaluate_system_source(&self, deploy: &SystemDeploy) -> Result<EvaluateResult, String> {
+    async fn evaluate_system_source(&self, deploy: &SystemDeploy) -> Result<EvaluateResult, String> {
         self.runtime
             .evaluate_with_env(deploy.source, &deploy.normalizer_env, &deploy.rand)
+            .await
             .map_err(|e| e.to_string())
     }
 
@@ -332,7 +336,7 @@ impl RuntimeManager {
         &self,
         deploy: &SystemDeploy,
     ) -> Result<(Result<(), SystemDeployUserError>, EvaluateResult), String> {
-        let eval_result = self.evaluate_system_source(deploy)?;
+        let eval_result = self.evaluate_system_source(deploy).await?;
         if !eval_result.errors.is_empty() {
             return Err(format!("Unexpected system errors: {:?}", eval_result.errors));
         }
@@ -450,7 +454,7 @@ impl RuntimeManager {
         return_channel: &Par,
     ) -> Result<Vec<Par>, String> {
         self.runtime.reset(to_blake(start)).await.map_err(|e| e)?;
-        let eval = self.runtime.evaluate(term, rand).map_err(|e| e.to_string())?;
+        let eval = self.runtime.evaluate(term, rand).await.map_err(|e| e.to_string())?;
         if !eval.errors.is_empty() {
             return Err(format!("{:?}", eval.errors));
         }

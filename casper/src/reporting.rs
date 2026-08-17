@@ -153,6 +153,7 @@ impl ReportingCasper for RhoReporter {
     async fn trace(&self, block: BlockMessage) -> Result<ReplayResult, String> {
         let space = (self.create_space)();
         let runtime = ReportingRuntime::create(space, self.mergeable_tag_name.clone())
+            .await
             .map_err(|e| e.to_string())?;
 
         let pre_state_hash = Blake2b256Hash::from_byte_array(&block.pre_state_hash);

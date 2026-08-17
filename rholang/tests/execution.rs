@@ -13,7 +13,7 @@ use rchain_rholang::env::Env;
 use rchain_rholang::registry::registry_bootstrap_ast;
 use rchain_rspace::history::history::empty_root_hash_value;
 
-use common::{block_on, build_runtime_pair, load_golden};
+use common::{build_runtime_pair, load_golden};
 
 /// A fixed, deterministic random seed so post-state hashes are reproducible.
 fn fixed_rand() -> Blake2b512Random {
@@ -30,62 +30,66 @@ fn assert_state_hash(case: &str, hash: &[u8]) {
     assert_eq!(rchain_shared::base16::encode(hash), want, "golden mismatch for {case}");
 }
 
-#[test]
-fn execute_deploy_produces_datum() {
-    let (rt, _replay) = build_runtime_pair();
-    let res = rt.evaluate(r#"@"chan"!(42)"#, &fixed_rand()).expect("evaluate");
+#[tokio::test]
+async fn execute_deploy_produces_datum() {
+    let (rt, _replay) = build_runtime_pair().await;
+    let res = rt.evaluate(r#"@"chan"!(42)"#, &fixed_rand()).await.expect("evaluate");
     assert!(res.succeeded(), "unexpected errors: {:?}", res.errors);
-    let data = block_on(rt.get_data_par(&chan("chan"))).expect("get_data_par");
+    let data = rt.get_data_par(&chan("chan")).await.expect("get_data_par");
     assert_eq!(data, vec![from_expr(Expr::GInt(42))]);
 }
 
-#[test]
-fn execute_deploy_state_hash_is_deterministic() {
-    let (a, _) = build_runtime_pair();
-    let (b, _) = build_runtime_pair();
-    a.evaluate(r#"@"chan"!(42)"#, &fixed_rand()).unwrap();
-    b.evaluate(r#"@"chan"!(42)"#, &fixed_rand()).unwrap();
-    let ha = block_on(a.create_checkpoint()).unwrap().root;
-    let hb = block_on(b.create_checkpoint()).unwrap().root;
+#[tokio::test]
+async fn execute_deploy_state_hash_is_deterministic() {
+    let (a, _) = build_runtime_pair().await;
+    let (b, _) = build_runtime_pair().await;
+    a.evaluate(r#"@"chan"!(42)"#, &fixed_rand()).await.unwrap();
+    b.evaluate(r#"@"chan"!(42)"#, &fixed_rand()).await.unwrap();
+    let ha = a.create_checkpoint().await.unwrap().root;
+    let hb = b.create_checkpoint().await.unwrap().root;
     assert_eq!(ha, hb);
     assert_state_hash("exec_deploy_42", ha.as_bytes());
 }
 
-#[test]
-fn replay_matches_play() {
-    let (rt, rrt) = build_runtime_pair();
+#[tokio::test]
+async fn replay_matches_play() {
+    let (rt, rrt) = build_runtime_pair().await;
     let rand = fixed_rand();
-    rt.evaluate(r#"@"chan"!(42)"#, &rand).unwrap();
-    let cp = block_on(rt.create_checkpoint()).unwrap();
+    rt.evaluate(r#"@"chan"!(42)"#, &rand).await.unwrap();
+    let cp = rt.create_checkpoint().await.unwrap();
 
     // Replay from the empty pre-state against the recorded play log.
-    block_on(rrt.reset(empty_root_hash_value())).unwrap();
-    block_on(rrt.rig(cp.log.clone()));
-    rrt.evaluate(r#"@"chan"!(42)"#, &rand).unwrap();
-    block_on(rrt.check_replay_data()).expect("replay data consistent");
+    rrt.reset(empty_root_hash_value()).await.unwrap();
+    rrt.rig(cp.log.clone()).await;
+    rrt.evaluate(r#"@"chan"!(42)"#, &rand).await.unwrap();
+    rrt.check_replay_data().await.expect("replay data consistent");
 
-    let replay_cp = block_on(rrt.create_checkpoint()).unwrap();
+    let replay_cp = rrt.create_checkpoint().await.unwrap();
     assert_eq!(cp.root, replay_cp.root);
     assert_state_hash("replay_deploy_42", replay_cp.root.as_bytes());
 }
 
-#[test]
-fn empty_state_bootstrap_is_deterministic() {
-    let (rt, _replay) = build_runtime_pair();
-    block_on(rt.reset(empty_root_hash_value())).unwrap();
+#[tokio::test]
+async fn empty_state_bootstrap_is_deterministic() {
+    let (rt, _replay) = build_runtime_pair().await;
+    rt.reset(empty_root_hash_value()).await.unwrap();
     rt.inj(&registry_bootstrap_ast(), &Env::new(), &fixed_rand())
+        .await
         .unwrap();
-    let root = block_on(rt.create_checkpoint()).unwrap().root;
+    let root = rt.create_checkpoint().await.unwrap().root;
     assert_state_hash("empty_state", root.as_bytes());
 }
 
-#[test]
-fn failing_deploy_is_captured_not_propagated() {
-    let (rt, _replay) = build_runtime_pair();
+#[tokio::test]
+async fn failing_deploy_is_captured_not_propagated() {
+    let (rt, _replay) = build_runtime_pair().await;
     // `1 + "a"` is a well-formed term whose reduction is a type error (Int + String).
-    let res = rt.evaluate(r#"@"chan"!(1 + "a")"#, &fixed_rand()).expect("evaluate returns Ok");
+    let res = rt
+        .evaluate(r#"@"chan"!(1 + "a")"#, &fixed_rand())
+        .await
+        .expect("evaluate returns Ok");
     assert!(res.failed(), "expected a captured failure");
     assert!(!res.errors.is_empty());
     // The post-state is still checkpointable.
-    block_on(rt.create_checkpoint()).expect("checkpoint after failed deploy");
+    rt.create_checkpoint().await.expect("checkpoint after failed deploy");
 }

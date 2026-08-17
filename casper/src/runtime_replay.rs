@@ -50,9 +50,9 @@ pub trait ReplayRuntime {
 
     async fn reset(&self, root: Blake2b256Hash) -> Result<(), String>;
 
-    fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError>;
+    async fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError>;
 
-    fn evaluate_with_env(
+    async fn evaluate_with_env(
         &self,
         term: &str,
         env: &BTreeMap<String, Par>,
@@ -248,6 +248,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         let result = self
             .runtime
             .evaluate(&processed_deploy.deploy.data.term, &rand)
+            .await
             .map_err(|e| ReplayFailure::internal_error(e.to_string()))?;
         if result.failed() {
             self.runtime.revert_to_soft_checkpoint(fallback).await;
@@ -347,6 +348,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         let eval_result = self
             .runtime
             .evaluate_with_env(deploy.source, &deploy.normalizer_env, &deploy.rand)
+            .await
             .map_err(|e| e.to_string())?;
         if !eval_result.errors.is_empty() {
             return Err(format!("Unexpected system errors: {:?}", eval_result.errors));
@@ -465,17 +467,17 @@ impl ReplayRuntime for ReplayRhoRuntime {
         ReplayRhoRuntime::reset(self, root).await
     }
 
-    fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError> {
-        ReplayRhoRuntime::evaluate(self, term, rand)
+    async fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError> {
+        ReplayRhoRuntime::evaluate(self, term, rand).await
     }
 
-    fn evaluate_with_env(
+    async fn evaluate_with_env(
         &self,
         term: &str,
         env: &BTreeMap<String, Par>,
         rand: &Blake2b512Random,
     ) -> Result<EvaluateResult, RholangError> {
-        ReplayRhoRuntime::evaluate_with_env(self, term, env, rand)
+        ReplayRhoRuntime::evaluate_with_env(self, term, env, rand).await
     }
 
     async fn create_soft_checkpoint(
@@ -526,17 +528,17 @@ impl ReplayRuntime for ReportingRuntime {
         ReportingRuntime::reset(self, root).await
     }
 
-    fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError> {
-        ReportingRuntime::evaluate(self, term, rand)
+    async fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError> {
+        ReportingRuntime::evaluate(self, term, rand).await
     }
 
-    fn evaluate_with_env(
+    async fn evaluate_with_env(
         &self,
         term: &str,
         env: &BTreeMap<String, Par>,
         rand: &Blake2b512Random,
     ) -> Result<EvaluateResult, RholangError> {
-        ReportingRuntime::evaluate_with_env(self, term, env, rand)
+        ReportingRuntime::evaluate_with_env(self, term, env, rand).await
     }
 
     async fn create_soft_checkpoint(

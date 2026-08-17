@@ -54,7 +54,7 @@ impl ReplGrpcService {
             },
             Ok(_term) => {
                 let rand = Blake2b512Random::default_random();
-                let eval = self.runtime.evaluate(source, &rand);
+                let eval = self.runtime.evaluate(source, &rand).await;
                 let pretty_storage = if print_unmatched_sends_only {
                     pretty_print_unmatched_sends(self.runtime.as_ref()).await
                 } else {

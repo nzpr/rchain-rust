@@ -3,10 +3,8 @@
 //! A `ReplayRhoRuntime` analogue whose space is a [`ReportingRspace`], so produce/consume/COMM
 //! events are recorded during replay. Exposes `get_report` to drain the recorded report.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
@@ -51,24 +49,19 @@ pub async fn create_reporting_rspace(
 
 /// The reporting runtime (port of `ReportingRuntime`).
 pub struct ReportingRuntime {
-    reducer: Rc<RhoReducer>,
+    reducer: Arc<RhoReducer>,
     space: Arc<RhoReportingRspace>,
-    cost: Rc<CostAccounting>,
-    block_data: Rc<RefCell<BlockData>>,
+    cost: Arc<CostAccounting>,
+    block_data: Arc<Mutex<BlockData>>,
 }
 
 impl ReportingRuntime {
-    pub fn create(
+    pub async fn create(
         space: Arc<RhoReportingRspace>,
         mergeable_tag_name: Par,
     ) -> std::io::Result<ReportingRuntime> {
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?,
-        );
         let tuplespace: RhoTuplespace = space.clone();
-        let core = build_runtime_core(&tuplespace, &runtime, mergeable_tag_name)?;
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name).await?;
         Ok(ReportingRuntime {
             reducer: core.reducer,
             space,
@@ -83,39 +76,41 @@ impl ReportingRuntime {
     }
 
     pub fn set_block_data(&self, block_data: BlockData) {
-        *self.block_data.borrow_mut() = block_data;
+        *self.block_data.lock().unwrap() = block_data;
     }
 
-    pub fn inj(
+    pub async fn inj(
         &self,
         par: &Par,
         env: &Env<Par>,
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
-        self.reducer.eval(par, env, rand, self.cost.as_ref())
+        self.reducer.eval(par, env, rand, self.cost.as_ref()).await
     }
 
-    pub fn evaluate(
+    pub async fn evaluate(
         &self,
         term: &str,
         rand: &Blake2b512Random,
     ) -> Result<EvaluateResult, RholangError> {
-        self.evaluate_with_env(term, &BTreeMap::new(), rand)
+        self.evaluate_with_env(term, &BTreeMap::new(), rand).await
     }
 
-    pub fn evaluate_with_env(
+    pub async fn evaluate_with_env(
         &self,
         term: &str,
         env: &BTreeMap<String, Par>,
         rand: &Blake2b512Random,
     ) -> Result<EvaluateResult, RholangError> {
         let par = crate::normalizer::source_to_adt_with_env(term, env)?;
-        let errors = match self.inj(&par, &Env::new(), rand) {
+        let before = self.cost.total_charged();
+        let errors = match self.inj(&par, &Env::new(), rand).await {
             Ok(()) => Vec::new(),
             Err(e) => vec![e],
         };
+        let cost = self.cost.total_charged() - before;
         Ok(EvaluateResult {
-            cost: crate::accounting::Cost::new(self.cost.total_charged(), "evaluate"),
+            cost: crate::accounting::Cost::new(cost, "evaluate"),
             errors,
             mergeable: BTreeSet::new(),
         })

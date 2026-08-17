@@ -4,8 +4,7 @@
 //! builds the `ScalaBodyFn` handlers (stdout/stderr, crypto verify/hash, block data, REV address,
 //! deployer-id ops, registry ops, sys-auth-token ops) that the runtime installs and dispatches to.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use rchain_crypto::hash::{blake2b256, keccak256, sha256};
 use rchain_crypto::public_key::PublicKey;
@@ -16,6 +15,7 @@ use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_models::rholang::RhoType::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
+use rchain_models::runtime::ListParWithRandom;
 
 use crate::contract_call::ContractCall;
 use crate::dispatch::{RholangAndScalaDispatcher, ScalaBodyFn};
@@ -151,16 +151,16 @@ fn illegal_arg(msg: &str) -> RholangError {
 
 /// The system-process context (port of `SystemProcesses[F]`).
 pub struct SystemProcesses {
-    contract_call: ContractCall<ChargingRSpace, Rc<RholangAndScalaDispatcher>>,
+    contract_call: ContractCall<ChargingRSpace, Arc<RholangAndScalaDispatcher>>,
     pretty_printer: PrettyPrinter,
-    block_data: Rc<RefCell<BlockData>>,
+    block_data: Arc<Mutex<BlockData>>,
 }
 
 impl SystemProcesses {
     pub fn new(
         space: ChargingRSpace,
-        dispatcher: Rc<RholangAndScalaDispatcher>,
-        block_data: Rc<RefCell<BlockData>>,
+        dispatcher: Arc<RholangAndScalaDispatcher>,
+        block_data: Arc<Mutex<BlockData>>,
     ) -> Self {
         SystemProcesses {
             contract_call: ContractCall::new(space, dispatcher),
@@ -279,68 +279,84 @@ impl SystemProcesses {
     fn stdout(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let pp = self.pretty_printer.clone();
-        Box::new(move |args| {
-            let (pars, _) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("stdout expects one argument"))?;
-            match pars.as_slice() {
-                [arg] => {
-                    println!("{}", pp.build_string(arg));
-                    Ok(())
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let pp = pp.clone();
+            Box::pin(async move {
+                let (pars, _) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("stdout expects one argument"))?;
+                match pars.as_slice() {
+                    [arg] => {
+                        println!("{}", pp.build_string(arg));
+                        Ok(())
+                    }
+                    _ => Err(illegal_arg("stdout expects one argument")),
                 }
-                _ => Err(illegal_arg("stdout expects one argument")),
-            }
+            })
         })
     }
 
     fn stdout_ack(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let pp = self.pretty_printer.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("stdoutAck expects two arguments"))?;
-            match pars.as_slice() {
-                [arg, ack] => {
-                    println!("{}", pp.build_string(arg));
-                    cc.produce(&rand, &[Par::default()], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let pp = pp.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("stdoutAck expects two arguments"))?;
+                match pars.as_slice() {
+                    [arg, ack] => {
+                        println!("{}", pp.build_string(arg));
+                        cc.produce(&rand, &[Par::default()], ack).await
+                    }
+                    _ => Err(illegal_arg("stdoutAck expects two arguments")),
                 }
-                _ => Err(illegal_arg("stdoutAck expects two arguments")),
-            }
+            })
         })
     }
 
     fn stderr(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let pp = self.pretty_printer.clone();
-        Box::new(move |args| {
-            let (pars, _) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("stderr expects one argument"))?;
-            match pars.as_slice() {
-                [arg] => {
-                    eprintln!("{}", pp.build_string(arg));
-                    Ok(())
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let pp = pp.clone();
+            Box::pin(async move {
+                let (pars, _) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("stderr expects one argument"))?;
+                match pars.as_slice() {
+                    [arg] => {
+                        eprintln!("{}", pp.build_string(arg));
+                        Ok(())
+                    }
+                    _ => Err(illegal_arg("stderr expects one argument")),
                 }
-                _ => Err(illegal_arg("stderr expects one argument")),
-            }
+            })
         })
     }
 
     fn stderr_ack(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let pp = self.pretty_printer.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("stderrAck expects two arguments"))?;
-            match pars.as_slice() {
-                [arg, ack] => {
-                    eprintln!("{}", pp.build_string(arg));
-                    cc.produce(&rand, &[Par::default()], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let pp = pp.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("stderrAck expects two arguments"))?;
+                match pars.as_slice() {
+                    [arg, ack] => {
+                        eprintln!("{}", pp.build_string(arg));
+                        cc.produce(&rand, &[Par::default()], ack).await
+                    }
+                    _ => Err(illegal_arg("stderrAck expects two arguments")),
                 }
-                _ => Err(illegal_arg("stderrAck expects two arguments")),
-            }
+            })
         })
     }
 
@@ -352,49 +368,55 @@ impl SystemProcesses {
         algorithm: fn(&[u8], &[u8], &[u8]) -> bool,
     ) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc.unapply(args).ok_or_else(|| {
-                illegal_arg(&format!(
-                    "{name} expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
-                ))
-            })?;
-            match pars.as_slice() {
-                [data, signature, pub_key, ack] => {
-                    let (Some(d), Some(s), Some(p)) = (
-                        RhoByteArray::unapply(data),
-                        RhoByteArray::unapply(signature),
-                        RhoByteArray::unapply(pub_key),
-                    ) else {
-                        return Err(illegal_arg(&format!(
-                            "{name} expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
-                        )));
-                    };
-                    let verified = algorithm(d, s, p);
-                    cc.produce(&rand, &[RhoBoolean::apply(verified)], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc.unapply(&args).ok_or_else(|| {
+                    illegal_arg(&format!(
+                        "{name} expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
+                    ))
+                })?;
+                match pars.as_slice() {
+                    [data, signature, pub_key, ack] => {
+                        let (Some(d), Some(s), Some(p)) = (
+                            RhoByteArray::unapply(data),
+                            RhoByteArray::unapply(signature),
+                            RhoByteArray::unapply(pub_key),
+                        ) else {
+                            return Err(illegal_arg(&format!(
+                                "{name} expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
+                            )));
+                        };
+                        let verified = algorithm(d, s, p);
+                        cc.produce(&rand, &[RhoBoolean::apply(verified)], ack).await
+                    }
+                    _ => Err(illegal_arg(&format!(
+                        "{name} expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
+                    ))),
                 }
-                _ => Err(illegal_arg(&format!(
-                    "{name} expects data, signature, public key (all as byte arrays), and an acknowledgement channel"
-                ))),
-            }
+            })
         })
     }
 
     fn hash_contract(&self, name: &'static str, algorithm: fn(&[u8]) -> Vec<u8>) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg(&format!("{name} expects a byte array and return channel")))?;
-            match pars.as_slice() {
-                [input, ack] => match RhoByteArray::unapply(input) {
-                    Some(bytes) => {
-                        let hash = algorithm(bytes);
-                        cc.produce(&rand, &[RhoByteArray::apply(hash)], ack)
-                    }
-                    None => Err(illegal_arg(&format!("{name} expects a byte array and return channel"))),
-                },
-                _ => Err(illegal_arg(&format!("{name} expects a byte array and return channel"))),
-            }
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg(&format!("{name} expects a byte array and return channel")))?;
+                match pars.as_slice() {
+                    [input, ack] => match RhoByteArray::unapply(input) {
+                        Some(bytes) => {
+                            let hash = algorithm(bytes);
+                            cc.produce(&rand, &[RhoByteArray::apply(hash)], ack).await
+                        }
+                        None => Err(illegal_arg(&format!("{name} expects a byte array and return channel"))),
+                    },
+                    _ => Err(illegal_arg(&format!("{name} expects a byte array and return channel"))),
+                }
+            })
         })
     }
 
@@ -423,128 +445,147 @@ impl SystemProcesses {
     fn get_block_data(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
         let bd = self.block_data.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("blockData expects only a return channel"))?;
-            match pars.as_slice() {
-                [ack] => {
-                    let data = bd.borrow();
-                    let reply = vec![
-                        RhoNumber::apply(data.block_number),
-                        RhoByteArray::apply(data.sender.bytes().to_vec()),
-                    ];
-                    cc.produce(&rand, &reply, ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let bd = bd.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("blockData expects only a return channel"))?;
+                match pars.as_slice() {
+                    [ack] => {
+                        let (block_number, sender_bytes) = {
+                            let data = bd.lock().unwrap();
+                            (data.block_number, data.sender.bytes().to_vec())
+                        };
+                        let reply = vec![
+                            RhoNumber::apply(block_number),
+                            RhoByteArray::apply(sender_bytes),
+                        ];
+                        cc.produce(&rand, &reply, ack).await
+                    }
+                    _ => Err(illegal_arg("blockData expects only a return channel")),
                 }
-                _ => Err(illegal_arg("blockData expects only a return channel")),
-            }
+            })
         })
     }
 
     fn rev_address(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("revAddress expects an operation, an argument and an acknowledgement channel"))?;
-            let [op, arg, ack] = pars.as_slice() else {
-                return Err(illegal_arg(
-                    "revAddress expects an operation, an argument and an acknowledgement channel",
-                ));
-            };
-            let Some(op) = RhoString::unapply(op) else {
-                return Err(illegal_arg("revAddress expects an operation string"));
-            };
-            let response = match op {
-                "validate" => match RhoString::unapply(arg) {
-                    Some(address) => RevAddress::parse(address)
-                        .err()
-                        .map(RhoString::apply)
-                        .unwrap_or_default(),
-                    None => Par::default(),
-                },
-                "fromPublicKey" => match RhoByteArray::unapply(arg) {
-                    Some(pk) => RevAddress::from_public_key(&PublicKey::new(pk.to_vec()))
-                        .map(|ra| RhoString::apply(ra.to_base58()))
-                        .unwrap_or_default(),
-                    None => Par::default(),
-                },
-                "fromDeployerId" => match RhoDeployerId::unapply(arg) {
-                    Some(id) => RevAddress::from_deployer_id(id)
-                        .map(|ra| RhoString::apply(ra.to_base58()))
-                        .unwrap_or_default(),
-                    None => Par::default(),
-                },
-                "fromUnforgeable" => match RhoName::unapply(arg) {
-                    Some(g) => RhoString::apply(RevAddress::from_unforgeable(g).to_base58()),
-                    None => Par::default(),
-                },
-                _ => return Err(illegal_arg("revAddress: unknown operation")),
-            };
-            cc.produce(&rand, &[response], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("revAddress expects an operation, an argument and an acknowledgement channel"))?;
+                let [op, arg, ack] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "revAddress expects an operation, an argument and an acknowledgement channel",
+                    ));
+                };
+                let Some(op) = RhoString::unapply(op) else {
+                    return Err(illegal_arg("revAddress expects an operation string"));
+                };
+                let response = match op {
+                    "validate" => match RhoString::unapply(arg) {
+                        Some(address) => RevAddress::parse(address)
+                            .err()
+                            .map(RhoString::apply)
+                            .unwrap_or_default(),
+                        None => Par::default(),
+                    },
+                    "fromPublicKey" => match RhoByteArray::unapply(arg) {
+                        Some(pk) => RevAddress::from_public_key(&PublicKey::new(pk.to_vec()))
+                            .map(|ra| RhoString::apply(ra.to_base58()))
+                            .unwrap_or_default(),
+                        None => Par::default(),
+                    },
+                    "fromDeployerId" => match RhoDeployerId::unapply(arg) {
+                        Some(id) => RevAddress::from_deployer_id(id)
+                            .map(|ra| RhoString::apply(ra.to_base58()))
+                            .unwrap_or_default(),
+                        None => Par::default(),
+                    },
+                    "fromUnforgeable" => match RhoName::unapply(arg) {
+                        Some(g) => RhoString::apply(RevAddress::from_unforgeable(g).to_base58()),
+                        None => Par::default(),
+                    },
+                    _ => return Err(illegal_arg("revAddress: unknown operation")),
+                };
+                cc.produce(&rand, &[response], ack).await
+            })
         })
     }
 
     fn deployer_id_ops(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("deployerIdOps expects an operation, an argument and an acknowledgement channel"))?;
-            let [op, arg, ack] = pars.as_slice() else {
-                return Err(illegal_arg(
-                    "deployerIdOps expects an operation, an argument and an acknowledgement channel",
-                ));
-            };
-            let response = match RhoString::unapply(op) {
-                Some("pubKeyBytes") => match RhoDeployerId::unapply(arg) {
-                    Some(pk) => RhoByteArray::apply(pk.to_vec()),
-                    None => Par::default(),
-                },
-                _ => return Err(illegal_arg("deployerIdOps: unknown operation")),
-            };
-            cc.produce(&rand, &[response], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("deployerIdOps expects an operation, an argument and an acknowledgement channel"))?;
+                let [op, arg, ack] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "deployerIdOps expects an operation, an argument and an acknowledgement channel",
+                    ));
+                };
+                let response = match RhoString::unapply(op) {
+                    Some("pubKeyBytes") => match RhoDeployerId::unapply(arg) {
+                        Some(pk) => RhoByteArray::apply(pk.to_vec()),
+                        None => Par::default(),
+                    },
+                    _ => return Err(illegal_arg("deployerIdOps: unknown operation")),
+                };
+                cc.produce(&rand, &[response], ack).await
+            })
         })
     }
 
     fn registry_ops(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("registryOps expects an operation, an argument and an acknowledgement channel"))?;
-            let [op, arg, ack] = pars.as_slice() else {
-                return Err(illegal_arg(
-                    "registryOps expects an operation, an argument and an acknowledgement channel",
-                ));
-            };
-            let response = match RhoString::unapply(op) {
-                Some("buildUri") => match RhoByteArray::unapply(arg) {
-                    Some(ba) => RhoUri::apply(registry::build_uri(&blake2b256::hash(ba))),
-                    None => Par::default(),
-                },
-                _ => return Err(illegal_arg("registryOps: unknown operation")),
-            };
-            cc.produce(&rand, &[response], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("registryOps expects an operation, an argument and an acknowledgement channel"))?;
+                let [op, arg, ack] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "registryOps expects an operation, an argument and an acknowledgement channel",
+                    ));
+                };
+                let response = match RhoString::unapply(op) {
+                    Some("buildUri") => match RhoByteArray::unapply(arg) {
+                        Some(ba) => RhoUri::apply(registry::build_uri(&blake2b256::hash(ba))),
+                        None => Par::default(),
+                    },
+                    _ => return Err(illegal_arg("registryOps: unknown operation")),
+                };
+                cc.produce(&rand, &[response], ack).await
+            })
         })
     }
 
     fn sys_auth_token_ops(&self) -> ScalaBodyFn {
         let cc = self.contract_call.clone();
-        Box::new(move |args| {
-            let (pars, rand) = cc
-                .unapply(args)
-                .ok_or_else(|| illegal_arg("sysAuthTokenOps expects an operation, an argument and an acknowledgement channel"))?;
-            let [op, arg, ack] = pars.as_slice() else {
-                return Err(illegal_arg(
-                    "sysAuthTokenOps expects an operation, an argument and an acknowledgement channel",
-                ));
-            };
-            let response = match RhoString::unapply(op) {
-                Some("check") => RhoBoolean::apply(RhoSysAuthToken::unapply(arg)),
-                _ => return Err(illegal_arg("sysAuthTokenOps: unknown operation")),
-            };
-            cc.produce(&rand, &[response], ack)
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("sysAuthTokenOps expects an operation, an argument and an acknowledgement channel"))?;
+                let [op, arg, ack] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "sysAuthTokenOps expects an operation, an argument and an acknowledgement channel",
+                    ));
+                };
+                let response = match RhoString::unapply(op) {
+                    Some("check") => RhoBoolean::apply(RhoSysAuthToken::unapply(arg)),
+                    _ => return Err(illegal_arg("sysAuthTokenOps: unknown operation")),
+                };
+                cc.produce(&rand, &[response], ack).await
+            })
         })
     }
 }
@@ -611,19 +652,13 @@ mod tests {
 
     fn mock_system_processes(
         mock: &Arc<MockSpace>,
-    ) -> (SystemProcesses, Vec<Definition>, Arc<tokio::runtime::Runtime>) {
-        let runtime = Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
-        );
-        let charging = ChargingRSpace::new(mock.clone(), runtime.clone());
-        let dispatcher = Rc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
-        let block_data = Rc::new(RefCell::new(BlockData::empty()));
+    ) -> (SystemProcesses, Vec<Definition>) {
+        let charging = ChargingRSpace::new(mock.clone());
+        let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
+        let block_data = Arc::new(Mutex::new(BlockData::empty()));
         let sp = SystemProcesses::new(charging, dispatcher, block_data);
         let defs = sp.definitions();
-        (sp, defs, runtime)
+        (sp, defs)
     }
 
     fn lpw(pars: Vec<Par>) -> ListParWithRandom {
@@ -633,12 +668,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn blake2b256_hash_contract_replies_with_hash() {
+    #[tokio::test]
+    async fn blake2b256_hash_contract_replies_with_hash() {
         let mock = Arc::new(MockSpace {
             produced: Mutex::new(Vec::new()),
         });
-        let (_sp, defs, _runtime) = mock_system_processes(&mock);
+        let (_sp, defs) = mock_system_processes(&mock);
 
         let handler = defs
             .iter()
@@ -647,7 +682,7 @@ mod tests {
         let input = vec![1u8, 2, 3, 4];
         let ack = FixedChannels::stdout();
         let args = vec![lpw(vec![RhoByteArray::apply(input.clone()), ack.clone()])];
-        (handler.handler)(&args).unwrap();
+        (handler.handler)(args).await.unwrap();
 
         let produced = mock.produced.lock().unwrap();
         assert_eq!(produced.len(), 1);

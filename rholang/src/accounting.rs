@@ -5,7 +5,8 @@
 //! `Chargeable.fromProtobuf`) are deferred until wire serialization is ported. The cats-mtl
 //! `_cost[F]` monad stack is modeled as the synchronous [`CostAccounting`] state cell.
 
-use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
 
 use num_bigint::BigInt;
 
@@ -260,8 +261,8 @@ pub trait Chargeable<A> {
 /// The synchronous cost-accounting state (models the `_cost[F]` monad stack).
 #[derive(Default)]
 pub struct CostAccounting {
-    value: Cell<i64>,
-    log: RefCell<Vec<Cost>>,
+    value: AtomicI64,
+    log: Mutex<Vec<Cost>>,
 }
 
 impl CostAccounting {
@@ -271,36 +272,36 @@ impl CostAccounting {
 
     pub fn from_initial(init: Cost) -> Self {
         CostAccounting {
-            value: Cell::new(init.value),
-            log: RefCell::new(Vec::new()),
+            value: AtomicI64::new(init.value),
+            log: Mutex::new(Vec::new()),
         }
     }
 
     pub fn get(&self) -> Cost {
-        Cost::new(self.value.get(), "get")
+        Cost::new(self.value.load(Ordering::SeqCst), "get")
     }
 
     /// Total phlo charged so far (the sum of every `charge`d amount, i.e. consumed phlo).
     pub fn total_charged(&self) -> i64 {
-        self.log.borrow().iter().map(|c| c.value).sum()
+        self.log.lock().unwrap().iter().map(|c| c.value).sum()
     }
 
     /// Set the current cost balance (port of `_cost.set`).
     pub fn set(&self, cost: Cost) {
-        self.value.set(cost.value);
+        self.value.store(cost.value, Ordering::SeqCst);
     }
 
     /// Charge `amount` phlogistons, raising `OutOfPhlogistonsError` if the balance goes negative
     /// (port of `charge`).
     pub fn charge(&self, amount: Cost) -> Result<(), RholangError> {
-        let current = self.value.get();
+        let current = self.value.load(Ordering::SeqCst);
         if current < 0 {
             return Err(RholangError::OutOfPhlogistonsError);
         }
         let amount_value = amount.value;
-        self.log.borrow_mut().push(amount);
-        self.value.set(current - amount_value);
-        if self.value.get() < 0 {
+        self.log.lock().unwrap().push(amount);
+        self.value.store(current - amount_value, Ordering::SeqCst);
+        if self.value.load(Ordering::SeqCst) < 0 {
             return Err(RholangError::OutOfPhlogistonsError);
         }
         Ok(())

@@ -5,9 +5,10 @@
 //! (`eval(Send/Receive/New/Match/Bundle)`, `produce`/`consume`, `new` allocation) and the
 //! collection methods (`union`/`diff`/`add`/`delete`/`contains`/`slice`/`keys`) are deferred.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
 
+use async_trait::async_trait;
 use num_bigint::BigInt;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{
@@ -1119,30 +1120,32 @@ pub type Application =
     Option<(TaggedContinuation, Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>, bool)>;
 
 /// The tuplespace interface the evaluator produces/consumes against (port of `RhoTuplespace`).
-pub trait Tuplespace {
-    fn produce(
+#[async_trait]
+pub trait Tuplespace: std::marker::Send + std::marker::Sync {
+    async fn produce(
         &self,
         channel: &Par,
         data: ListParWithRandom,
         persist: bool,
     ) -> Result<Application, RholangError>;
 
-    fn consume(
+    async fn consume(
         &self,
         channels: &[Par],
         patterns: &[BindPattern],
         continuation: TaggedContinuation,
         persist: bool,
-        peeks: &BTreeSet<usize>,
+        peeks: BTreeSet<usize>,
     ) -> Result<Application, RholangError>;
 }
 
 /// Dispatches a continuation with its matched data (port of `Dispatch`).
-pub trait Dispatch {
-    fn dispatch(
+#[async_trait]
+pub trait Dispatch: std::marker::Send + std::marker::Sync {
+    async fn dispatch(
         &self,
-        continuation: &TaggedContinuation,
-        data_list: &[ListParWithRandom],
+        continuation: TaggedContinuation,
+        data_list: Vec<ListParWithRandom>,
     ) -> Result<(), RholangError>;
 }
 
@@ -1160,7 +1163,7 @@ pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     space: T,
     dispatcher: D,
     urn_map: BTreeMap<String, Par>,
-    merge_chs: RefCell<Vec<Par>>,
+    merge_chs: Mutex<Vec<Par>>,
     mergeable_tag_name: Par,
 }
 
@@ -1175,13 +1178,13 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             space,
             dispatcher,
             urn_map,
-            merge_chs: RefCell::new(Vec::new()),
+            merge_chs: Mutex::new(Vec::new()),
             mergeable_tag_name,
         }
     }
 
     /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`).
-    pub fn eval(
+    pub async fn eval(
         &self,
         par: &Par,
         env: &Env<Par>,
@@ -1224,32 +1227,32 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             } else {
                 rand.split_byte(i as u8)
             };
-            self.eval_term(term, env, &r, cost)?;
+            Box::pin(self.eval_term(term, env, &r, cost)).await?;
         }
         Ok(())
     }
 
-    fn eval_term(
+    async fn eval_term<'a>(
         &self,
-        term: &Term,
+        term: &Term<'a>,
         env: &Env<Par>,
         rand: &Blake2b512Random,
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         match term {
-            Term::Send(s) => self.eval_send(s, env, rand, cost),
-            Term::Receive(r) => self.eval_receive(r, env, rand, cost),
-            Term::New(n) => self.eval_new(n, env, rand, cost),
-            Term::Match(m) => self.eval_match(m, env, rand, cost),
-            Term::Bundle(b) => self.eval_bundle(b, env, rand, cost),
+            Term::Send(s) => self.eval_send(s, env, rand, cost).await,
+            Term::Receive(r) => self.eval_receive(r, env, rand, cost).await,
+            Term::New(n) => self.eval_new(n, env, rand, cost).await,
+            Term::Match(m) => self.eval_match(m, env, rand, cost).await,
+            Term::Bundle(b) => self.eval_bundle(b, env, rand, cost).await,
             Term::Expr(e) => match e {
                 Expr::EVar(v) => {
                     let p = eval_var(v, env, cost)?;
-                    self.eval(&p, env, rand, cost)
+                    self.eval(&p, env, rand, cost).await
                 }
                 Expr::EMethod(_) => {
                     let p = eval_expr_to_par(e, env, cost)?;
-                    self.eval(&p, env, rand, cost)
+                    self.eval(&p, env, rand, cost).await
                 }
                 _ => Err(RholangError::BugFoundError(format!(
                     "Undefined term: {e:?}"
@@ -1258,7 +1261,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         }
     }
 
-    fn eval_send(
+    async fn eval_send(
         &self,
         send: &Send,
         env: &Env<Par>,
@@ -1297,9 +1300,10 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             send.persistent,
             cost,
         )
+        .await
     }
 
-    fn eval_receive(
+    async fn eval_receive(
         &self,
         receive: &Receive,
         env: &Env<Par>,
@@ -1335,6 +1339,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             receive.peek,
             cost,
         )
+        .await
     }
 
     fn unbundle_receive(
@@ -1359,7 +1364,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         }
     }
 
-    fn eval_new(
+    async fn eval_new(
         &self,
         new: &New,
         env: &Env<Par>,
@@ -1369,7 +1374,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost.charge(Costs::new_bindings_cost(new.bind_count as i64))?;
         let mut r = rand.clone();
         let new_env = self.alloc(new.bind_count, &new.uri, &new.injections, env, &mut r)?;
-        self.eval(&new.p, &new_env, rand, cost)
+        self.eval(&new.p, &new_env, rand, cost).await
     }
 
     fn alloc(
@@ -1412,7 +1417,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         }
     }
 
-    fn eval_match(
+    async fn eval_match(
         &self,
         m: &Match,
         env: &Env<Par>,
@@ -1423,9 +1428,10 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         let evaled_target = eval_expr(&m.target, env, cost)?;
         let subst_target = substitute_par(&evaled_target, 0, env)?;
         self.first_match(&subst_target, &m.cases, env, rand, cost)
+            .await
     }
 
-    fn first_match(
+    async fn first_match(
         &self,
         target: &Par,
         cases: &[MatchCase],
@@ -1440,23 +1446,23 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 for e in 0..case.free_count {
                     new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
                 }
-                return self.eval(&case.source, &new_env, rand, cost);
+                return self.eval(&case.source, &new_env, rand, cost).await;
             }
         }
         Ok(())
     }
 
-    fn eval_bundle(
+    async fn eval_bundle(
         &self,
         bundle: &Bundle,
         env: &Env<Par>,
         rand: &Blake2b512Random,
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
-        self.eval(&bundle.body, env, rand, cost)
+        self.eval(&bundle.body, env, rand, cost).await
     }
 
-    fn produce(
+    async fn produce(
         &self,
         chan: &Par,
         data: ListParWithRandom,
@@ -1464,14 +1470,14 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         self.update_mergeable_channels(chan);
-        let result = self.space.produce(chan, data.clone(), persistent)?;
+        let result = self.space.produce(chan, data.clone(), persistent).await?;
         match result {
             Some((continuation, data_list, peek)) => {
-                self.dispatch(&continuation, &data_list)?;
+                self.dispatch(&continuation, &data_list).await?;
                 if persistent {
-                    self.produce(chan, data, persistent, cost)?;
+                    Box::pin(self.produce(chan, data, persistent, cost)).await?;
                 } else if peek {
-                    self.produce_peeks(&data_list, cost)?;
+                    self.produce_peeks(&data_list, cost).await?;
                 }
             }
             None => {}
@@ -1479,7 +1485,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         Ok(())
     }
 
-    fn consume(
+    async fn consume(
         &self,
         binds: &[(BindPattern, Par)],
         body: ParWithRandom,
@@ -1497,20 +1503,23 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         } else {
             BTreeSet::new()
         };
-        let result = self.space.consume(
-            &sources,
-            &patterns,
-            TaggedContinuation::ParBody(body.clone()),
-            persistent,
-            &peeks,
-        )?;
+        let result = self
+            .space
+            .consume(
+                &sources,
+                &patterns,
+                TaggedContinuation::ParBody(body.clone()),
+                persistent,
+                peeks.clone(),
+            )
+            .await?;
         match result {
             Some((continuation, data_list, p)) => {
-                self.dispatch(&continuation, &data_list)?;
+                self.dispatch(&continuation, &data_list).await?;
                 if persistent {
-                    self.consume(binds, body, persistent, peek, cost)?;
+                    Box::pin(self.consume(binds, body, persistent, peek, cost)).await?;
                 } else if p {
-                    self.produce_peeks(&data_list, cost)?;
+                    self.produce_peeks(&data_list, cost).await?;
                 }
             }
             None => {}
@@ -1518,31 +1527,31 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         Ok(())
     }
 
-    fn produce_peeks(
+    async fn produce_peeks(
         &self,
         data_list: &[(Par, ListParWithRandom, ListParWithRandom, bool)],
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         for (chan, _, removed_data, persist) in data_list {
             if !persist {
-                self.produce(chan, removed_data.clone(), false, cost)?;
+                Box::pin(self.produce(chan, removed_data.clone(), false, cost)).await?;
             }
         }
         Ok(())
     }
 
-    fn dispatch(
+    async fn dispatch(
         &self,
         continuation: &TaggedContinuation,
         data_list: &[(Par, ListParWithRandom, ListParWithRandom, bool)],
     ) -> Result<(), RholangError> {
         let data: Vec<ListParWithRandom> = data_list.iter().map(|(_, d, _, _)| d.clone()).collect();
-        self.dispatcher.dispatch(continuation, &data)
+        self.dispatcher.dispatch(continuation.clone(), data).await
     }
 
     fn update_mergeable_channels(&self, chan: &Par) {
         if self.is_mergeable_channel(chan) {
-            let mut chs = self.merge_chs.borrow_mut();
+            let mut chs = self.merge_chs.lock().unwrap();
             if !chs.contains(chan) {
                 chs.push(chan.clone());
             }
@@ -1604,46 +1613,49 @@ mod tests {
     }
 
     struct MockSpace {
-        produced: RefCell<Vec<(Par, ListParWithRandom, bool)>>,
+        produced: Mutex<Vec<(Par, ListParWithRandom, bool)>>,
     }
+    #[async_trait]
     impl Tuplespace for MockSpace {
-        fn produce(
+        async fn produce(
             &self,
             channel: &Par,
             data: ListParWithRandom,
             persist: bool,
         ) -> Result<Application, RholangError> {
             self.produced
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push((channel.clone(), data, persist));
             Ok(None)
         }
-        fn consume(
+        async fn consume(
             &self,
             _channels: &[Par],
             _patterns: &[BindPattern],
             _continuation: TaggedContinuation,
             _persist: bool,
-            _peeks: &BTreeSet<usize>,
+            _peeks: BTreeSet<usize>,
         ) -> Result<Application, RholangError> {
             Ok(None)
         }
     }
     struct MockDispatch;
+    #[async_trait]
     impl Dispatch for MockDispatch {
-        fn dispatch(
+        async fn dispatch(
             &self,
-            _continuation: &TaggedContinuation,
-            _data_list: &[ListParWithRandom],
+            _continuation: TaggedContinuation,
+            _data_list: Vec<ListParWithRandom>,
         ) -> Result<(), RholangError> {
             Ok(())
         }
     }
 
-    #[test]
-    fn eval_send_produces_on_evaluated_channel() {
+    #[tokio::test]
+    async fn eval_send_produces_on_evaluated_channel() {
         let space = MockSpace {
-            produced: RefCell::new(Vec::new()),
+            produced: Mutex::new(Vec::new()),
         };
         let interp = DebruijnInterpreter::new(
             space,
@@ -1666,9 +1678,9 @@ mod tests {
             sends: vec![send],
             ..Par::default()
         };
-        interp.eval(&par, &env, &rand, &cost).unwrap();
+        interp.eval(&par, &env, &rand, &cost).await.unwrap();
 
-        let produced = interp.space.produced.borrow();
+        let produced = interp.space.produced.lock().unwrap();
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0.exprs, vec![Expr::GInt(1)]);
         assert_eq!(produced[0].1.pars, vec![from_expr(Expr::GInt(2))]);

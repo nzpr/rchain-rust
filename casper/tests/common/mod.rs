@@ -14,39 +14,33 @@ use rchain_rspace::rspace::RSpace;
 use rchain_shared::store_manager::{database, InMemoryStoreManager};
 use rchain_shared::typed_store::BytesCodec;
 
-/// Drive `f` to completion on a fresh single-threaded runtime.
-pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current_thread runtime")
-        .block_on(f)
-}
-
 /// Assemble a full `RuntimeManager` (play + replay runtimes + mergeable store) over an in-memory
 /// store.
-pub fn build_runtime_manager() -> RuntimeManager {
-    let (history, play, replay, manager) = block_on(async {
-        let manager = InMemoryStoreManager::default();
-        let history =
-            create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
-                &manager,
-            )
-            .await
-            .expect("history repository");
-        let reader = history.get_history_reader(history.root()).await;
-        let hot = Arc::new(InMemHotStore::new(reader.base()));
-        let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
-        (history, play, replay, manager)
-    });
-    let rho = RhoRuntime::create(play, history.clone(), Par::default()).expect("rho runtime");
+pub async fn build_runtime_manager() -> RuntimeManager {
+    let manager = InMemoryStoreManager::default();
+    let history =
+        create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
+            &manager,
+        )
+        .await
+        .expect("history repository");
+    let reader = history.get_history_reader(history.root()).await;
+    let hot = Arc::new(InMemHotStore::new(reader.base()));
+    let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
+    let rho = RhoRuntime::create(play, history.clone(), Par::default())
+        .await
+        .expect("rho runtime");
     let replay = ReplayRhoRuntime::create(Arc::new(replay), history.clone(), Par::default())
+        .await
         .expect("replay runtime");
-    let mergeable: MergeableStore = Arc::new(block_on(database(
-        &manager,
-        "mergeable",
-        Arc::new(BytesCodec),
-        Arc::new(DeployMergeableDataCodec),
-    )));
+    let mergeable: MergeableStore = Arc::new(
+        database(
+            &manager,
+            "mergeable",
+            Arc::new(BytesCodec),
+            Arc::new(DeployMergeableDataCodec),
+        )
+        .await,
+    );
     RuntimeManager::new(rho, replay, history, mergeable)
 }

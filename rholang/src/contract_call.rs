@@ -22,24 +22,27 @@ impl<T: Tuplespace, D: Dispatch> ContractCall<T, D> {
     }
 
     /// Send `values` through `ch`, dispatching any matched continuation (port of `produce`).
-    pub fn produce(
+    pub async fn produce(
         &self,
         rand: &Blake2b512Random,
         values: &[Par],
         ch: &Par,
     ) -> Result<(), RholangError> {
-        let result = self.space.produce(
-            ch,
-            ListParWithRandom {
-                pars: values.to_vec(),
-                random_state: rand.clone(),
-            },
-            false,
-        )?;
+        let result = self
+            .space
+            .produce(
+                ch,
+                ListParWithRandom {
+                    pars: values.to_vec(),
+                    random_state: rand.clone(),
+                },
+                false,
+            )
+            .await?;
         if let Some((continuation, data_list, _)) = result {
             let data: Vec<ListParWithRandom> =
                 data_list.iter().map(|(_, matched, _, _)| matched.clone()).collect();
-            self.dispatcher.dispatch(&continuation, &data)?;
+            self.dispatcher.dispatch(continuation, data).await?;
         }
         Ok(())
     }
