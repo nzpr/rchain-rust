@@ -4,11 +4,13 @@ use std::fmt;
 
 use rchain_models::casper::protocol::casper_message::DeployData;
 use rchain_models::casper::protocol::deploy_service::LightBlockInfo;
+use serde::{Deserialize, Serialize};
 
 use super::rho_expr::{RhoExpr, RhoUnforg};
 
 /// A deploy request (port of `DeployRequest`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeployRequest {
     pub data: DeployData,
     pub deployer: String,
@@ -16,15 +18,26 @@ pub struct DeployRequest {
     pub sig_algorithm: String,
 }
 
+/// An exploratory-deploy request (port of `ExploreDeployRequest`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExploreDeployRequest {
+    pub term: String,
+    pub block_hash: String,
+    pub use_pre_state_hash: bool,
+}
+
 /// A data-at-name request (port of `DataAtNameRequest`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DataAtNameRequest {
     pub name: RhoUnforg,
     pub depth: i32,
 }
 
 /// A data-at-name-by-block-hash request (port of `DataAtNameByBlockHashRequest`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DataAtNameByBlockHashRequest {
     pub name: RhoExpr,
     pub block_hash: String,
@@ -32,14 +45,16 @@ pub struct DataAtNameByBlockHashRequest {
 }
 
 /// API/node version info (port of `VersionInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
     pub api: String,
     pub node: String,
 }
 
 /// Node status (port of `ApiStatus`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiStatus {
     pub version: VersionInfo,
     pub address: String,
@@ -137,7 +152,8 @@ mod tests {
 }
 
 /// A deploy execution status (port of the `DeployExecStatus` ADT in `WebApi.scala`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all_fields = "camelCase")]
 pub enum DeployExecStatus {
     ProcessedWithSuccess {
         deploy_result: Vec<RhoExpr>,
@@ -153,28 +169,32 @@ pub enum DeployExecStatus {
 }
 
 /// A rholang expression plus the block it was found in (port of `RhoExprWithBlock`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RhoExprWithBlock {
     pub expr: RhoExpr,
     pub block: LightBlockInfo,
 }
 
 /// A data-at-name response (port of `DataAtNameResponse`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DataAtNameResponse {
     pub exprs: Vec<RhoExprWithBlock>,
     pub length: i32,
 }
 
 /// An exploratory-deploy response (port of `ExploratoryDeployResponse`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExploratoryDeployResponse {
     pub expr: Vec<RhoExpr>,
     pub block: LightBlockInfo,
 }
 
 /// A rho data response (port of `RhoDataResponse`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RhoDataResponse {
     pub expr: Vec<RhoExpr>,
     pub block: LightBlockInfo,

@@ -9,9 +9,10 @@ use rchain_models::rholang::RhoType::{
     RhoSet, RhoString, RhoTupleN, RhoUri,
 };
 use rchain_shared::base16;
+use serde::{Deserialize, Serialize};
 
 /// Rholang terms interesting for translation to JSON (port of `RhoExpr`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RhoExpr {
     ExprPar(Vec<RhoExpr>),
     ExprTuple(Vec<RhoExpr>),
@@ -27,7 +28,7 @@ pub enum RhoExpr {
 }
 
 /// An unforgeable name (port of `RhoUnforg`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RhoUnforg {
     UnforgPrivate(String),
     UnforgDeploy(String),

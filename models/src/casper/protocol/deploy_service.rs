@@ -2,18 +2,22 @@
 //!
 //! Hand-written data structs (no protobuf wire format) — the wire serialization is deferred.
 
+use serde::{Deserialize, Serialize};
+
 use crate::ast::Par;
 use crate::runtime::BindPattern;
 
 /// A validator bond (port of `BondInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BondInfo {
     pub validator: String,
     pub stake: i64,
 }
 
 /// Lightweight block metadata exposed to clients (port of `LightBlockInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LightBlockInfo {
     pub version: i32,
     pub shard_id: String,
@@ -33,7 +37,8 @@ pub struct LightBlockInfo {
 }
 
 /// Deploy metadata (port of `DeployInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeployInfo {
     pub deployer: String,
     pub term: String,
@@ -49,7 +54,8 @@ pub struct DeployInfo {
 }
 
 /// A block plus its deploys (port of `BlockInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BlockInfo {
     pub block_info: LightBlockInfo,
     pub deploys: Vec<DeployInfo>,

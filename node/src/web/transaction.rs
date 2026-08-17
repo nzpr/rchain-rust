@@ -2,9 +2,11 @@
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::ast::Par;
+use serde::{Deserialize, Serialize};
 
 /// A REV transaction (port of `Transaction`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Transaction {
     pub from_addr: String,
     pub to_addr: String,
@@ -14,7 +16,8 @@ pub struct Transaction {
 }
 
 /// The kind of a transaction (port of `TransactionType`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all_fields = "camelCase")]
 pub enum TransactionType {
     PreCharge {
         deploy_id: String,
@@ -34,14 +37,16 @@ pub enum TransactionType {
 }
 
 /// A transaction plus its type (port of `TransactionInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionInfo {
     pub transaction: Transaction,
     pub transaction_type: TransactionType,
 }
 
 /// A list of transactions (port of `TransactionResponse`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionResponse {
     pub data: Vec<TransactionInfo>,
 }

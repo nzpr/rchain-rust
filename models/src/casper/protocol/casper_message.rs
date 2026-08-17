@@ -44,7 +44,8 @@ impl PCost {
 
 /// Deploy data (port of the `DeployData` case class; the deployer/signature live in
 /// [`SignedDeployData`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeployData {
     pub term: String,
     pub timestamp: i64,
