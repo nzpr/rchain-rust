@@ -3,8 +3,7 @@
 //!
 //! The monix-gRPC transport is mapped to plain async service structs over `BlockApi`/`RhoRuntime`;
 //! the protobuf `oneof` responses collapse to `Result<_, ServiceError>` (the Scala `Either`). The
-//! `?Send` `BlockApi`/`RhoRuntime` keep these services `!Send`, so the tonic transport binding is
-//! deferred.
+//! tonic transport binding is deferred.
 
 mod deploy_grpc_service_v1;
 mod propose_grpc_service_v1;

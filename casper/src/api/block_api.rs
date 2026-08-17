@@ -19,10 +19,7 @@ pub type ApiErr<A> = Result<A, String>;
 
 /// The block API (port of `BlockApi[F]`). Implementations read from the block store/DAG and drive
 /// propose via the runtime.
-///
-/// `?Send` because `BlockApiImpl` holds a `RuntimeManager`, which is `!Send` (`RhoRuntime` is
-/// `Rc`-based).
-#[async_trait(?Send)]
+#[async_trait]
 pub trait BlockApi {
     async fn status(&self) -> Status;
 

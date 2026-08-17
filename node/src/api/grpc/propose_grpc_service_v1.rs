@@ -54,7 +54,7 @@ mod tests {
         propose_result: ApiErr<String>,
     }
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl BlockApi for StubBlockApi {
         async fn status(&self) -> Status {
             unimplemented!()

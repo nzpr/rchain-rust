@@ -213,7 +213,7 @@ impl BlockApiImpl {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl BlockApi for BlockApiImpl {
     async fn status(&self) -> Status {
         let net = (self.network_status)();

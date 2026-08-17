@@ -44,7 +44,7 @@ const REFUND_SPLIT_INDEX: u8 = 2;
 
 /// The subset of a replay runtime needed to re-execute a block (implemented by both
 /// [`ReplayRhoRuntime`] and [`ReportingRuntime`]).
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ReplayRuntime {
     fn set_block_data(&self, block_data: BlockData);
 
@@ -457,7 +457,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ReplayRuntime for ReplayRhoRuntime {
     fn set_block_data(&self, block_data: BlockData) {
         ReplayRhoRuntime::set_block_data(self, block_data);
@@ -518,7 +518,7 @@ impl ReplayRuntime for ReplayRhoRuntime {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ReplayRuntime for ReportingRuntime {
     fn set_block_data(&self, block_data: BlockData) {
         ReportingRuntime::set_block_data(self, block_data);

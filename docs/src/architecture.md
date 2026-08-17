@@ -97,8 +97,8 @@ pure/API surface. Remaining (Phase 4):
 - **comm** — the weupnp SSDP/SOAP gateway-discovery protocol is deferred (UPnP orchestration +
   `WhoAmI` are ported).
 - **node transport** — the tonic/axum binding of the gRPC adapters and the `NodeRuntime`/`Setup`
-  glue are gated on a `Send` runtime refactor (the `Rc`-based `RhoRuntime` is `!Send`) plus the
-  deferred comm/discovery layer.
+  glue are deferred (the runtime is now `Send`; the remaining dependency is the deferred
+  comm/discovery layer).
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).

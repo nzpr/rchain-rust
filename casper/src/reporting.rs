@@ -51,7 +51,7 @@ pub struct ReplayResult {
 }
 
 /// Replays a block and collects a human-readable report (port of `ReportingCasper`).
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ReportingCasper: Send + Sync {
     async fn trace(&self, block: BlockMessage) -> Result<ReplayResult, String>;
 }
@@ -63,7 +63,7 @@ pub fn noop() -> impl ReportingCasper {
 
 struct NoopReportingCasper;
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ReportingCasper for NoopReportingCasper {
     async fn trace(&self, _block: BlockMessage) -> Result<ReplayResult, String> {
         Ok(ReplayResult {
@@ -148,7 +148,7 @@ struct RhoReporter {
     mergeable_tag_name: Par,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl ReportingCasper for RhoReporter {
     async fn trace(&self, block: BlockMessage) -> Result<ReplayResult, String> {
         let space = (self.create_space)();
