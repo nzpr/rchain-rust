@@ -21,6 +21,8 @@ pub mod internal;
 pub mod lock;
 pub mod match_;
 pub mod merger;
+#[cfg(test)]
+mod property_tests;
 pub mod replay_rspace;
 pub mod reporting_rspace;
 pub mod reporting_transformer;
