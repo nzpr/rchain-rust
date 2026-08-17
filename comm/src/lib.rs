@@ -3,9 +3,9 @@
 //! Mirrors `comm/src/main/scala/coop/rchain/comm/`. This crate ports the full networking stack:
 //! peer identity, the Kademlia `PeerTable` + gRPC discovery RPC, the gRPC/TLS `TransportLayer`
 //! (client/server/receiver with mutual TLS and node-id trust), the message buffers/`PacketOps`/
-//! `StreamHandler`, and the rp `Connect`/`HandleMessages` layers. UPnP/WhoAmI external-IP discovery
-//! is deferred (peripheral, off the transport critical path); only the UPnP IPv4 private-address
-//! classifier is ported.
+//! `StreamHandler`, the rp `Connect`/`HandleMessages` layers, and `WhoAmI`/`UPnP` external-IP
+//! discovery (port-forwarding orchestration + IPv4 classification). The weupnp SSDP/SOAP gateway
+//! discovery protocol is deferred (third-party, off the transport critical path).
 
 pub mod discovery;
 pub mod errors;

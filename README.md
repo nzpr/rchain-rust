@@ -24,7 +24,7 @@ Scala module (now under `legacy/`):
 | `models` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer + JSON serde) |
 | `block-storage` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
 | `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util, state/exporters incl. `traverseHistory`/`validateStateItems` + store-backed instances, store→ReplayRSpace factory); LMDB FFI (`RSpaceExporterDisk`) deferred |
-| `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages + UPnP private-IP classifier); UPnP port-forwarding + WhoAmI deferred |
+| `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration); weupnp SSDP/SOAP gateway discovery deferred |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
 | `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis, protocol/engine/storage) |
 | `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport); tonic/axum transport binding + NodeRuntime/Setup glue deferred (gated on a `Send` runtime + comm/discovery) |
@@ -46,7 +46,8 @@ pure/API surface. Remaining (Phase 4):
 
 - **LMDB FFI** — the disk-backed `RSpaceExporterDisk` (`shared` LMDB store) is deferred; the
   exporter/importer are ported against the in-memory store.
-- **comm** — UPnP port-forwarding and `WhoAmI` public-IP detection are deferred.
+- **comm** — the weupnp SSDP/SOAP gateway-discovery protocol is deferred (UPnP orchestration +
+  `WhoAmI` are ported).
 - **node transport** — the tonic/axum binding of the gRPC adapters and the `NodeRuntime`/`Setup`
   glue are gated on a `Send` runtime refactor (the `Rc`-based `RhoRuntime` is `!Send`) plus the
   deferred comm/discovery layer.

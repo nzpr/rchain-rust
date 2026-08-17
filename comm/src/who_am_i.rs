@@ -2,7 +2,8 @@
 //!
 //! The cats-effect `F[_]` and `Log[F]` are simplified to synchronous calls: logging is a
 //! `FnMut(String)` callback and the HTTP fetch is a minimal HTTP/1.0 GET over `TcpStream` (the two
-//! services are plain `http://`). UPnP port forwarding (`retrieveExternalAddress`) is deferred.
+//! services are plain `http://`). `retrieveExternalAddress` delegates to `UPnP.assurePortForwarding`
+//! (whose gateway discovery is deferred).
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
@@ -22,7 +23,7 @@ pub fn fetch_local_peer_node(
     id: NodeIdentifier,
     log: &mut dyn FnMut(String),
 ) -> PeerNode {
-    let external = retrieve_external_address(no_upnp);
+    let external = retrieve_external_address(no_upnp, &[protocol_port, discovery_port], log);
     let host = fetch_host(host, external.as_deref(), log);
     PeerNode::from(id, host, protocol_port, discovery_port)
 }
@@ -51,9 +52,18 @@ fn fetch_host(host: Option<String>, external: Option<&str>, log: &mut dyn FnMut(
     }
 }
 
-/// UPnP port forwarding (`UPnP.assurePortForwarding`) is deferred; always no external address.
-fn retrieve_external_address(_no_upnp: bool) -> Option<String> {
-    None
+/// Open ports via UPnP and return the gateway external IP (port of `retrieveExternalAddress`).
+fn retrieve_external_address(
+    no_upnp: bool,
+    ports: &[i32],
+    log: &mut dyn FnMut(String),
+) -> Option<String> {
+    if no_upnp {
+        None
+    } else {
+        let devices = crate::upnp::discover();
+        crate::upnp::assure_port_forwarding(ports, devices, log)
+    }
 }
 
 fn who_am_i(external: Option<&str>, log: &mut dyn FnMut(String)) -> String {
