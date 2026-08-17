@@ -1,9 +1,9 @@
 //! Tuple-space state export/import (port of `rspace/.../state/`).
 //!
 //! Ported here are the data types, the pure algorithms (`RSpaceExporter.traverseHistory` over
-//! `RadixTree.sequentialExport`, and `RSpaceImporter.validateStateItems`), and the store-backed
-//! instances (`RSpaceExporterStore`/`RSpaceImporterStore`/`RSpaceStateManagerImpl`). The disk
-//! exporter (`RSpaceExporterDisk`) is deferred pending the LMDB store manager. The foundational
+//! `RadixTree.sequentialExport`, and `RSpaceImporter.validateStateItems`), the store-backed
+//! instances (`RSpaceExporterStore`/`RSpaceImporterStore`/`RSpaceStateManagerImpl`), and the disk
+//! exporter (`RSpaceExporterDisk.writeToDisk` in `exporters`). The foundational
 //! `TrieExporter`/`TrieNode`/`TrieImporter`/`StateManager` abstractions live in `rchain_shared::state`.
 
 use std::collections::BTreeMap;
@@ -15,6 +15,7 @@ use rchain_shared::state::{StateManager, TrieExporter, TrieImporter, TrieNode};
 use crate::history::export::{sequential_export, ExportDataSettings};
 use crate::history::key_segment::KeySegment;
 
+pub mod exporters;
 pub mod instances;
 
 /// Export skip/take counters (port of `RSpaceExporter.Counter`).

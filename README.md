@@ -44,9 +44,8 @@ cargo test
 The port is functionally complete for the execution core, RSpace, rholang, casper, and the node's
 pure/API surface. Remaining (Phase 4):
 
-- **LMDB** — `LmdbKeyValueStore`/`LmdbStoreManager` are ported (the `lmdb` feature); the
-  `RSpaceExporterDisk.writeToDisk` consumer is deferred (needs the `getHistoryAndData` API that was
-  simplified to `getNodes`/`getHistoryItems`/`getDataItems`).
+- **LMDB** — `LmdbKeyValueStore`/`LmdbStoreManager` (opt-in `lmdb` feature) and
+  `RSpaceExporterDisk.writeToDisk` are ported.
 - **comm** — the weupnp SSDP/SOAP gateway-discovery protocol is deferred (UPnP orchestration +
   `WhoAmI` are ported).
 - **node transport** — the tonic/axum binding of the gRPC adapters and the `NodeRuntime`/`Setup`
