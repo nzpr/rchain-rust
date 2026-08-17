@@ -4,11 +4,25 @@ This file is the **authoritative intent + formal specification** for rewriting t
 is written for both AI coding agents and humans: read it in full before writing or changing any Rust
 code, and treat its statements as binding constraints, not suggestions.
 
+## Documentation map
+
+Single sources of truth (do not duplicate these):
+
+| Content | Canonical location |
+|---|---|
+| Why the rewrite (memory safety + λ → π → ρ → CoC) | [`docs/src/why-rust.md`](docs/src/why-rust.md) |
+| Layer map, module status, rewrite order, remaining work | [`docs/src/architecture.md`](docs/src/architecture.md) |
+| The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
+| The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
+| Machine-checked Lean/Coq definitions & proofs | [`spec/`](spec/) |
+
 ## Intent
 
 The RChain node runs Rholang natively. We are rewriting it in **Rust**, absorbing both the Scala/JVM
-code and the C++ Rosette VM. The motivation is **memory safety and memory bloat** — GC overhead,
-boxing, and JVM heap pressure — **not** a correctness repair: the existing logic is broadly sound.
+code and the C++ Rosette VM. The motivation — memory safety and the calculus-native expression of the
+node (λ → π → ρ → Calculus of Constructions) — is laid out in
+[`docs/src/why-rust.md`](docs/src/why-rust.md); the short version is that this is **not** a
+correctness repair, since the existing logic is broadly sound.
 
 **Prime directive:** the rewrite is a *faithful port*. Do **not** "fix", "improve", refactor, or
 reorder behavior. Every mathematical invariant listed in [`spec/INVENTORY.md`](spec/INVENTORY.md) must
@@ -83,30 +97,8 @@ Per-law proof status lives in [`spec/INVENTORY.md`](spec/INVENTORY.md).
 
 ## What must be preserved
 
-The full table (with per-law formalization status and line-level source pointers) lives in
-[`spec/INVENTORY.md`](spec/INVENTORY.md). The condensed form:
-
-| # | Layer | Law |
-|---|-------|-----|
-| 1 | Rholang | `Par`/`ESet`/`EMap` are commutative; canonicalization to a total order is idempotent; `sort(p\|q)=sort(q\|p)` |
-| 2 | Rholang | α/name equivalence = par order + `\| Nil` + top-level arithmetic + α + added eval/quote |
-| 3 | Rholang | capture-avoiding de Bruijn substitution; `sort(subst t)=subst(sort t)` |
-| 4 | Rholang | reduction (comm); first-match-wins; `new` yields fresh unforgeable names |
-| 5 | Rholang | spatial matching binds a free variable at most once |
-| 6 | Rholang | a program has no globally free variables |
-| 7 | RSpace | join commutativity (channel keys hashed in sorted order) |
-| 8 | RSpace | deterministic COMM (sorted produce refs; content-addressed events) |
-| 9 | RSpace | merge is a monoid; non-conflicting logs commute |
-| 10 | RSpace | Merkle determinism (content-addressed radix trie, collision-free) |
-| 11 | RSpace | replay determinism (recomputed COMM ⊆ recorded trace) |
-| 12 | Rosette | actor atomicity (single-threaded `mbox.nextMsg`) |
-| 13 | Rosette | reflection (everything-is-an-`Ob`, meta/parent chain, fork-join barrier) |
-| 14 | Casper | finality requires > 2/3 stake; fringe = one message per bonded validator (antichain) |
-| 15 | Casper | fringe monotone by height; seen-set monotone (no regression) |
-| 16 | Casper | block number = max(parent)+1; seqNum strictly +1; content addressing; bonds cache = PoS state |
-| 17 | Casper | merge determinism (unique min-cost rejection); numeric channels non-negative/no-overflow; RNG merge commutative |
-| 18 | Storage | height map contiguous; fringe identity order-independent |
-| 19 | Crypto | Blake2b256 canonical hash; `Blake2b512Random` associative splittable merge; sig/sign; Curve25519 round-trip |
+The full 19-law table (with per-law formalization status and line-level source pointers) lives in
+[`spec/INVENTORY.md`](spec/INVENTORY.md); it is the canonical catalog and is not repeated here.
 
 **Proven vs. axiomatized:** laws 1–3, 7–11, 12–13, 15–18 and the merge part of 19 are provable
 algebraic/combinatorial statements (targets for the proof assistants). Cryptographic primitives
@@ -116,22 +108,17 @@ inductive invariant.
 
 ## Layer map
 
-- **Rholang** (`rholang/`, `models/`) — the ρ-calculus interpreter. Key invariants: canonical total
-  order (`models/.../rholang/sorter/ScoreTree.scala`), capture-avoiding substitution
-  (`rholang/.../interpreter/Substitute.scala`), reduction (`Reduce.scala`), spatial matching
-  (`interpreter/matcher/SpatialMatcher.scala`). The K-framework semantics under
-  `rholang/src/main/k/rholang/` are the (unfinished) reference semantics.
-- **RSpace** (`rspace/`) — the concurrent tuple space. Key invariants: join commutativity
-  (`hashing/StableHashProvider.scala`), deterministic COMM (`trace/Event.scala`), merge monoid
-  (`merger/StateChange.scala`, `merger/EventLogMergingLogic.scala`), Merkle radix trie
-  (`history/RadixTree.scala`), replay (`ReplayRSpace.scala`).
-- **Rosette** (`rosette/`, `roscala/`) — the C++ actor VM. Key invariants: actor atomicity, reflective
-  meta/parent chain, fork-join barrier.
-- **Casper** (`casper/`, `block-storage/`, `sdk/`) — CBC-Casper consensus + DAG. Key invariants: >2/3
-  finality (`sdk/.../consensus/Stake.scala`), fringe/estimator (`block-storage/.../dag/Finalizer.scala`,
-  `MessageMapSyntax.scala`), block validation (`casper/.../Validate.scala`), merge determinism
-  (`sdk/.../merging/ConflictResolutionLogic.scala`).
+- **Rholang** (`rholang/`, `models/`) — the ρ-calculus interpreter (canonical order, substitution,
+  reduction, spatial matching).
+- **RSpace** (`rspace/`) — the concurrent tuple space (join commutativity, deterministic COMM, merge
+  monoid, Merkle radix trie, replay).
+- **Rosette** (`rosette/`, `roscala/`) — the C++ actor VM (actor atomicity, reflection, fork-join).
+- **Casper** (`casper/`, `block-storage/`, `sdk/`) — CBC-Casper consensus + DAG (>2/3 finality,
+  fringe/estimator, block validation, merge determinism).
 - **Crypto** (`crypto/`) — Blake2b256, `Blake2b512Random`, secp256k1, Curve25519.
+
+Per-layer Scala source-of-truth files are listed in
+[`docs/src/architecture.md`](docs/src/architecture.md).
 
 ## Translation contract (spec → Rust)
 
@@ -161,43 +148,15 @@ These are the oracle. If the formalization and these tests disagree, reconcile t
 
 ## Module scoping & rewrite order
 
-The 15 components were scoped for a faithful Rust port and rated by difficulty and time. The
-**rewrite order is dependency-driven and easiest-first**; it deliberately differs from the
-*formalization* phases below (which rank by invariant value). Both run in parallel: laws are proven
-in phase order while code is ported in dependency order.
+The rewrite order is dependency-driven and easiest-first; it deliberately differs from the
+*formalization* phases above (which rank by invariant value). Both run in parallel: laws are proven
+in phase order while code is ported in dependency order. The per-module LOC/difficulty/person-day
+ratings, the full bottom-up order, and the workspace layout live in
+[`docs/src/architecture.md`](docs/src/architecture.md).
 
-### Ratings (main LOC → difficulty → est. person-days)
-
-| Module | Main LOC | Difficulty | Est. | Depends on | Note |
-|---|---|---|---|---|---|
-| `graphz` | 231 | Easy | ~1 | `shared` | trivial string builder |
-| `sdk` | 678 | Easy | ~3 | — | **root leaf**; Laws 14, 17 |
-| `regex` | 2,398 | Easy | ~3–5 | — | orphaned; pure FSM/regex |
-| `crypto` | 1,431 | Easy | ~5–8 | `shared` | 1:1 crate mappings |
-| `rspace-bench` | (bench) | Easy | ~3–5 | rspace/rholang/models | gated |
-| `block-storage` | 1,074 | Medium | ~7 | shared/models/sdk | finalizer + monotonicity |
-| `shared` | 3,092 | Easy–Med | ~10–15 | `sdk` | foundational; LMDB FFI |
-| `models` | 4,252 | Medium | ~12–18 | shared/crypto | bit-exact sorter |
-| `comm` | 3,366 | Hard | ~15 | shared/crypto/models | lock-free buffers, gRPC/TLS |
-| `rspace` | 6,840 | Hard | ~20–30 | shared/crypto | concurrency, Merkle, replay |
-| `node` | 7,456 | Medium | ~30–45 | casper/comm/crypto/rholang | glue |
-| `rholang` | 9,372 | Hard | ~30–45 | models/rspace/shared/crypto | interpreter, gas, matcher |
-| `casper` | 9,916 | Hard | ~50 | everything | central hub |
-| `roscala` | 4,533 | Hard | ~25–40 | — | **orphaned — defer** |
-| `rosette` (C++) | ~50k | Hard | ~80–150 | — | **orphaned — skip** |
-
-Total in-scope (non-orphaned): roughly **200–220 person-days**.
-
-### Rewrite order (bottom-up)
-
-`sdk` (and `regex`, in parallel) → `shared` → `crypto` + `graphz` → `models` → `block-storage` +
-`rspace` + `comm` → `rholang` → `casper` → `node` → `rspace-bench`. **Defer** `roscala`/`rosette`.
-
-### Rust layout
-
-A Cargo workspace at [`crates/`](crates/) with one crate per module (`crates/sdk`, `crates/crypto`,
-`crates/rspace`, …), mirroring the sbt dependency graph. Each crate carries `#[cfg(test)]` ported
-oracle tests and, where a formal law exists, a property test naming that law.
+Bottom-up order: `sdk` (and `regex`, in parallel) → `shared` → `crypto` + `graphz` → `models` →
+`block-storage` + `rspace` + `comm` → `rholang` → `casper` → `node` → `rspace-bench`. **Defer**
+`roscala`/`rosette`.
 
 ### Findings
 
@@ -221,7 +180,7 @@ oracle tests and, where a formal law exists, a property test naming that law.
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
 - **Rewrite — in progress**: the leaf modules (`sdk`, `shared`, `crypto`, `graphz`, `models`,
-  `block-storage`, `rspace`, `comm`) are ported under [`crates/`](crates/); `rholang` is in progress.
+  `block-storage`, `rspace`, `comm`) are ported at the workspace root; `rholang` is in progress.
   The proofs-first *pause* has been lifted in practice — `rspace`/`rholang` are being ported against
   the verified spec rather than waiting on Laws 1–11.
 - **Formalization — proofs-first**: Laws 1–11 (rholang + rspace) are being proven machine-checkably —
