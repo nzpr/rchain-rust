@@ -5,14 +5,15 @@
 //! `tokio::sync::Mutex` in `SharedStore` serializes access to a store. `LmdbStoreManager` opens a
 //! single LMDB environment (file) whose named databases are the `KeyValueStore`s.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use lmdb::{Cursor, Database, DatabaseFlags, Environment, Error as LmdbError, Transaction, WriteFlags};
 
 use crate::store::KeyValueStore;
-use crate::store_manager::KeyValueStoreManager;
+use crate::store_manager::{Db, KeyValueStoreManager, LmdbEnvConfig};
 use crate::typed_store::SharedStore;
 
 /// An LMDB-backed key-value store (port of `LmdbKeyValueStore`).
@@ -119,6 +120,68 @@ impl KeyValueStoreManager for LmdbStoreManager {
     }
 }
 
+/// A store manager that distributes databases across multiple LMDB environments (files) (port of
+/// `LmdbDirStoreManager`).
+///
+/// Each `Db` is assigned an `LmdbEnvConfig` naming the environment (file) that holds it; databases
+/// sharing an environment name live in the same LMDB file. Environments are opened lazily on first
+/// access and cached, keyed by the environment name.
+pub struct LmdbDirStoreManager {
+    dir_path: PathBuf,
+    /// Database id → (database, environment config).
+    db_mapping: BTreeMap<String, (Db, LmdbEnvConfig)>,
+    /// Environment name → lazily-opened store manager.
+    managers: tokio::sync::Mutex<BTreeMap<String, Arc<LmdbStoreManager>>>,
+}
+
+impl LmdbDirStoreManager {
+    /// Build a directory store manager (port of `LmdbDirStoreManager.apply`). Environments are not
+    /// opened until their first database is requested.
+    pub fn new(dir_path: impl AsRef<Path>, db_mapping: Vec<(Db, LmdbEnvConfig)>) -> Self {
+        let db_mapping = db_mapping
+            .into_iter()
+            .map(|(db, cfg)| (db.id.clone(), (db, cfg)))
+            .collect();
+        LmdbDirStoreManager {
+            dir_path: dir_path.as_ref().to_path_buf(),
+            db_mapping,
+            managers: tokio::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl KeyValueStoreManager for LmdbDirStoreManager {
+    async fn store(&self, name: &str) -> SharedStore {
+        let (db, cfg) = self
+            .db_mapping
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("unknown database: {name}"));
+
+        let manager = {
+            let mut managers = self.managers.lock().await;
+            if !managers.contains_key(&cfg.name) {
+                let dir = self.dir_path.join(&cfg.name);
+                let created = LmdbStoreManager::new(&dir, cfg.max_env_size as usize)
+                    .unwrap_or_else(|e| panic!("open LMDB environment {}: {e}", cfg.name));
+                managers.insert(cfg.name.clone(), Arc::new(created));
+            }
+            managers.get(&cfg.name).unwrap().clone()
+        };
+
+        let db_name = db.name_override.unwrap_or(db.id);
+        manager.store(&db_name).await
+    }
+
+    async fn shutdown(&self) {
+        let managers = self.managers.lock().await;
+        for manager in managers.values() {
+            manager.shutdown().await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +225,68 @@ mod tests {
         manager.shutdown().await;
         drop(manager);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn dir_manager_groups_envs_and_round_trips() {
+        let dir = temp_dir();
+        let mapping = vec![
+            (Db::new("a"), LmdbEnvConfig::new("env1", 1024 * 1024)),
+            (Db::new("b"), LmdbEnvConfig::new("env1", 1024 * 1024)),
+            (
+                Db {
+                    id: "c".to_string(),
+                    name_override: Some("c-real".to_string()),
+                },
+                LmdbEnvConfig::new("env2", 1024 * 1024),
+            ),
+        ];
+        let manager = LmdbDirStoreManager::new(&dir, mapping);
+
+        // "a" and "b" share environment "env1" but are distinct databases.
+        let store_a = manager.store("a").await;
+        let store_b = manager.store("b").await;
+        {
+            let mut kv = store_a.lock().await;
+            kv.put(vec![(b"k".to_vec(), b"va".to_vec())]);
+        }
+        {
+            let mut kv = store_b.lock().await;
+            kv.put(vec![(b"k".to_vec(), b"vb".to_vec())]);
+        }
+        {
+            let kv = store_a.lock().await;
+            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"va".to_vec())]);
+        }
+        {
+            let kv = store_b.lock().await;
+            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"vb".to_vec())]);
+        }
+
+        // The name override is used as the database name.
+        let store_c = manager.store("c").await;
+        {
+            let mut kv = store_c.lock().await;
+            kv.put(vec![(b"k".to_vec(), b"vc".to_vec())]);
+        }
+        {
+            let kv = store_c.lock().await;
+            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"vc".to_vec())]);
+        }
+
+        manager.shutdown().await;
+        drop(manager);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "unknown database")]
+    async fn unknown_database_panics() {
+        let dir = temp_dir();
+        let manager = LmdbDirStoreManager::new(
+            &dir,
+            vec![(Db::new("a"), LmdbEnvConfig::new("env1", 1024 * 1024))],
+        );
+        let _ = manager.store("nope").await;
     }
 }
