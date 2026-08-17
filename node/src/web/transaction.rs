@@ -47,7 +47,7 @@ pub struct TransactionResponse {
 }
 
 /// Transaction reporting interface (port of `TransactionAPI[F]`, effect simplified to synchronous).
-pub trait TransactionApi {
+pub trait TransactionApi: Send + Sync {
     fn get_transaction(&self, block_hash: &Blake2b256Hash) -> Vec<TransactionInfo>;
 }
 

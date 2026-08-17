@@ -1,11 +1,13 @@
 //! Admin web API interface (port of `api/AdminWebApi.scala`).
-//!
-//! The `AdminWebApiImpl` (which delegates to the casper `BlockApi`) is deferred.
 
-/// The admin web API contract (port of `AdminWebApi[F]`; the `F[_]` effect is simplified to
-/// synchronous calls, matching the `WebApi` trait).
-pub trait AdminWebApi {
-    fn propose(&self) -> String;
+use async_trait::async_trait;
 
-    fn propose_result(&self) -> String;
+use super::dto::BlockApiException;
+
+/// The admin web API contract (port of `AdminWebApi[F]`).
+#[async_trait]
+pub trait AdminWebApi: Send + Sync {
+    async fn propose(&self) -> Result<String, BlockApiException>;
+
+    async fn propose_result(&self) -> Result<String, BlockApiException>;
 }

@@ -157,7 +157,8 @@ pub fn rho_expr_to_par(exp: &RhoExpr) -> Par {
     }
 }
 
-fn unforg_to_par(unforg: &RhoUnforg) -> Par {
+/// Convert a `RhoUnforg` to a `Par` (port of `unforgToParProto`).
+pub fn unforg_to_par(unforg: &RhoUnforg) -> Par {
     match unforg {
         RhoUnforg::UnforgPrivate(name) => RhoName::apply_bytes(base16::unsafe_decode(name)),
         RhoUnforg::UnforgDeploy(name) => RhoDeployId::apply(base16::unsafe_decode(name)),
