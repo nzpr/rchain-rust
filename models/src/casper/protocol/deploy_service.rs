@@ -3,6 +3,7 @@
 //! Hand-written data structs (no protobuf wire format) — the wire serialization is deferred.
 
 use crate::ast::Par;
+use crate::runtime::BindPattern;
 
 /// A validator bond (port of `BondInfo`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +80,21 @@ pub struct Status {
     pub nodes: i32,
     pub min_phlo_price: i64,
     pub latest_block_number: i64,
+}
+
+/// Post-block continuations plus the block they belong to (port of
+/// `ContinuationsWithBlockInfo`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContinuationsWithBlockInfo {
+    pub post_block_continuations: Vec<WaitingContinuationInfo>,
+    pub block: LightBlockInfo,
+}
+
+/// A single waiting continuation at a name (port of `WaitingContinuationInfo`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaitingContinuationInfo {
+    pub post_block_patterns: Vec<BindPattern>,
+    pub post_block_continuation: Par,
 }
 
 /// A deploy execution status (port of `DeployExecStatus`).

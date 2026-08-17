@@ -1,11 +1,94 @@
-//! Block-info constructors (port of `BlockApi.scala`).
-//!
-//! The `BlockApi` trait + `BlockApiImpl` are deferred (they need the runtime/DAG/web wiring).
+//! Block API surface (port of `BlockApi.scala`): the `BlockApi` trait plus the block-info
+//! constructors shared with `BlockApiImpl`.
 
-use rchain_models::casper::protocol::casper_message::BlockMessage;
-use rchain_models::casper::protocol::deploy_service::{BlockInfo, BondInfo, LightBlockInfo};
+use async_trait::async_trait;
+
+use rchain_block_storage::dag::dag_storage::DeployId;
+use rchain_models::ast::Par;
+use rchain_models::block_metadata::BlockMetadata;
+use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::casper::protocol::deploy_service::{
+    BlockInfo, BondInfo, ContinuationsWithBlockInfo, DataWithBlockInfo, DeployExecStatus,
+    LightBlockInfo, Status,
+};
 use rchain_models::validator::Validator;
 use rchain_shared::base16;
+
+/// A block-api error (the Scala `BlockApi.Error = String`).
+pub type ApiErr<A> = Result<A, String>;
+
+/// The block API (port of `BlockApi[F]`). Implementations read from the block store/DAG and drive
+/// propose via the runtime.
+///
+/// `?Send` because `BlockApiImpl` holds a `RuntimeManager`, which is `!Send` (`RhoRuntime` is
+/// `Rc`-based).
+#[async_trait(?Send)]
+pub trait BlockApi {
+    async fn status(&self) -> Status;
+
+    async fn deploy(&self, deploy: &SignedDeployData) -> ApiErr<String>;
+
+    async fn deploy_status(&self, deploy_id: &DeployId) -> ApiErr<DeployExecStatus>;
+
+    async fn create_block(&self, is_async: bool) -> ApiErr<String>;
+
+    async fn get_propose_result(&self) -> ApiErr<String>;
+
+    async fn get_listening_name_data_response(
+        &self,
+        depth: i32,
+        listening_name: &Par,
+    ) -> ApiErr<(Vec<DataWithBlockInfo>, i32)>;
+
+    async fn get_listening_name_continuation_response(
+        &self,
+        depth: i32,
+        listening_names: &[Par],
+    ) -> ApiErr<(Vec<ContinuationsWithBlockInfo>, i32)>;
+
+    async fn get_blocks_by_heights(
+        &self,
+        start_block_number: i64,
+        end_block_number: i64,
+    ) -> ApiErr<Vec<LightBlockInfo>>;
+
+    async fn visualize_dag(
+        &self,
+        depth: i32,
+        start_block_number: i32,
+        show_justification_lines: bool,
+    ) -> ApiErr<Vec<String>>;
+
+    async fn machine_verifiable_dag(&self, depth: i32) -> ApiErr<String>;
+
+    async fn get_blocks(&self, depth: i32) -> ApiErr<Vec<LightBlockInfo>>;
+
+    async fn find_deploy(&self, id: &DeployId) -> ApiErr<LightBlockInfo>;
+
+    async fn get_block(&self, hash: &str) -> ApiErr<BlockInfo>;
+
+    async fn bond_status(&self, public_key: &[u8]) -> ApiErr<bool>;
+
+    async fn exploratory_deploy(
+        &self,
+        term: &str,
+        block_hash: Option<&str>,
+        use_pre_state_hash: bool,
+    ) -> ApiErr<(Vec<Par>, LightBlockInfo)>;
+
+    async fn get_data_at_par(
+        &self,
+        par: &Par,
+        block_hash: &str,
+        use_pre_state_hash: bool,
+    ) -> ApiErr<(Vec<Par>, LightBlockInfo)>;
+
+    async fn last_finalized_block(&self) -> ApiErr<BlockInfo>;
+
+    async fn is_finalized(&self, hash: &str) -> ApiErr<bool>;
+
+    async fn get_latest_message(&self) -> ApiErr<BlockMetadata>;
+}
 
 /// Build a bond info (port of `bondToBondInfo`).
 pub fn bond_to_bond_info(bond: (&Validator, i64)) -> BondInfo {
