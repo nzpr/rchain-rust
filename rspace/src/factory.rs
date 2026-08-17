@@ -51,6 +51,24 @@ pub async fn create_history_repository<C, P, A, K>(
     )))
 }
 
+/// Create a play space from the store + matcher (port of `RSpace.createWithReplay`, play half).
+pub async fn create_rspace<C, P, A, K>(
+    manager: &dyn KeyValueStoreManager,
+    matcher: Arc<dyn Match<P, A>>,
+) -> Result<Arc<RSpace<C, P, A, K>>, String>
+where
+    C: Ord + Clone + Serialize<C> + Send + Sync + 'static,
+    P: Clone + Serialize<P> + Send + Sync + 'static,
+    A: Clone + Serialize<A> + Send + Sync + 'static,
+    K: Clone + Serialize<K> + Send + Sync + 'static,
+{
+    let history_repo = create_history_repository::<C, P, A, K>(manager).await?;
+    let reader = history_repo.get_history_reader(history_repo.root()).await;
+    let hot_store = Arc::new(InMemHotStore::new(reader.base()));
+    let (play, _replay) = RSpace::create_with_replay(history_repo, hot_store, matcher);
+    Ok(play)
+}
+
 /// Create a replay space from the store + matcher (port of `RSpace.createWithReplay`).
 pub async fn create_replay_rspace<C, P, A, K>(
     manager: &dyn KeyValueStoreManager,

@@ -110,10 +110,13 @@ impl ReportingRuntime {
         rand: &Blake2b512Random,
     ) -> Result<EvaluateResult, RholangError> {
         let par = crate::normalizer::source_to_adt_with_env(term, env)?;
-        self.inj(&par, &Env::new(), rand)?;
+        let errors = match self.inj(&par, &Env::new(), rand) {
+            Ok(()) => Vec::new(),
+            Err(e) => vec![e],
+        };
         Ok(EvaluateResult {
-            cost: crate::accounting::Cost::new(0, "evaluate"),
-            errors: Vec::new(),
+            cost: crate::accounting::Cost::new(self.cost.total_charged(), "evaluate"),
+            errors,
             mergeable: BTreeSet::new(),
         })
     }

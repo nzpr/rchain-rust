@@ -280,6 +280,11 @@ impl CostAccounting {
         Cost::new(self.value.get(), "get")
     }
 
+    /// Total phlo charged so far (the sum of every `charge`d amount, i.e. consumed phlo).
+    pub fn total_charged(&self) -> i64 {
+        self.log.borrow().iter().map(|c| c.value).sum()
+    }
+
     /// Set the current cost balance (port of `_cost.set`).
     pub fn set(&self, cost: Cost) {
         self.value.set(cost.value);
