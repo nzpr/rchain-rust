@@ -44,6 +44,10 @@ spec/
   and **proves Law 1** (`sortPar_idempotent`, `sortPar_comm`). The single residual is the lawfulness
   of the 23-function structural comparator family (`cmpPar`/`cmpSend`/…/`cmpListParPair`), declared as
   69 `cmpX_eq_iff`/`cmpX_swap`/`cmpX_lt_trans` axioms in `Rchain/Sort.lean` (see `INVENTORY.md`).
+  These cannot be discharged with the current definitions: the two-argument mutual induction hangs
+  Lean's termination checker, and `Rchain.cmpPar.mutual_induct` fails to derive (a `whnf` heartbeat
+  timeout). Discharge requires a refactor — a single well-founded recursion over a sum type, or
+  Mathlib in Phase 1 — see the note in `Rchain/Sort.lean`.
 - **Phase 1–5** prove each law in `INVENTORY.md`.
 - **Axiomatized** (never proven, by design): cryptographic primitives (Blake2b, secp256k1,
   Curve25519) are modeled as abstract interfaces whose required properties are *postulated*. Proving

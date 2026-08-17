@@ -232,9 +232,9 @@ end
 
 /-! ## Lawfulness: `eq_iff` (RESIDUAL AXIOMS)
 
-Admitted: the structural comparators reflect equality (`cmp a b = .eq ↔ a = b`). Law 1 itself is
-proven below; these are the residual "the order is total" assumptions, to be eliminated later by
-the 23-function mutual induction.
+The structural comparators reflect equality (`cmp a b = .eq ↔ a = b`). These are part of the 69
+residual "the order is total" axioms; see the `lt_trans` note for why the 23-function mutual
+induction has not been discharged.
 -/
 
 axiom cmpPar_eq_iff (p q : Par) : cmpPar p q = Ordering.eq ↔ p = q
@@ -263,9 +263,7 @@ axiom cmpListParPair_eq_iff (l l' : List (Par × Par)) : cmpListParPair l l' = O
 
 /-! ## Lawfulness: `swap` (RESIDUAL AXIOMS)
 
-Admitted: the direct mutual induction for this bundle over the flat `Par` family hit
-Lean higher-order-unification / `termination_by` limitations (see the M2 handoff note).
-`eq_iff` and the leaf laws above are proven; these are the remaining obligations.
+Residual: part of the 69 "total order" axioms; see the `lt_trans` note for the Lean limitation.
 -/
 
 axiom cmpPar_swap (p q : Par) : cmpPar q p = Ordering.swap (cmpPar p q)
@@ -294,9 +292,22 @@ axiom cmpListParPair_swap (l l' : List (Par × Par)) : cmpListParPair l' l = Ord
 
 /-! ## Lawfulness: `lt_trans` (RESIDUAL AXIOMS)
 
-Admitted: the direct mutual induction for this bundle over the flat `Par` family hit
-Lean higher-order-unification / `termination_by` limitations (see the M2 handoff note).
-`eq_iff` and the leaf laws above are proven; these are the remaining obligations.
+These 69 axioms (`eq_iff`/`swap`/`lt_trans` × the 23-function comparator family
+`cmpPar`/`cmpSend`/…/`cmpListParPair`) are the remaining "the order is total" obligation. Law 1's
+`sortPar_idempotent` and `sortPar_comm` (proven below) are conditional on them.
+
+Discharging them is blocked by a Lean limitation, not by choice:
+
+  * a `mutual` theorem block over the **two-argument** `cmpX` family hangs the termination checker —
+    both with bare `termination_by p q => sizeOf p + sizeOf q` and with
+    `decreasing_by all_goals (simp_wf; omega)`;
+  * the generated induction principle `Rchain.cmpPar.mutual_induct` fails to *derive*:
+    "Cannot derive functional induction principle" with a deterministic `whnf` heartbeat timeout.
+
+The one-argument `sortX_idempotent` mutual block (above) proves fine; the blocker is specific to the
+two-argument sum measure. The path forward is a refactor — a single well-founded recursion over a sum
+type `Par ⊕ Send ⊕ … ⊕ List (Par × Par)`, or Mathlib `SizeOf`/`Finset` machinery in Phase 1 — rather
+than more tactics.
 -/
 
 axiom cmpPar_lt_trans (p q r : Par) : cmpPar p q = Ordering.lt → cmpPar q r = Ordering.lt → cmpPar p r = Ordering.lt
