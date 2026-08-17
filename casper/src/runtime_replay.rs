@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use async_trait::async_trait;
+
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::public_key::PublicKey;
@@ -18,10 +20,17 @@ use rchain_models::par_ops::from_expr;
 use rchain_models::rholang::RhoType::RhoNumber;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_rholang::evaluate_result::EvaluateResult;
+use rchain_rholang::errors::RholangError;
+use rchain_rholang::reporting_runtime::ReportingRuntime;
 use rchain_rholang::runtime::ReplayRhoRuntime;
 use rchain_rholang::system_processes::BlockData;
+use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
+use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::hashing::stable_hash_provider::hash_channel;
+use rchain_rspace::internal::Datum;
 use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
+use rchain_rspace::trace::Log;
+use rchain_rspace::util::ReplayException;
 
 use crate::event_converter::to_rspace_event;
 use crate::rholang::ReplayFailure;
@@ -33,13 +42,54 @@ const PRE_CHARGE_SPLIT_INDEX: u8 = 0;
 const USER_DEPLOY_SPLIT_INDEX: u8 = 1;
 const REFUND_SPLIT_INDEX: u8 = 2;
 
-/// Replay orchestration (port of `RuntimeReplayOps`).
-pub struct RuntimeReplayOps<'a> {
-    runtime: &'a ReplayRhoRuntime,
+/// The subset of a replay runtime needed to re-execute a block (implemented by both
+/// [`ReplayRhoRuntime`] and [`ReportingRuntime`]).
+#[async_trait(?Send)]
+pub trait ReplayRuntime {
+    fn set_block_data(&self, block_data: BlockData);
+
+    async fn reset(&self, root: Blake2b256Hash) -> Result<(), String>;
+
+    fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError>;
+
+    fn evaluate_with_env(
+        &self,
+        term: &str,
+        env: &BTreeMap<String, Par>,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError>;
+
+    async fn create_soft_checkpoint(
+        &self,
+    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    );
+
+    async fn rig(&self, log: Log);
+
+    async fn check_replay_data(&self) -> Result<(), ReplayException>;
+
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError>;
+
+    async fn consume_result(
+        &self,
+        channels: &[Par],
+        patterns: &[BindPattern],
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError>;
+
+    async fn create_checkpoint(&self) -> Result<Checkpoint, String>;
 }
 
-impl<'a> RuntimeReplayOps<'a> {
-    pub fn new(runtime: &'a ReplayRhoRuntime) -> Self {
+/// Replay orchestration (port of `RuntimeReplayOps`).
+pub struct RuntimeReplayOps<'a, R: ReplayRuntime + ?Sized> {
+    runtime: &'a R,
+}
+
+impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
+    pub fn new(runtime: &'a R) -> Self {
         RuntimeReplayOps { runtime }
     }
 
@@ -97,7 +147,7 @@ impl<'a> RuntimeReplayOps<'a> {
     }
 
     /// Replay a single user deploy (port of `replayDeployE`).
-    async fn replay_deploy_e(
+    pub(crate) async fn replay_deploy_e(
         &self,
         processed_deploy: &ProcessedDeploy,
         rand: Blake2b512Random,
@@ -221,7 +271,7 @@ impl<'a> RuntimeReplayOps<'a> {
     }
 
     /// Replay a block-level system deploy (port of `replayBlockSystemDeploy`).
-    async fn replay_block_system_deploy(
+    pub(crate) async fn replay_block_system_deploy(
         &self,
         processed: &ProcessedSystemDeploy,
         rand: Blake2b512Random,
@@ -402,6 +452,128 @@ impl<'a> RuntimeReplayOps<'a> {
         let num = get_number_with_rnd(&data[0].a);
         let ch_hash = hash_channel(chan);
         Ok(Some((ch_hash, num)))
+    }
+}
+
+#[async_trait(?Send)]
+impl ReplayRuntime for ReplayRhoRuntime {
+    fn set_block_data(&self, block_data: BlockData) {
+        ReplayRhoRuntime::set_block_data(self, block_data);
+    }
+
+    async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
+        ReplayRhoRuntime::reset(self, root).await
+    }
+
+    fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError> {
+        ReplayRhoRuntime::evaluate(self, term, rand)
+    }
+
+    fn evaluate_with_env(
+        &self,
+        term: &str,
+        env: &BTreeMap<String, Par>,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError> {
+        ReplayRhoRuntime::evaluate_with_env(self, term, env, rand)
+    }
+
+    async fn create_soft_checkpoint(
+        &self,
+    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+        ReplayRhoRuntime::create_soft_checkpoint(self).await
+    }
+
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    ) {
+        ReplayRhoRuntime::revert_to_soft_checkpoint(self, checkpoint).await
+    }
+
+    async fn rig(&self, log: Log) {
+        ReplayRhoRuntime::rig(self, log).await
+    }
+
+    async fn check_replay_data(&self) -> Result<(), ReplayException> {
+        ReplayRhoRuntime::check_replay_data(self).await
+    }
+
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
+        ReplayRhoRuntime::get_data(self, channel).await
+    }
+
+    async fn consume_result(
+        &self,
+        channels: &[Par],
+        patterns: &[BindPattern],
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
+        ReplayRhoRuntime::consume_result(self, channels, patterns).await
+    }
+
+    async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
+        ReplayRhoRuntime::create_checkpoint(self).await
+    }
+}
+
+#[async_trait(?Send)]
+impl ReplayRuntime for ReportingRuntime {
+    fn set_block_data(&self, block_data: BlockData) {
+        ReportingRuntime::set_block_data(self, block_data);
+    }
+
+    async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
+        ReportingRuntime::reset(self, root).await
+    }
+
+    fn evaluate(&self, term: &str, rand: &Blake2b512Random) -> Result<EvaluateResult, RholangError> {
+        ReportingRuntime::evaluate(self, term, rand)
+    }
+
+    fn evaluate_with_env(
+        &self,
+        term: &str,
+        env: &BTreeMap<String, Par>,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError> {
+        ReportingRuntime::evaluate_with_env(self, term, env, rand)
+    }
+
+    async fn create_soft_checkpoint(
+        &self,
+    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+        ReportingRuntime::create_soft_checkpoint(self).await
+    }
+
+    async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    ) {
+        ReportingRuntime::revert_to_soft_checkpoint(self, checkpoint).await
+    }
+
+    async fn rig(&self, log: Log) {
+        ReportingRuntime::rig(self, log).await
+    }
+
+    async fn check_replay_data(&self) -> Result<(), ReplayException> {
+        ReportingRuntime::check_replay_data(self).await
+    }
+
+    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
+        ReportingRuntime::get_data(self, channel).await
+    }
+
+    async fn consume_result(
+        &self,
+        channels: &[Par],
+        patterns: &[BindPattern],
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
+        ReportingRuntime::consume_result(self, channels, patterns).await
+    }
+
+    async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
+        ReportingRuntime::create_checkpoint(self).await
     }
 }
 

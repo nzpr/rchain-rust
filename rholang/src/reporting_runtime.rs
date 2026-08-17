@@ -121,6 +121,13 @@ impl ReportingRuntime {
         self.space.create_soft_checkpoint().await
     }
 
+    pub async fn revert_to_soft_checkpoint(
+        &self,
+        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+    ) {
+        self.space.revert_to_soft_checkpoint(checkpoint).await;
+    }
+
     pub async fn rig(&self, log: Log) {
         self.space.rig(log).await;
     }

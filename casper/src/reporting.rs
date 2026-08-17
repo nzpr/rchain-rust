@@ -1,22 +1,28 @@
 //! Block replay reporting (port of `casper/reporting/ReportingCasper.scala`).
-//!
-//! The reporting runtime (`ReportingRuntime`/`rhoReporter`), the proto transformer, and the report
-//! store are deferred pending the report protos and full runtime wiring.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::{
-    BlockMessage, Peek, ProcessedDeploy, SystemDeployData,
+    BlockMessage, Peek, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
 use rchain_models::casper::protocol::report::{
     ReportCommProto, ReportConsumeProto, ReportProduceProto, ReportProto,
 };
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_rholang::reporting_runtime::{ReportingRuntime, RhoReportingRspace};
+use rchain_rholang::system_processes::BlockData;
 use rchain_rspace::reporting_rspace::{
     ReportingComm, ReportingConsume, ReportingEvent, ReportingProduce,
 };
 use rchain_rspace::reporting_transformer::ReportingTransformer;
+
+use crate::block_random_seed::BlockRandomSeed;
+use crate::runtime_replay::RuntimeReplayOps;
 
 /// The concrete reporting-event type.
 pub type RhoReportingEvent =
@@ -45,7 +51,7 @@ pub struct ReplayResult {
 }
 
 /// Replays a block and collects a human-readable report (port of `ReportingCasper`).
-#[async_trait]
+#[async_trait(?Send)]
 pub trait ReportingCasper: Send + Sync {
     async fn trace(&self, block: BlockMessage) -> Result<ReplayResult, String>;
 }
@@ -57,7 +63,7 @@ pub fn noop() -> impl ReportingCasper {
 
 struct NoopReportingCasper;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl ReportingCasper for NoopReportingCasper {
     async fn trace(&self, _block: BlockMessage) -> Result<ReplayResult, String> {
         Ok(ReplayResult {
@@ -122,6 +128,94 @@ impl ReportingTransformer<Par, BindPattern, ListParWithRandom, TaggedContinuatio
             .collect();
         ReportProto::Comm(ReportCommProto { consume, produces })
     }
+}
+
+/// Build a reporting casper that replays blocks with event collection (port of
+/// `ReportingCasper.rhoReporter`). The space factory defers the store → `ReplayRSpace` construction
+/// (not yet ported); `mergeable_tag_name` is the shard's non-negative mergeable tag.
+pub fn rho_reporter<F>(create_space: F, mergeable_tag_name: Par) -> impl ReportingCasper
+where
+    F: Fn() -> Arc<RhoReportingRspace> + Send + Sync + 'static,
+{
+    RhoReporter {
+        create_space: Box::new(create_space),
+        mergeable_tag_name,
+    }
+}
+
+struct RhoReporter {
+    create_space: Box<dyn Fn() -> Arc<RhoReportingRspace> + Send + Sync>,
+    mergeable_tag_name: Par,
+}
+
+#[async_trait(?Send)]
+impl ReportingCasper for RhoReporter {
+    async fn trace(&self, block: BlockMessage) -> Result<ReplayResult, String> {
+        let space = (self.create_space)();
+        let runtime = ReportingRuntime::create(space, self.mergeable_tag_name.clone())
+            .map_err(|e| e.to_string())?;
+
+        let pre_state_hash = Blake2b256Hash::from_byte_array(&block.pre_state_hash);
+        let with_cost_accounting = !block.justifications.is_empty();
+        runtime.set_block_data(BlockData::from_block(&block));
+        runtime.reset(pre_state_hash).await?;
+
+        let rand = BlockRandomSeed::from_block(&block).random_generator();
+        replay_deploys(&runtime, &block, rand, with_cost_accounting).await
+    }
+}
+
+/// Replay each user deploy then each system deploy, collecting the report after each (port of
+/// `ReportingCasper.replayDeploys`).
+async fn replay_deploys(
+    runtime: &ReportingRuntime,
+    block: &BlockMessage,
+    rand: Blake2b512Random,
+    with_cost_accounting: bool,
+) -> Result<ReplayResult, String> {
+    let ops = RuntimeReplayOps::new(runtime);
+
+    let mut deploy_results = Vec::new();
+    for (i, term) in block.state.deploys.iter().enumerate() {
+        let r = ops
+            .replay_deploy_e(term, rand.split_byte(i as u8), with_cost_accounting)
+            .await;
+        let events = match r {
+            Ok(_) => runtime.get_report(),
+            Err(_) => Vec::new(),
+        };
+        deploy_results.push(DeployReportResult {
+            processed_deploy: term.clone(),
+            events,
+        });
+    }
+
+    let terms_len = block.state.deploys.len();
+    let mut system_results = Vec::new();
+    for (i, sd) in block.state.system_deploys.iter().enumerate() {
+        let r = ops
+            .replay_block_system_deploy(sd, rand.split_byte((terms_len + i) as u8))
+            .await;
+        let events = match r {
+            Ok(_) => runtime.get_report(),
+            Err(_) => Vec::new(),
+        };
+        let system_deploy = match sd {
+            ProcessedSystemDeploy::Succeeded { system_deploy, .. } => system_deploy.clone(),
+            ProcessedSystemDeploy::Failed { .. } => SystemDeployData::Empty,
+        };
+        system_results.push(SystemDeployReportResult {
+            processed_system_deploy: system_deploy,
+            events,
+        });
+    }
+
+    let checkpoint = runtime.create_checkpoint().await?;
+    Ok(ReplayResult {
+        deploy_report_result: deploy_results,
+        system_deploy_report_result: system_results,
+        post_state_hash: checkpoint.root.as_bytes().to_vec(),
+    })
 }
 
 #[cfg(test)]
