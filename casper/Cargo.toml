@@ -9,6 +9,7 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["sync"] }
 rchain-models = { path = "../models" }
 rchain-crypto = { path = "../crypto" }
+rchain-graphz = { path = "../graphz" }
 rchain-block-storage = { path = "../block-storage" }
 rchain-rholang = { path = "../rholang" }
 rchain-rspace = { path = "../rspace" }

@@ -1,8 +1,7 @@
 //! The `BlockApi` implementation (port of `BlockApiImpl.scala`).
 //!
 //! Read paths hit the block store / DAG; write paths (`deploy`, `createBlock`, `getProposeResult`)
-//! drive propose through a caller-supplied trigger + the shared `ProposerState`. The
-//! `visualizeDag` Graphviz rendering is deferred pending `GraphGenerator` (see `graphz`).
+//! drive propose through a caller-supplied trigger + the shared `ProposerState`.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -13,6 +12,7 @@ use async_trait::async_trait;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
+use rchain_graphz::ListSerializer;
 use rchain_models::ast::Par;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
@@ -30,6 +30,7 @@ use rchain_rspace::trace::event::Event as REvent;
 use rchain_shared::base16;
 
 use crate::api::block_api::{get_full_block_info, get_light_block_info, ApiErr, BlockApi};
+use crate::api::graph_generator::{dag_as_cluster, ValidatorBlock};
 use crate::api::machine_verifiable_dag::machine_verifiable_dag;
 use crate::blocks::proposer::propose_result::{ProposeResult, ProposeStatus};
 use crate::blocks::proposer::proposer::ProposerResult;
@@ -447,12 +448,40 @@ impl BlockApi for BlockApiImpl {
     async fn visualize_dag(
         &self,
         depth: i32,
-        _start_block_number: i32,
+        start_block_number: i32,
         _show_justification_lines: bool,
     ) -> ApiErr<Vec<String>> {
-        // Graphviz DAG rendering is deferred pending `GraphGenerator` (port of `dagAsCluster`).
-        let _ = depth;
-        Err("visualizeDag is deferred pending GraphGenerator".to_string())
+        let dag = self.dag.get_representation().await;
+        let start_block_num = if start_block_number == 0 {
+            dag.latest_block_number()
+        } else {
+            start_block_number as i64
+        };
+        let depth_limited = if depth <= 0 || depth > self.max_depth_limit {
+            self.max_depth_limit
+        } else {
+            depth
+        };
+        let lowest_height = start_block_num - depth_limited as i64;
+        let to_hash_str = |bytes: &[u8]| base16::encode(bytes).chars().take(5).collect::<String>();
+
+        let blocks: Vec<ValidatorBlock> = dag
+            .dag_message_state
+            .msg_map
+            .values()
+            .filter(|m| m.height >= lowest_height)
+            .map(|m| ValidatorBlock {
+                id: to_hash_str(m.id.as_bytes()),
+                sender: to_hash_str(m.sender.as_bytes()),
+                height: m.height,
+                justifications: m.parents.iter().map(|h| to_hash_str(h.as_bytes())).collect(),
+                fringe: m.fringe.iter().map(|h| to_hash_str(h.as_bytes())).collect(),
+            })
+            .collect();
+
+        let mut ser = ListSerializer::default();
+        dag_as_cluster(&blocks, &mut ser);
+        Ok(ser.buf)
     }
 
     async fn machine_verifiable_dag(&self, depth: i32) -> ApiErr<String> {
