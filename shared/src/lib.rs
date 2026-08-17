@@ -22,6 +22,7 @@ pub mod state;
 pub mod stopwatch;
 pub mod store;
 pub mod string_ops;
+pub mod sync_var;
 pub mod terminal_mode;
 pub mod throwable_ops;
 pub mod time;
