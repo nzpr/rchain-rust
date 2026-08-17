@@ -6,9 +6,11 @@ written against: every law here maps to a Rust property/differential test in lat
 
 ## Why
 
-The node (Scala + a C++ Rosette VM) is broadly sound; the rewrite to Rust is motivated by memory
-safety and memory bloat, not by a correctness repair. So the spec's job is **preservation under
-translation** — pin down the invariants so the port cannot silently drop them.
+The full motivation — memory safety and the calculus-native expression of the node (λ → π → ρ →
+Calculus of Constructions) — is in [`../docs/src/why-rust.md`](../docs/src/why-rust.md). The node
+(Scala + a C++ Rosette VM) is broadly sound, so the rewrite is not a correctness repair. This spec's
+job is therefore **preservation under translation** — pin down the invariants so the port cannot
+silently drop them.
 
 ## Building
 
@@ -37,9 +39,11 @@ spec/
 
 ## Proven vs stated
 
-- **Phase 0** stands up the syntax and the `sort` definition, proves the atomic fixed points
-  (`sort_nil`, `sort_ground`, `sort_var`), and *states* the deep Law 1 theorems
-  (`sort_idempotent`, `sort_par_comm`) as Phase 1 proof obligations (currently `sorry`).
+- **Phase 0** stands up the syntax, proves the leaf laws (the `Ground`/`Var` comparators, the
+  `sortList` canonicality lemmas, `StrCong` equivalence, and the closedness theorems in `Rchain.Ty`),
+  and **proves Law 1** (`sortPar_idempotent`, `sortPar_comm`). The single residual is the lawfulness
+  of the 23-function structural comparator family (`cmpPar`/`cmpSend`/…/`cmpListParPair`), declared as
+  69 `cmpX_eq_iff`/`cmpX_swap`/`cmpX_lt_trans` axioms in `Rchain/Sort.lean` (see `INVENTORY.md`).
 - **Phase 1–5** prove each law in `INVENTORY.md`.
 - **Axiomatized** (never proven, by design): cryptographic primitives (Blake2b, secp256k1,
   Curve25519) are modeled as abstract interfaces whose required properties are *postulated*. Proving
