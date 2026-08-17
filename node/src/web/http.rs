@@ -4,6 +4,7 @@
 //! The `/api` and `/api/v1` routes (which need `WebApi`) and the `/status` route (which needs the
 //! comm status builder) are deferred.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -29,6 +30,25 @@ pub fn router(reporter: Arc<NewPrometheusReporter>) -> Router {
         .route("/version", get(version))
         .route("/metrics", get(metrics))
         .with_state(reporter)
+}
+
+/// Bind and serve the HTTP routes (port of `web/acquireHttpServer`; the `/status`, `/api`, and
+/// `/api/v1` routes, the reporting routes, and the CORS/connection-timeout configuration are
+/// deferred).
+pub async fn acquire_http_server(
+    host: &str,
+    port: u16,
+    reporter: Arc<NewPrometheusReporter>,
+) -> Result<(), String> {
+    let addr: SocketAddr = format!("{host}:{port}")
+        .parse()
+        .map_err(|e| format!("invalid bind address {host}:{port}: {e}"))?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| e.to_string())?;
+    axum::serve(listener, router(reporter))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
