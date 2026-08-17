@@ -3,8 +3,9 @@
 //! Mirrors `ReportingRspace`: a replay space that also accumulates a human-readable report of the
 //! produce/consume/COMM events. The report is a `Seq[Seq[ReportingEvent]]` separated by soft
 //! checkpoint (system deploy segments). The Scala overrides `logComm`/`logConsume`/`logProduce`
-//! (hooks on `RSpaceOps`) to collect events; the Rust port instead exposes `record_*` methods that
-//! the caller invokes alongside replay, since the replay space does not expose those hooks.
+//! (hooks on `RSpaceOps`) to collect events; the Rust port records them directly in the
+//! `Tuplespace::produce`/`consume` methods (the `record_*` helpers below), reconstructing the COMM
+//! event from the produce/consume result.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, RwLock};
@@ -123,9 +124,38 @@ where
         persist: bool,
         peeks: BTreeSet<usize>,
     ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
-        self.replay
+        // Record the consume event (port of `logConsume`).
+        let peeks_vec: Vec<usize> = peeks.iter().copied().collect();
+        self.record_consume(
+            channels.to_vec(),
+            patterns.to_vec(),
+            continuation.clone(),
+            peeks_vec.clone(),
+        );
+
+        let result = self
+            .replay
             .consume(channels, patterns, continuation, persist, peeks)
-            .await
+            .await?;
+
+        // Record the COMM event if the consume matched produces (port of `logComm`).
+        if let Some((cont, results)) = &result {
+            let consume = ReportingConsume {
+                channels: channels.to_vec(),
+                patterns: patterns.to_vec(),
+                continuation: cont.continuation.clone(),
+                peeks: peeks_vec,
+            };
+            let produces = results
+                .iter()
+                .map(|r| ReportingProduce {
+                    channel: r.channel.clone(),
+                    data: r.matched_datum.clone(),
+                })
+                .collect();
+            self.record_comm(consume, produces);
+        }
+        Ok(result)
     }
 
     async fn produce(
@@ -134,7 +164,32 @@ where
         data: A,
         persist: bool,
     ) -> std::result::Result<Option<(ContResult<C, P, K>, Vec<Result<C, A>>)>, crate::errors::RSpaceError> {
-        self.replay.produce(channel, data, persist).await
+        // Record the produce event (port of `logProduce`).
+        self.record_produce(channel.clone(), data.clone());
+
+        let result = self
+            .replay
+            .produce(channel.clone(), data.clone(), persist)
+            .await?;
+
+        // Record the COMM event if the produce matched a consume (port of `logComm`).
+        if let Some((cont, results)) = &result {
+            let consume = ReportingConsume {
+                channels: cont.channels.clone(),
+                patterns: cont.patterns.clone(),
+                continuation: cont.continuation.clone(),
+                peeks: if cont.peek { vec![0] } else { vec![] },
+            };
+            let produces = results
+                .iter()
+                .map(|r| ReportingProduce {
+                    channel: r.channel.clone(),
+                    data: r.matched_datum.clone(),
+                })
+                .collect();
+            self.record_comm(consume, produces);
+        }
+        Ok(result)
     }
 
     async fn install(

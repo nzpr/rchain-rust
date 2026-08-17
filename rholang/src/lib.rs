@@ -20,6 +20,7 @@ pub mod pretty_printer;
 pub mod proc_ast;
 pub mod reduce;
 pub mod registry;
+pub mod reporting_runtime;
 pub mod runtime;
 pub mod storage;
 pub mod storage_printer;

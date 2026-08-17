@@ -109,15 +109,16 @@ fn install_system_processes(
 }
 
 /// The shared reducer/system-process wiring built over a `Tuplespace` (port of `createRhoEnv` +
-/// `setupReducer`). The play `RhoRuntime` and the replay `ReplayRhoRuntime` reuse this core; the
-/// only difference is the concrete space each retains for `ISpace`/`IReplaySpace` operations.
-struct RuntimeCore {
-    reducer: Rc<RhoReducer>,
-    cost: Rc<CostAccounting>,
-    block_data: Rc<RefCell<BlockData>>,
+/// `setupReducer`). The play `RhoRuntime`, the replay `ReplayRhoRuntime`, and the reporting
+/// `ReportingRuntime` reuse this core; the only difference is the concrete space each retains for
+/// `ISpace`/`IReplaySpace` operations.
+pub(crate) struct RuntimeCore {
+    pub(crate) reducer: Rc<RhoReducer>,
+    pub(crate) cost: Rc<CostAccounting>,
+    pub(crate) block_data: Rc<RefCell<BlockData>>,
 }
 
-fn build_runtime_core(
+pub(crate) fn build_runtime_core(
     space: &RhoTuplespace,
     runtime: &Arc<tokio::runtime::Runtime>,
     mergeable_tag_name: Par,

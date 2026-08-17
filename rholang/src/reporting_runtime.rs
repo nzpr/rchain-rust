@@ -1,0 +1,161 @@
+//! The reporting replay runtime (port of `ReportingRuntime` in `ReportingCasper.scala`).
+//!
+//! A `ReplayRhoRuntime` analogue whose space is a [`ReportingRspace`], so produce/consume/COMM
+//! events are recorded during replay. Exposes `get_report` to drain the recorded report.
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
+use rchain_models::ast::Par;
+use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
+use rchain_rspace::errors::RSpaceError;
+use rchain_rspace::i_replay_space::IReplaySpace;
+use rchain_rspace::i_space::ISpace;
+use rchain_rspace::internal::Datum;
+use rchain_rspace::reporting_rspace::{ReportingEvent, ReportingRspace};
+use rchain_rspace::trace::Log;
+use rchain_rspace::tuple_space::Tuplespace;
+use rchain_rspace::util::ReplayException;
+
+use crate::accounting::CostAccounting;
+use crate::env::Env;
+use crate::errors::RholangError;
+use crate::evaluate_result::EvaluateResult;
+use crate::runtime::{build_runtime_core, RhoReducer};
+use crate::storage::RhoTuplespace;
+use crate::system_processes::BlockData;
+
+/// The concrete rholang reporting space (port of `RhoReportingRspace`).
+pub type RhoReportingRspace =
+    ReportingRspace<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+
+/// A single recorded reporting event (port of `RhoReportingEvent`).
+pub type RhoReportingEvent =
+    ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+
+/// The reporting runtime (port of `ReportingRuntime`).
+pub struct ReportingRuntime {
+    reducer: Rc<RhoReducer>,
+    space: Arc<RhoReportingRspace>,
+    cost: Rc<CostAccounting>,
+    block_data: Rc<RefCell<BlockData>>,
+}
+
+impl ReportingRuntime {
+    pub fn create(
+        space: Arc<RhoReportingRspace>,
+        mergeable_tag_name: Par,
+    ) -> std::io::Result<ReportingRuntime> {
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?,
+        );
+        let tuplespace: RhoTuplespace = space.clone();
+        let core = build_runtime_core(&tuplespace, &runtime, mergeable_tag_name)?;
+        Ok(ReportingRuntime {
+            reducer: core.reducer,
+            space,
+            cost: core.cost,
+            block_data: core.block_data,
+        })
+    }
+
+    /// Drain the recorded report (port of `getReport`).
+    pub fn get_report(&self) -> Vec<Vec<RhoReportingEvent>> {
+        self.space.get_report()
+    }
+
+    pub fn set_block_data(&self, block_data: BlockData) {
+        *self.block_data.borrow_mut() = block_data;
+    }
+
+    pub fn inj(
+        &self,
+        par: &Par,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+    ) -> Result<(), RholangError> {
+        self.reducer.eval(par, env, rand, self.cost.as_ref())
+    }
+
+    pub fn evaluate(
+        &self,
+        term: &str,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError> {
+        self.evaluate_with_env(term, &BTreeMap::new(), rand)
+    }
+
+    pub fn evaluate_with_env(
+        &self,
+        term: &str,
+        env: &BTreeMap<String, Par>,
+        rand: &Blake2b512Random,
+    ) -> Result<EvaluateResult, RholangError> {
+        let par = crate::normalizer::source_to_adt_with_env(term, env)?;
+        self.inj(&par, &Env::new(), rand)?;
+        Ok(EvaluateResult {
+            cost: crate::accounting::Cost::new(0, "evaluate"),
+            errors: Vec::new(),
+            mergeable: BTreeSet::new(),
+        })
+    }
+
+    pub async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
+        self.space.create_checkpoint().await
+    }
+
+    pub async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
+        self.space.reset(root).await
+    }
+
+    pub async fn create_soft_checkpoint(
+        &self,
+    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+        self.space.create_soft_checkpoint().await
+    }
+
+    pub async fn rig(&self, log: Log) {
+        self.space.rig(log).await;
+    }
+
+    pub async fn check_replay_data(&self) -> Result<(), ReplayException> {
+        self.space.check_replay_data().await
+    }
+
+    pub async fn get_data(
+        &self,
+        channel: &Par,
+    ) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
+        self.space.get_data(channel).await
+    }
+
+    pub async fn consume_result(
+        &self,
+        channels: &[Par],
+        patterns: &[BindPattern],
+    ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
+        let result = self
+            .space
+            .consume(
+                channels,
+                patterns,
+                TaggedContinuation::Empty,
+                false,
+                BTreeSet::new(),
+            )
+            .await?;
+        Ok(result.map(|(cont, data)| {
+            (
+                cont.continuation,
+                data.into_iter().map(|d| d.matched_datum).collect(),
+            )
+        }))
+    }
+}
