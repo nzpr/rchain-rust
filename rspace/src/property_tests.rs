@@ -18,6 +18,8 @@ use crate::history::history_action::HistoryAction;
 use crate::history::key_segment::KeySegment;
 use crate::history::radix_tree::{empty_node, RadixTreeImpl};
 use crate::internal::{ConsumeCandidate, Datum};
+use crate::merger::channel_change::ChannelChange;
+use crate::merger::state_change::StateChange;
 use crate::trace::event::{Comm, Consume, Produce};
 
 fn in_memory_tree() -> RadixTreeImpl {
@@ -30,6 +32,26 @@ fn in_memory_tree() -> RadixTreeImpl {
         Arc::new(BytesCodec),
     ));
     RadixTreeImpl::new(typed)
+}
+
+/// A strategy producing an arbitrary `ChannelChange<Vec<u8>>`.
+fn arb_channel_change() -> impl Strategy<Value = ChannelChange<Vec<u8>>> {
+    (
+        prop::collection::vec(prop::collection::vec(any::<u8>(), 0..4), 0..4),
+        prop::collection::vec(prop::collection::vec(any::<u8>(), 0..4), 0..4),
+    )
+        .prop_map(|(added, removed)| ChannelChange { added, removed })
+}
+
+/// Build a `StateChange` (datums-only) from `(byte-key, change)` pairs.
+fn state_change_from(items: &[(u8, ChannelChange<Vec<u8>>)]) -> StateChange {
+    StateChange {
+        datums_changes: items
+            .iter()
+            .map(|(k, v)| (Blake2b256Hash::from_bytes([*k; 32]), v.clone()))
+            .collect(),
+        ..Default::default()
+    }
 }
 
 proptest! {
@@ -117,5 +139,36 @@ proptest! {
             (h1, h2)
         });
         prop_assert_eq!(h1, h2);
+    }
+
+    /// Law 9: `ChannelChange.combine` is a monoid (associative + identity).
+    #[test]
+    fn law9_channel_change_is_monoid(
+        a in arb_channel_change(),
+        b in arb_channel_change(),
+        c in arb_channel_change(),
+    ) {
+        prop_assert_eq!(
+            ChannelChange::combine(&ChannelChange::combine(&a, &b), &c),
+            ChannelChange::combine(&a, &ChannelChange::combine(&b, &c))
+        );
+        prop_assert_eq!(ChannelChange::combine(&a, &ChannelChange::empty()), a.clone());
+        prop_assert_eq!(ChannelChange::combine(&ChannelChange::empty(), &a), a);
+    }
+
+    /// Law 9: non-conflicting (disjoint) `StateChange`s commute.
+    #[test]
+    fn law9_disjoint_state_changes_commute(
+        left in prop::collection::btree_map(any::<u8>(), arb_channel_change(), 0..8),
+        right in prop::collection::btree_map(any::<u8>(), arb_channel_change(), 0..8),
+    ) {
+        let right_disjoint: Vec<(u8, ChannelChange<Vec<u8>>)> = right
+            .into_iter()
+            .filter(|(k, _)| !left.contains_key(k))
+            .collect();
+        let left_items: Vec<(u8, ChannelChange<Vec<u8>>)> = left.into_iter().collect();
+        let a = state_change_from(&left_items);
+        let b = state_change_from(&right_disjoint);
+        prop_assert_eq!(StateChange::combine(&a, &b), StateChange::combine(&b, &a));
     }
 }
