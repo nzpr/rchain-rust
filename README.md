@@ -23,11 +23,11 @@ Scala module (now under `legacy/`):
 | `graphz` | **done** (DOT builder) |
 | `models` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer + JSON serde) |
 | `block-storage` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
-| `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util); state/exporters scaffolding ported — `traverseHistory`/`validateStateItems`/store-backed instances deferred pending the radix-tree export traversal |
-| `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages + UPnP private-IP classifier); UPnP port-forwarding deferred |
-| `rholang` | **in progress** (Env + errors; `par_ops` moved into `models`); Substitute/accounting/Reduce/matcher/dispatch pending |
-| `casper` | **in progress** (block-validation, DAG storage/message, merge index); `CasperConf`/`GenesisBlockData`/`ListenAtName.Name` added |
-| `node` | **in progress** (configuration: CLI + HOCON merge + `NodeConf`; diagnostics: metric registry + Prometheus/InfluxDB reporters/encoders + tracing context; api: `RhoExpr` Par⇄JSON tree + WebApi/AdminWebApi interfaces + DTOs + conversion/syntax helpers; web: transaction DTOs + status/version + HTTP routes; effects/runtime: REPL/console; dag: block-requester/DAG-manager stubs); gRPC/runtime-wiring pending |
+| `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util, state/exporters incl. `traverseHistory`/`validateStateItems` + store-backed instances, store→ReplayRSpace factory); LMDB FFI (`RSpaceExporterDisk`) deferred |
+| `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages + UPnP private-IP classifier); UPnP port-forwarding + WhoAmI deferred |
+| `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
+| `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis, protocol/engine/storage) |
+| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport); tonic/axum transport binding + NodeRuntime/Setup glue deferred (gated on a `Send` runtime + comm/discovery) |
 | `rspace-bench` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rosette/` (C++ VM).
@@ -38,6 +38,22 @@ Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rose
 cargo build
 cargo test
 ```
+
+## Remaining work
+
+The port is functionally complete for the execution core, RSpace, rholang, casper, and the node's
+pure/API surface. Remaining (Phase 4):
+
+- **LMDB FFI** — the disk-backed `RSpaceExporterDisk` (`shared` LMDB store) is deferred; the
+  exporter/importer are ported against the in-memory store.
+- **comm** — UPnP port-forwarding and `WhoAmI` public-IP detection are deferred.
+- **node transport** — the tonic/axum binding of the gRPC adapters and the `NodeRuntime`/`Setup`
+  glue are gated on a `Send` runtime refactor (the `Rc`-based `RhoRuntime` is `!Send`) plus the
+  deferred comm/discovery layer.
+- **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
+  obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per [`spec/INVENTORY.md`](spec/INVENTORY.md)).
+- **A7 property tests** — RSpace Laws 7–11 property tests are pending.
+- **`rspace-bench`** — gated.
 
 ## Where the Scala went
 
