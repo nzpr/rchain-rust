@@ -58,6 +58,19 @@ impl fmt::Display for BlockDagInconsistencyError {
 
 impl std::error::Error for BlockDagInconsistencyError {}
 
+/// A byte-string KV-store inconsistency (port of `ByteStringKVInconsistencyError`). Signals a
+/// fatal error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteStringKVInconsistencyError(pub String);
+
+impl fmt::Display for ByteStringKVInconsistencyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ByteStringKVInconsistencyError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +83,10 @@ mod tests {
         );
         assert_eq!(
             BlockDagInconsistencyError("boom".to_string()).to_string(),
+            "boom"
+        );
+        assert_eq!(
+            ByteStringKVInconsistencyError("boom".to_string()).to_string(),
             "boom"
         );
     }
