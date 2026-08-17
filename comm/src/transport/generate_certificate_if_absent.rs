@@ -40,6 +40,15 @@ pub fn run(tls: &TlsConf) -> Result<(), String> {
     Ok(())
 }
 
+/// Compute the node identity (the 20-byte keccak-20 address) from the generated key (port of
+/// `NodeEnvironment.name`; the Scala reads the certificate, whose public key equals the key's).
+pub fn node_address(tls: &TlsConf) -> Result<Vec<u8>, String> {
+    let key_pem = fs::read_to_string(&tls.key_path).map_err(|e| e.to_string())?;
+    let key_pair = KeyPair::from_pem(&key_pem).map_err(|e| e.to_string())?;
+    let raw = key_pair.public_key_raw();
+    Ok(rchain_crypto::util::certificate_helper::public_address(&raw[1..]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +59,14 @@ mod tests {
         assert!(cert.starts_with("-----BEGIN CERTIFICATE-----"));
         assert!(cert.ends_with("-----END CERTIFICATE-----\n"));
         assert!(key.starts_with("-----BEGIN PRIVATE KEY-----"));
+    }
+
+    #[test]
+    fn node_address_is_20_bytes() {
+        let (_, key_pem) = generate_certificate().unwrap();
+        let key_pair = KeyPair::from_pem(&key_pem).unwrap();
+        let raw = key_pair.public_key_raw();
+        let addr = rchain_crypto::util::certificate_helper::public_address(&raw[1..]);
+        assert_eq!(addr.len(), 20);
     }
 }

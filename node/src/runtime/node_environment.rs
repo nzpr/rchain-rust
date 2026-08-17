@@ -1,11 +1,12 @@
-//! Node environment initialization checks (port of `node/runtime/NodeEnvironment.scala`).
-//!
-//! The `create`/`name` paths (X.509 certificate parsing + comm certificate generation) are
-//! deferred; only the pure data-dir / TLS file checks are ported.
+//! Node environment initialization (port of `node/runtime/NodeEnvironment.scala`).
 
 use std::path::Path;
 
+use rchain_comm::peer_node::NodeIdentifier;
+use rchain_comm::transport::generate_certificate_if_absent;
 use rchain_comm::transport::tls_conf::TlsConf;
+
+use crate::configuration::model::NodeConf;
 
 /// A node-environment initialization error (port of `NodeEnvironment.InitializationException`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,4 +64,24 @@ pub fn has_key(tls: &TlsConf) -> Result<(), InitializationException> {
         )));
     }
     Ok(())
+}
+
+/// Compute the node identifier from its key (port of `name`).
+fn name(tls: &TlsConf) -> Result<NodeIdentifier, InitializationException> {
+    generate_certificate_if_absent::node_address(tls)
+        .map(NodeIdentifier::new)
+        .map_err(|e| {
+            InitializationException(format!("Failed to read the X.509 certificate: {e}"))
+        })
+}
+
+/// Initialize the node environment and derive its identifier (port of `NodeEnvironment.create`).
+pub fn create(conf: &NodeConf) -> Result<NodeIdentifier, InitializationException> {
+    let data_dir = &conf.storage.data_dir;
+    can_create_data_dir(data_dir)?;
+    have_access_to_data_dir(data_dir)?;
+    generate_certificate_if_absent::run(&conf.tls).map_err(InitializationException)?;
+    has_certificate(&conf.tls)?;
+    has_key(&conf.tls)?;
+    name(&conf.tls)
 }
