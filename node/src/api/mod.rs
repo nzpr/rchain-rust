@@ -3,6 +3,7 @@
 pub mod admin_web_api;
 pub mod conversion;
 pub mod dto;
+pub mod grpc;
 pub mod rho_expr;
 pub mod web_api;
 pub mod web_api_syntax;

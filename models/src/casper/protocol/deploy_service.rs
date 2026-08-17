@@ -112,3 +112,109 @@ pub enum DeployExecStatus {
         status: String,
     },
 }
+
+// -------------------------------------------------------------------------------------------------
+// gRPC service queries (port of the `*Query` messages in `DeployServiceCommon.proto`)
+// -------------------------------------------------------------------------------------------------
+
+/// A deploy-service error (port of `ServiceError`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceError {
+    pub messages: Vec<String>,
+}
+
+impl ServiceError {
+    pub fn new(message: impl Into<String>) -> Self {
+        ServiceError {
+            messages: vec![message.into()],
+        }
+    }
+}
+
+/// `FindDeployQuery` (deploy id → containing block).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FindDeployQuery {
+    pub deploy_id: Vec<u8>,
+}
+
+/// `BlockQuery` (block hash → block info).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockQuery {
+    pub hash: String,
+}
+
+/// `ReportQuery` (block report by hash, optionally forcing replay).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportQuery {
+    pub hash: String,
+    pub force_replay: bool,
+}
+
+/// `BlocksQuery` (latest blocks by depth).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlocksQuery {
+    pub depth: i32,
+}
+
+/// `BlocksQueryByHeight` (blocks in an inclusive height range).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlocksQueryByHeight {
+    pub start_block_number: i64,
+    pub end_block_number: i64,
+}
+
+/// `DataAtNameQuery` (data sent to a name, by depth).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataAtNameQuery {
+    pub depth: i32,
+    pub name: Par,
+}
+
+/// `DataAtNameByBlockQuery` (data sent to a name at a specific block).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataAtNameByBlockQuery {
+    pub par: Par,
+    pub block_hash: String,
+    pub use_pre_state_hash: bool,
+}
+
+/// `ContinuationAtNameQuery` (continuations listening on names).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContinuationAtNameQuery {
+    pub depth: i32,
+    pub names: Vec<Par>,
+}
+
+/// `VisualizeDagQuery` (Graphviz DAG rendering).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VisualizeDagQuery {
+    pub depth: i32,
+    pub show_justification_lines: bool,
+    pub start_block_number: i32,
+}
+
+/// `MachineVerifyQuery` (machine-verifiable DAG edges).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MachineVerifyQuery {
+    pub depth: i32,
+}
+
+/// `IsFinalizedQuery` (finality check for a block hash).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IsFinalizedQuery {
+    pub hash: String,
+}
+
+/// `BondStatusQuery` (bond check for a validator public key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BondStatusQuery {
+    pub public_key: Vec<u8>,
+}
+
+/// `ExploratoryDeployQuery` (read-only deploy with immediate rollback).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExploratoryDeployQuery {
+    pub term: String,
+    pub block_hash: String,
+    pub use_pre_state_hash: bool,
+}
