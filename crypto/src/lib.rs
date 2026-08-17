@@ -5,9 +5,9 @@
 //! Ed25519 signatures, and Curve25519 encryption. The primitives are wrapped in RChain-specific
 //! interfaces and pinned by known-answer test vectors ported from the Scala test files.
 //!
-//! Deferred until the node/comm layer lands: `util/KeyUtil` (PEM/AES-256-CBC key files),
-//! `Secp256k1.parsePemFile`, and the X.509 helpers in `util/CertificateHelper` (`from` /
-//! `readKeyPair` / `generate`).
+//! The PEM key-file helpers (`util/KeyUtil`), the encrypted-PEM loader
+//! (`Secp256k1.parsePemFile`), and the X.509/P-256 certificate helpers (`util/CertificateHelper`)
+//! are ported as well.
 
 pub mod encryption;
 pub mod errors;

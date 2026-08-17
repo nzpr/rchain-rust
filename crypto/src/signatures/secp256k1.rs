@@ -4,6 +4,9 @@
 //! the native `libsecp256k1` (`NativeSecp256k1`) and produces/consumes DER-encoded signatures; the
 //! Rust port wraps the pure-Rust `k256` crate (RFC-6979 deterministic nonces, low-S DER).
 
+use std::fs;
+use std::path::Path;
+
 use super::signatures_alg::SignaturesAlg;
 use crate::errors::CryptoError;
 use crate::private_key::PrivateKey;
@@ -11,7 +14,9 @@ use crate::public_key::PublicKey;
 use k256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::pkcs8::DecodePrivateKey;
 use k256::SecretKey;
+use pkcs8::{EncryptedPrivateKeyInfo, SecretDocument};
 use rand::rngs::OsRng;
 
 /// The secp256k1 algorithm.
@@ -46,6 +51,30 @@ impl Secp256k1 {
     pub fn to_public_bytes(seckey: &[u8]) -> Result<Vec<u8>, CryptoError> {
         let sk = SecretKey::from_slice(seckey).map_err(|_| CryptoError::InvalidKey)?;
         Ok(sk.public_key().to_encoded_point(false).as_bytes().to_vec())
+    }
+
+    /// Parse an encrypted PEM private key into a secp256k1 `PrivateKey`.
+    ///
+    /// Port of `Secp256k1.parsePemFile`. Reads a PKCS#8 `ENCRYPTED PRIVATE KEY` (the format written
+    /// by [`crate::util::key_util::write_keys`]), decrypts it with `password`, and returns the raw
+    /// 32-byte secret key. The Scala oracle read a BouncyCastle `PEMEncryptedKeyPair`, but that
+    /// never round-tripped with `KeyUtil.writeKeys` (which emits PKCS#8 `EncryptedPrivateKeyInfo`);
+    /// the port reads the PKCS#8 form so it round-trips with `write_keys`.
+    pub fn parse_pem_file(path: &Path, password: &str) -> Result<PrivateKey, String> {
+        let pem = fs::read_to_string(path).map_err(|e| format!("Could not read PEM file: {e}"))?;
+        let (label, secret_doc) =
+            SecretDocument::from_pem(&pem).map_err(|_| "PEM file is not encrypted".to_string())?;
+        if label != "ENCRYPTED PRIVATE KEY" {
+            return Err("PEM file is not encrypted".to_string());
+        }
+        let epki = EncryptedPrivateKeyInfo::try_from(secret_doc.as_bytes())
+            .map_err(|_| "PEM file is not encrypted".to_string())?;
+        let decrypted = epki
+            .decrypt(password.as_bytes())
+            .map_err(|_| "Could not decrypt PEM file".to_string())?;
+        let secret = SecretKey::from_pkcs8_der(decrypted.as_bytes())
+            .map_err(|_| "Could not parse private key from PEM file".to_string())?;
+        Ok(PrivateKey::new(secret.to_bytes().to_vec()))
     }
 }
 
@@ -129,5 +158,35 @@ mod tests {
             base16::encode(&pub_key).to_uppercase(),
             "04C591A8FF19AC9C4E4E5793673B83123437E975285E7B442F4EE2654DFFCA5E2D2103ED494718C697AC9AEBCFD19612E224DB46661011863ED2FC54E71861E2A6"
         );
+    }
+
+    #[test]
+    fn parse_pem_file_round_trips_write_keys() {
+        let (sk, pk) = Secp256k1.new_key_pair();
+        let dir = std::env::temp_dir().join(format!("rchain_secp_pem_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let private_path = dir.join("private.pem");
+        let public_path = dir.join("public.pem");
+        let hex_path = dir.join("public.hex");
+
+        crate::util::key_util::write_keys(
+            &sk,
+            &pk,
+            &Secp256k1,
+            "password",
+            &private_path,
+            &public_path,
+            &hex_path,
+        )
+        .unwrap();
+
+        let parsed = Secp256k1::parse_pem_file(&private_path, "password").unwrap();
+        assert_eq!(parsed.bytes(), sk.bytes());
+
+        assert!(Secp256k1::parse_pem_file(&private_path, "wrong").is_err());
+        assert!(Secp256k1::parse_pem_file(&public_path, "password").is_err());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
