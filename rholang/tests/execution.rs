@@ -24,13 +24,10 @@ fn chan(name: &str) -> Par {
     from_expr(Expr::GString(name.to_string()))
 }
 
-/// Assert `hash` matches the committed golden vector for `case` (or print it for bootstrapping).
+/// Assert `hash` matches the committed golden vector for `case`.
 fn assert_state_hash(case: &str, hash: &[u8]) {
-    let hex = rchain_shared::base16::encode(hash);
-    match load_golden(case, "execution") {
-        Some(want) => assert_eq!(hex, want, "golden mismatch for {case}"),
-        None => eprintln!("GOLDEN {case}\t{hex}"),
-    }
+    let want = load_golden(case, "execution").unwrap_or_else(|| panic!("missing golden case {case}"));
+    assert_eq!(rchain_shared::base16::encode(hash), want, "golden mismatch for {case}");
 }
 
 #[test]
