@@ -14,6 +14,7 @@ pub mod language;
 pub mod long_ops;
 pub mod matcher;
 pub mod path_ops;
+pub mod printer;
 pub mod seq_ops;
 pub mod serialize;
 pub mod state;
