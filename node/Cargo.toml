@@ -5,6 +5,7 @@ edition = "2021"
 description = "Faithful Rust port of the RChain node module (glue: configuration, runtime, API)."
 
 [dependencies]
+async-trait = "0.1"
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 hocon = "0.9"
