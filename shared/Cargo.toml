@@ -7,11 +7,13 @@ description = "Faithful Rust port of the RChain shared module (Base16, Serialize
 [features]
 default = ["tokio"]
 tokio = ["dep:tokio", "dep:async-trait", "dep:lz4_flex"]
+lmdb = ["tokio", "dep:lmdb-rkv"]
 
 [dependencies]
 tokio = { version = "1", features = ["sync"], optional = true }
 async-trait = { version = "0.1", optional = true }
 lz4_flex = { version = "0.11", optional = true }
+lmdb-rkv = { version = "0.14", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

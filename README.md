@@ -17,7 +17,7 @@ Scala module (now under `legacy/`):
 | Crate | Status |
 |-------|--------|
 | `sdk` | **done** (root leaf; Laws 14 & 17; DAG interface: `BlockRequester`/`DagManager`/`DagView`/`DagData` + Casper validation syntax + `FatalError` + primitive syntax) |
-| `shared` | **core done** (Base16/Serialize/DagOps/store+KeyValueCache/Stopwatch/LongOps/PathOps/SeqOps/Matcher/Language/Time/Debug helpers); LMDB FFI deferred |
+| `shared` | **core done** (Base16/Serialize/DagOps/store+KeyValueCache/Stopwatch/LongOps/PathOps/SeqOps/Matcher/Language/Time/Debug helpers + LMDB store under the `lmdb` feature) |
 | `regex` | **done** (FSM engine + regex AST/parser + path-to-regex tokenizer) |
 | `crypto` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519, PEM key writing) |
 | `graphz` | **done** (DOT builder) |
@@ -44,8 +44,9 @@ cargo test
 The port is functionally complete for the execution core, RSpace, rholang, casper, and the node's
 pure/API surface. Remaining (Phase 4):
 
-- **LMDB FFI** — the disk-backed `RSpaceExporterDisk` (`shared` LMDB store) is deferred; the
-  exporter/importer are ported against the in-memory store.
+- **LMDB** — `LmdbKeyValueStore`/`LmdbStoreManager` are ported (the `lmdb` feature); the
+  `RSpaceExporterDisk.writeToDisk` consumer is deferred (needs the `getHistoryAndData` API that was
+  simplified to `getNodes`/`getHistoryItems`/`getDataItems`).
 - **comm** — the weupnp SSDP/SOAP gateway-discovery protocol is deferred (UPnP orchestration +
   `WhoAmI` are ported).
 - **node transport** — the tonic/axum binding of the gRPC adapters and the `NodeRuntime`/`Setup`
