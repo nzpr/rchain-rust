@@ -27,9 +27,19 @@ pub trait RNodeStateManager: Send + Sync {
 }
 
 /// The latest + in-progress proposal results (port of `ProposerState`).
-#[derive(Clone, Debug, Default)]
 pub struct ProposerState {
     pub latest_propose_result: Option<(ProposeResult, Option<BlockMessage>)>,
+    pub curr_propose_result:
+        Option<tokio::sync::oneshot::Receiver<(ProposeResult, Option<BlockMessage>)>>,
+}
+
+impl Default for ProposerState {
+    fn default() -> Self {
+        ProposerState {
+            latest_propose_result: None,
+            curr_propose_result: None,
+        }
+    }
 }
 
 /// The concrete block state manager (port of `BlockStateManagerImpl`).

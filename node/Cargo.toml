@@ -8,6 +8,7 @@ description = "Faithful Rust port of the RChain node module (glue: configuration
 async-trait = "0.1"
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
 hocon = "0.9"
 linked-hash-map = "0.5"
 rchain-casper = { path = "../casper" }
@@ -19,3 +20,4 @@ rchain-rspace = { path = "../rspace" }
 rchain-sdk = { path = "../sdk" }
 rchain-shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
