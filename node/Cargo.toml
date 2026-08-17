@@ -21,4 +21,4 @@ rchain-sdk = { path = "../sdk" }
 rchain-shared = { path = "../shared" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-tonic = "0.12"
+tonic = { version = "0.12", features = ["transport"] }

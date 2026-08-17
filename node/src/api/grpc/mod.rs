@@ -43,4 +43,19 @@ impl GrpcServices {
             repl,
         }
     }
+
+    /// Serve the three gRPC services on `addr` (the tonic transport binding).
+    pub async fn serve(self, addr: std::net::SocketAddr) -> Result<(), String> {
+        use rchain_models::proto::casper::deploy_service_server::DeployServiceServer;
+        use rchain_models::proto::casper::propose_service_server::ProposeServiceServer;
+        use rchain_models::proto::repl::repl_server::ReplServer;
+
+        ::tonic::transport::Server::builder()
+            .add_service(DeployServiceServer::new(self.deploy))
+            .add_service(ProposeServiceServer::new(self.propose))
+            .add_service(ReplServer::new(self.repl))
+            .serve(addr)
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
