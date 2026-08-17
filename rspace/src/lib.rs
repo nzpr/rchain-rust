@@ -9,6 +9,7 @@
 pub mod checkpoint;
 pub mod concurrent;
 pub mod errors;
+pub mod factory;
 pub mod hashing;
 pub mod history;
 pub mod hot_store;

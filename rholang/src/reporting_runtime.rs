@@ -12,6 +12,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_shared::store_manager::KeyValueStoreManager;
 use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::i_replay_space::IReplaySpace;
@@ -37,6 +38,16 @@ pub type RhoReportingRspace =
 /// A single recorded reporting event (port of `RhoReportingEvent`).
 pub type RhoReportingEvent =
     ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+
+/// Build a reporting space from the store manager + the rholang matcher (port of
+/// `ReportingRuntime.createReportingRSpace`).
+pub async fn create_reporting_rspace(
+    manager: &dyn KeyValueStoreManager,
+) -> Result<Arc<RhoReportingRspace>, String> {
+    rchain_rspace::factory::create_reporting_rspace(manager, Arc::new(crate::storage::RhoMatch))
+        .await
+        .map(Arc::new)
+}
 
 /// The reporting runtime (port of `ReportingRuntime`).
 pub struct ReportingRuntime {
