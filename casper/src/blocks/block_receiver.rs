@@ -303,14 +303,14 @@ async fn send_to_validate(
 /// Process incoming blocks (port of `incomingBlocks`): filter, store, resolve dependencies, and
 /// forward dependency-free blocks to the output queue.
 async fn incoming_blocks(
-    mut incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
+    mut incoming_blocks_rx: mpsc::UnboundedReceiver<BlockMessage>,
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     conf_shard_name: Arc<str>,
     block_store: BlockStore,
     dag: Arc<dyn BlockDagStorage>,
     block_retriever: Arc<BlockRetriever>,
     put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
-    out_tx: mpsc::Sender<BlockHash>,
+    out_tx: mpsc::UnboundedSender<BlockHash>,
     log: Arc<dyn Log>,
 ) {
     let source = LogSource::new("casper.blocks.BlockReceiver");
@@ -387,7 +387,7 @@ async fn incoming_blocks(
         }
 
         if has_all_deps {
-            let _ = out_tx.send(block.block_hash).await;
+            let _ = out_tx.send(block.block_hash);
         } else {
             if !pending_requests.is_empty() {
                 request_missing_dependencies(&pending_requests, block_retriever.as_ref()).await;
@@ -403,9 +403,9 @@ async fn incoming_blocks(
 /// Process validated blocks (port of `validatedBlocks`): update state and forward the next
 /// dependency-free blocks to the output queue.
 async fn validated_blocks(
-    mut finished_processing_rx: mpsc::Receiver<BlockMessage>,
+    mut finished_processing_rx: mpsc::UnboundedReceiver<BlockMessage>,
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
-    out_tx: mpsc::Sender<BlockHash>,
+    out_tx: mpsc::UnboundedSender<BlockHash>,
 ) {
     while let Some(block) = finished_processing_rx.recv().await {
         let parents: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
@@ -416,7 +416,7 @@ async fn validated_blocks(
             next
         };
         for hash in next {
-            let _ = out_tx.send(hash).await;
+            let _ = out_tx.send(hash);
         }
     }
 }
@@ -425,16 +425,16 @@ async fn validated_blocks(
 /// `BlockReceiver.apply`). Returns the queue of block hashes ready for validation.
 pub fn apply(
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
-    incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
-    finished_processing_rx: mpsc::Receiver<BlockMessage>,
+    incoming_blocks_rx: mpsc::UnboundedReceiver<BlockMessage>,
+    finished_processing_rx: mpsc::UnboundedReceiver<BlockMessage>,
     conf_shard_name: String,
     block_store: BlockStore,
     dag: Arc<dyn BlockDagStorage>,
     block_retriever: Arc<BlockRetriever>,
     put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
     log: Arc<dyn Log>,
-) -> mpsc::Receiver<BlockHash> {
-    let (out_tx, out_rx) = mpsc::channel::<BlockHash>(100);
+) -> mpsc::UnboundedReceiver<BlockHash> {
+    let (out_tx, out_rx) = mpsc::unbounded_channel::<BlockHash>();
 
     tokio::spawn(incoming_blocks(
         incoming_blocks_rx,

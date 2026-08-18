@@ -49,8 +49,8 @@ where
 /// Process incoming blocks: validate, add to the DAG, notify the validated queue, and broadcast the
 /// block hash (port of `BlockProcessor.apply`).
 pub async fn apply<F, Fut>(
-    mut input_blocks: mpsc::Receiver<BlockMessage>,
-    validated_tx: mpsc::Sender<BlockMessage>,
+    mut input_blocks: mpsc::UnboundedReceiver<BlockMessage>,
+    validated_tx: mpsc::UnboundedSender<BlockMessage>,
     shard_id: String,
     min_phlo_price: i64,
     dag: Arc<dyn BlockDagStorage>,
@@ -89,7 +89,7 @@ pub async fn apply<F, Fut>(
             ),
             Ok(Ok(())) => {}
         }
-        let _ = validated_tx.send(block.clone()).await;
+        let _ = validated_tx.send(block.clone());
         comm_util
             .send_block_hash(&block.block_hash, block.sender.as_bytes())
             .await;

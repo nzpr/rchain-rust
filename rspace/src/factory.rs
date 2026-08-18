@@ -30,15 +30,15 @@ pub async fn create_history_repository<C, P, A, K>(
         Arc::new(Blake2b256HashCodec),
         Arc::new(BytesCodec),
     )
-    .await;
-    let roots_store = manager.store("rspace-roots").await;
+    .await?;
+    let roots_store = manager.store("rspace-roots").await?;
     let cold_store = database(
         manager,
         "rspace-cold",
         Arc::new(Blake2b256HashCodec),
         Arc::new(PersistedDataCodec),
     )
-    .await;
+    .await?;
 
     let roots_repo = Arc::new(RootRepository::new(RootsStore::new(roots_store)));
     let root = roots_repo.current_root().await;

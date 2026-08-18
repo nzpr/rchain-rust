@@ -54,7 +54,7 @@ impl LmdbEnvConfig {
 #[async_trait]
 pub trait KeyValueStoreManager: Send + Sync {
     /// Get (creating if necessary) the named byte store.
-    async fn store(&self, name: &str) -> SharedStore;
+    async fn store(&self, name: &str) -> Result<SharedStore, String>;
     async fn shutdown(&self);
 }
 
@@ -66,16 +66,16 @@ pub struct InMemoryStoreManager {
 
 #[async_trait]
 impl KeyValueStoreManager for InMemoryStoreManager {
-    async fn store(&self, name: &str) -> SharedStore {
+    async fn store(&self, name: &str) -> Result<SharedStore, String> {
         let mut state = self.state.lock().await;
-        state
+        Ok(state
             .entry(name.to_string())
             .or_insert_with(|| {
                 Arc::new(tokio::sync::Mutex::new(Box::new(
                     InMemoryKeyValueStore::default(),
                 ) as Box<dyn KeyValueStore + Send + Sync>))
             })
-            .clone()
+            .clone())
     }
 
     async fn shutdown(&self) {}
@@ -87,9 +87,9 @@ pub async fn database<K, V>(
     name: &str,
     k_codec: Arc<dyn Codec<K>>,
     v_codec: Arc<dyn Codec<V>>,
-) -> KeyValueTypedStoreCodec<K, V> {
-    let store = manager.store(name).await;
-    KeyValueTypedStoreCodec::new(store, k_codec, v_codec)
+) -> Result<KeyValueTypedStoreCodec<K, V>, String> {
+    let store = manager.store(name).await?;
+    Ok(KeyValueTypedStoreCodec::new(store, k_codec, v_codec))
 }
 
 #[cfg(test)]
@@ -100,10 +100,10 @@ mod tests {
     #[tokio::test]
     async fn store_returns_same_named_store() {
         let manager = InMemoryStoreManager::default();
-        let a = manager.store("db").await;
-        let b = manager.store("db").await;
+        let a = manager.store("db").await.unwrap();
+        let b = manager.store("db").await.unwrap();
         assert!(Arc::ptr_eq(&a, &b));
-        let other = manager.store("other").await;
+        let other = manager.store("other").await.unwrap();
         assert!(!Arc::ptr_eq(&a, &other));
     }
 
@@ -116,7 +116,8 @@ mod tests {
             Arc::new(StringCodec),
             Arc::new(StringCodec),
         )
-        .await;
+        .await
+        .unwrap();
         db.put(&[("k".to_string(), "v".to_string())]).await;
         assert_eq!(db.get(&["k".to_string()]).await.unwrap(), vec![Some("v".to_string())]);
     }

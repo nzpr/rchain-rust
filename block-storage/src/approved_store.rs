@@ -18,11 +18,11 @@ pub type ApprovedStore = Arc<dyn KeyValueTypedStore<u8, FinalizedFringe>>;
 pub const FINALIZED_FRINGE_KEY: u8 = 42;
 
 /// Open the approved store from a store manager (port of `approvedStore.create[F](kvm)`).
-pub async fn create(kvm: &dyn KeyValueStoreManager) -> ApprovedStore {
-    let store = kvm.store("finalized-store").await;
-    Arc::new(KeyValueTypedStoreCodec::new(
+pub async fn create(kvm: &dyn KeyValueStoreManager) -> Result<ApprovedStore, String> {
+    let store = kvm.store("finalized-store").await?;
+    Ok(Arc::new(KeyValueTypedStoreCodec::new(
         store,
         Arc::new(ByteCodec),
         Arc::new(FringeCodec),
-    ))
+    )))
 }

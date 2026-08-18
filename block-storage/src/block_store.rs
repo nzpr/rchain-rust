@@ -39,13 +39,13 @@ pub fn bytes_to_block_message(bytes: &[u8]) -> Result<BlockMessage, String> {
 }
 
 /// Open the block store from a store manager (port of `BlockStore.apply[F](kvm)`).
-pub async fn create(kvm: &dyn KeyValueStoreManager) -> BlockStore {
-    let store = kvm.store("blocks").await;
-    Arc::new(KeyValueTypedStoreCodec::new(
+pub async fn create(kvm: &dyn KeyValueStoreManager) -> Result<BlockStore, String> {
+    let store = kvm.store("blocks").await?;
+    Ok(Arc::new(KeyValueTypedStoreCodec::new(
         store,
         Arc::new(BlockHashCodec),
         Arc::new(BlockMessageCodec),
-    ))
+    )))
 }
 
 #[cfg(test)]
@@ -89,7 +89,7 @@ mod tests {
     #[tokio::test]
     async fn block_store_round_trips() {
         let kvm = InMemoryStoreManager::default();
-        let store = create(&kvm).await;
+        let store = create(&kvm).await.unwrap();
         let b = block();
         store.put(&[(b.block_hash, b.clone())]).await;
         assert_eq!(store.get(&[b.block_hash]).await.unwrap(), vec![Some(b)]);

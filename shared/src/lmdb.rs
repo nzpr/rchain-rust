@@ -100,19 +100,29 @@ impl LmdbStoreManager {
             env: Arc::new(env),
         })
     }
+
+    /// Open (creating if absent) a named database and return the raw synchronous store (mirror of
+    /// [`KeyValueStoreManager::store`] without the `Arc<Mutex>` wrapper, used by the RSpace
+    /// exporter/importer which require `KeyValueStore` directly).
+    pub fn store_sync(&self, name: &str) -> Result<Box<dyn KeyValueStore + Send + Sync>, String> {
+        let db = self
+            .env
+            .create_db(Some(name), DatabaseFlags::empty())
+            .map_err(|e| e.to_string())?;
+        Ok(Box::new(LmdbKeyValueStore::new(self.env.clone(), db)))
+    }
 }
 
 #[async_trait]
 impl KeyValueStoreManager for LmdbStoreManager {
-    async fn store(&self, name: &str) -> SharedStore {
+    async fn store(&self, name: &str) -> Result<SharedStore, String> {
         let db = self
             .env
             .create_db(Some(name), DatabaseFlags::empty())
-            .expect("LMDB create_db");
-        Arc::new(tokio::sync::Mutex::new(Box::new(LmdbKeyValueStore::new(
-            self.env.clone(),
-            db,
-        )) as Box<dyn KeyValueStore + Send + Sync>))
+            .map_err(|e| e.to_string())?;
+        Ok(Arc::new(tokio::sync::Mutex::new(Box::new(
+            LmdbKeyValueStore::new(self.env.clone(), db),
+        ) as Box<dyn KeyValueStore + Send + Sync>)))
     }
 
     async fn shutdown(&self) {
@@ -148,26 +158,63 @@ impl LmdbDirStoreManager {
             managers: tokio::sync::Mutex::new(BTreeMap::new()),
         }
     }
-}
 
-#[async_trait]
-impl KeyValueStoreManager for LmdbDirStoreManager {
-    async fn store(&self, name: &str) -> SharedStore {
+    /// Open (creating if absent) a named database and return the raw synchronous store (mirror of
+    /// [`KeyValueStoreManager::store`] without the `Arc<Mutex>` wrapper).
+    pub async fn store_sync(
+        &self,
+        name: &str,
+    ) -> Result<Box<dyn KeyValueStore + Send + Sync>, String> {
         let (db, cfg) = self
             .db_mapping
             .get(name)
             .cloned()
-            .unwrap_or_else(|| panic!("unknown database: {name}"));
+            .ok_or_else(|| format!("unknown database: {name}"))?;
 
         let manager = {
             let mut managers = self.managers.lock().await;
             if !managers.contains_key(&cfg.name) {
                 let dir = self.dir_path.join(&cfg.name);
-                let created = LmdbStoreManager::new(&dir, cfg.max_env_size as usize)
-                    .unwrap_or_else(|e| panic!("open LMDB environment {}: {e}", cfg.name));
+                let max_env_size =
+                    usize::try_from(cfg.max_env_size).map_err(|e| e.to_string())?;
+                let created = LmdbStoreManager::new(&dir, max_env_size)
+                    .map_err(|e| format!("open LMDB environment {}: {e}", cfg.name))?;
                 managers.insert(cfg.name.clone(), Arc::new(created));
             }
-            managers.get(&cfg.name).unwrap().clone()
+            managers
+                .get(&cfg.name)
+                .cloned()
+                .ok_or_else(|| format!("missing manager for {}", cfg.name))?
+        };
+
+        let db_name = db.name_override.unwrap_or(db.id);
+        manager.store_sync(&db_name)
+    }
+}
+
+#[async_trait]
+impl KeyValueStoreManager for LmdbDirStoreManager {
+    async fn store(&self, name: &str) -> Result<SharedStore, String> {
+        let (db, cfg) = self
+            .db_mapping
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unknown database: {name}"))?;
+
+        let manager = {
+            let mut managers = self.managers.lock().await;
+            if !managers.contains_key(&cfg.name) {
+                let dir = self.dir_path.join(&cfg.name);
+                let max_env_size =
+                    usize::try_from(cfg.max_env_size).map_err(|e| e.to_string())?;
+                let created = LmdbStoreManager::new(&dir, max_env_size)
+                    .map_err(|e| format!("open LMDB environment {}: {e}", cfg.name))?;
+                managers.insert(cfg.name.clone(), Arc::new(created));
+            }
+            managers
+                .get(&cfg.name)
+                .cloned()
+                .ok_or_else(|| format!("missing manager for {}", cfg.name))?
         };
 
         let db_name = db.name_override.unwrap_or(db.id);
@@ -201,7 +248,7 @@ mod tests {
     async fn lmdb_store_round_trips() {
         let dir = temp_dir();
         let manager = LmdbStoreManager::new(&dir, 10 * 1024 * 1024).unwrap();
-        let store = manager.store("db").await;
+        let store = manager.store("db").await.unwrap();
 
         {
             let mut kv = store.lock().await;
@@ -244,8 +291,8 @@ mod tests {
         let manager = LmdbDirStoreManager::new(&dir, mapping);
 
         // "a" and "b" share environment "env1" but are distinct databases.
-        let store_a = manager.store("a").await;
-        let store_b = manager.store("b").await;
+        let store_a = manager.store("a").await.unwrap();
+        let store_b = manager.store("b").await.unwrap();
         {
             let mut kv = store_a.lock().await;
             kv.put(vec![(b"k".to_vec(), b"va".to_vec())]);
@@ -264,7 +311,7 @@ mod tests {
         }
 
         // The name override is used as the database name.
-        let store_c = manager.store("c").await;
+        let store_c = manager.store("c").await.unwrap();
         {
             let mut kv = store_c.lock().await;
             kv.put(vec![(b"k".to_vec(), b"vc".to_vec())]);
@@ -280,13 +327,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "unknown database")]
-    async fn unknown_database_panics() {
+    async fn unknown_database_is_an_error() {
         let dir = temp_dir();
         let manager = LmdbDirStoreManager::new(
             &dir,
             vec![(Db::new("a"), LmdbEnvConfig::new("env1", 1024 * 1024))],
         );
-        let _ = manager.store("nope").await;
+        assert!(manager.store("nope").await.is_err());
     }
 }

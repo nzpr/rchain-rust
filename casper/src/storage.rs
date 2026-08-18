@@ -107,7 +107,7 @@ mod tests {
                 .as_nanos()
         ));
         let manager = rnode_key_value_store_manager(&dir);
-        let store = manager.store("deploy-pool").await;
+        let store = manager.store("deploy-pool").await.unwrap();
         {
             let mut kv = store.lock().await;
             kv.put(vec![(b"k".to_vec(), b"v".to_vec())]);
