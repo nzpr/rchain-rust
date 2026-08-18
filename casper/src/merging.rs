@@ -431,7 +431,7 @@ impl BlockIndex {
         block_hash: BlockHash,
     ) -> Result<BlockIndex, String> {
         let cache = BLOCK_INDEX_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
-        if let Some(idx) = cache.lock().unwrap().get(&block_hash) {
+        if let Some(idx) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&block_hash) {
             return Ok(idx.clone());
         }
 
@@ -452,7 +452,7 @@ impl BlockIndex {
         )
         .await?;
 
-        cache.lock().unwrap().insert(block_hash, index.clone());
+        cache.lock().unwrap_or_else(|p| p.into_inner()).insert(block_hash, index.clone());
         Ok(index)
     }
 }

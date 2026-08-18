@@ -76,7 +76,7 @@ impl ReportingRuntime {
     }
 
     pub fn set_block_data(&self, block_data: BlockData) {
-        *self.block_data.lock().unwrap() = block_data;
+        *self.block_data.lock().unwrap_or_else(|p| p.into_inner()) = block_data;
     }
 
     pub async fn inj(

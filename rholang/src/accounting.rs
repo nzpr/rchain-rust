@@ -283,7 +283,7 @@ impl CostAccounting {
 
     /// Total phlo charged so far (the sum of every `charge`d amount, i.e. consumed phlo).
     pub fn total_charged(&self) -> i64 {
-        self.log.lock().unwrap().iter().map(|c| c.value).sum()
+        self.log.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|c| c.value).sum()
     }
 
     /// Set the current cost balance (port of `_cost.set`).
@@ -299,7 +299,7 @@ impl CostAccounting {
             return Err(RholangError::OutOfPhlogistonsError);
         }
         let amount_value = amount.value;
-        self.log.lock().unwrap().push(amount);
+        self.log.lock().unwrap_or_else(|p| p.into_inner()).push(amount);
         self.value.store(current - amount_value, Ordering::SeqCst);
         if self.value.load(Ordering::SeqCst) < 0 {
             return Err(RholangError::OutOfPhlogistonsError);

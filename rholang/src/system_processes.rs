@@ -455,7 +455,7 @@ impl SystemProcesses {
                 match pars.as_slice() {
                     [ack] => {
                         let (block_number, sender_bytes) = {
-                            let data = bd.lock().unwrap();
+                            let data = bd.lock().unwrap_or_else(|p| p.into_inner());
                             (data.block_number, data.sender.bytes().to_vec())
                         };
                         let reply = vec![
@@ -636,7 +636,7 @@ mod tests {
             )>,
             RSpaceError,
         > {
-            self.produced.lock().unwrap().push((channel, data, persist));
+            self.produced.lock().unwrap_or_else(|p| p.into_inner()).push((channel, data, persist));
             Ok(None)
         }
 
@@ -684,7 +684,7 @@ mod tests {
         let args = vec![lpw(vec![RhoByteArray::apply(input.clone()), ack.clone()])];
         (handler.handler)(args).await.unwrap();
 
-        let produced = mock.produced.lock().unwrap();
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0, ack);
         assert_eq!(produced[0].1.pars, vec![RhoByteArray::apply(blake2b256::hash(&input))]);

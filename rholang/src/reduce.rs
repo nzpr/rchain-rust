@@ -1551,7 +1551,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
 
     fn update_mergeable_channels(&self, chan: &Par) {
         if self.is_mergeable_channel(chan) {
-            let mut chs = self.merge_chs.lock().unwrap();
+            let mut chs = self.merge_chs.lock().unwrap_or_else(|p| p.into_inner());
             if !chs.contains(chan) {
                 chs.push(chan.clone());
             }
@@ -1680,7 +1680,7 @@ mod tests {
         };
         interp.eval(&par, &env, &rand, &cost).await.unwrap();
 
-        let produced = interp.space.produced.lock().unwrap();
+        let produced = interp.space.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0.exprs, vec![Expr::GInt(1)]);
         assert_eq!(produced[0].1.pars, vec![from_expr(Expr::GInt(2))]);

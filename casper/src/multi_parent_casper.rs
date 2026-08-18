@@ -110,8 +110,13 @@ where
 
     let parents: BTreeSet<Message<BlockHash, Validator>> = parent_hashes
         .iter()
-        .map(|h| msg_map.get(h).expect("parent not in message map").clone())
-        .collect();
+        .map(|h| {
+            msg_map
+                .get(h)
+                .cloned()
+                .ok_or_else(|| format!("parent not in message map: {}", h.to_hex()))
+        })
+        .collect::<Result<_, String>>()?;
 
     // Currently finalized fringe.
     let prev_fringe = message_map::latest_fringe(msg_map, &parents);

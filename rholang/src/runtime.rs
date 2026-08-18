@@ -201,7 +201,7 @@ impl RhoRuntime {
 
     /// Set the per-block data exposed to the `rho:block:data` contract (port of `setBlockData`).
     pub fn set_block_data(&self, block_data: BlockData) {
-        *self.block_data.lock().unwrap() = block_data;
+        *self.block_data.lock().unwrap_or_else(|p| p.into_inner()) = block_data;
     }
 
     /// Execute a `Par` in the given environment (port of `inj`).
@@ -388,7 +388,7 @@ impl ReplayRhoRuntime {
 
     /// Set the per-block data exposed to the `rho:block:data` contract (port of `setBlockData`).
     pub fn set_block_data(&self, block_data: BlockData) {
-        *self.block_data.lock().unwrap() = block_data;
+        *self.block_data.lock().unwrap_or_else(|p| p.into_inner()) = block_data;
     }
 
     /// Execute a `Par` in the given environment (port of `inj`).
@@ -546,7 +546,7 @@ mod tests {
             )>,
             RSpaceError,
         > {
-            self.produced.lock().unwrap().push((channel, data, persist));
+            self.produced.lock().unwrap_or_else(|p| p.into_inner()).push((channel, data, persist));
             Ok(None)
         }
 
@@ -586,7 +586,7 @@ mod tests {
             .await
             .unwrap();
 
-        let produced = mock.produced.lock().unwrap();
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].1.pars, vec![rchain_models::par_ops::from_expr(
             rchain_models::ast::Expr::GInt(2)

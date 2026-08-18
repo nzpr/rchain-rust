@@ -53,11 +53,11 @@ impl RholangAndScalaDispatcher {
     }
 
     pub fn set_eval(&self, eval: EvalBodyFn) {
-        *self.eval.lock().unwrap() = Some(eval);
+        *self.eval.lock().unwrap_or_else(|p| p.into_inner()) = Some(eval);
     }
 
     pub fn set_dispatch_table(&self, table: BTreeMap<i64, ScalaBodyFn>) {
-        *self.dispatch_table.lock().unwrap() = table;
+        *self.dispatch_table.lock().unwrap_or_else(|p| p.into_inner()) = table;
     }
 }
 
@@ -75,7 +75,7 @@ impl Dispatch for RholangAndScalaDispatcher {
                 randoms.extend(data_list.iter().map(|d| d.random_state.clone()));
                 let merged = Blake2b512Random::merge(&randoms);
                 let fut = {
-                    let eval = self.eval.lock().unwrap();
+                    let eval = self.eval.lock().unwrap_or_else(|p| p.into_inner());
                     let f = eval.as_ref().ok_or_else(|| {
                         RholangError::BugFoundError("dispatcher eval not set".to_string())
                     })?;
@@ -85,7 +85,7 @@ impl Dispatch for RholangAndScalaDispatcher {
             }
             TaggedContinuation::ScalaBodyRef(r) => {
                 let fut = {
-                    let table = self.dispatch_table.lock().unwrap();
+                    let table = self.dispatch_table.lock().unwrap_or_else(|p| p.into_inner());
                     match table.get(r) {
                         Some(f) => f(data_list),
                         None => {
