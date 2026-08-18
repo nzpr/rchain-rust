@@ -19,13 +19,12 @@ use rchain_sdk::consensus::is_super_majority;
 
 use super::block_creator::BlockCreator;
 use super::propose_result::{BlockCreatorResult, ProposeResult, ProposeStatus};
-use crate::block_status::BlockStatus;
 use crate::merging::BlockIndex;
-use crate::multi_parent_casper::{get_pre_state_for_new_block, DEPLOY_LIFESPAN};
+use crate::multi_parent_casper::{get_pre_state_for_new_block, ValidateError, DEPLOY_LIFESPAN};
 use crate::runtime_manager::RuntimeManager;
 use crate::validator_identity::ValidatorIdentity;
 
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 /// A proposal result signaled to the caller (port of `ProposerResult`).
 #[derive(Clone, Debug)]
@@ -45,23 +44,26 @@ pub enum ProposerResult {
 }
 
 /// The block proposer (port of `Proposer`).
-pub struct Proposer<'a> {
-    get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<'a, i64> + 'a>,
-    check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'a, bool> + 'a>,
-    create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'a, BlockCreatorResult> + 'a>,
-    validate_block: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'a, Result<(), BlockStatus>> + 'a>,
-    propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'a, ()> + 'a>,
+pub struct Proposer {
+    get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync>,
+    check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync>,
+    create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync>,
+    validate_block:
+        Arc<dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync>,
+    propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
     validator: ValidatorIdentity,
 }
 
-impl<'a> Proposer<'a> {
+impl Proposer {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<'a, i64> + 'a>,
-        check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'a, bool> + 'a>,
-        create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'a, BlockCreatorResult> + 'a>,
-        validate_block: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'a, Result<(), BlockStatus>> + 'a>,
-        propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'a, ()> + 'a>,
+        get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync>,
+        check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync>,
+        create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync>,
+        validate_block: Arc<
+            dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
+        >,
+        propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
         validator: ValidatorIdentity,
     ) -> Self {
         Proposer {
@@ -101,8 +103,11 @@ impl<'a> Proposer<'a> {
                         Some(block),
                     )
                 }
-                Err(status) => panic!(
+                Err(ValidateError::ValidationFailed(_, status)) => panic!(
                     "Validation of self created block failed with reason: {status:?}, cancelling propose."
+                ),
+                Err(ValidateError::Internal(e)) => panic!(
+                    "Validation of self created block failed with internal error: {e}, cancelling propose."
                 ),
             },
         }
@@ -138,25 +143,31 @@ impl<'a> Proposer<'a> {
         }
     }
 
-    /// Build a `Proposer` from its dependencies (port of `Proposer.apply`).
+    /// Build a `Proposer` from its dependencies (port of `Proposer.apply`). The DAG/block-store/
+    /// runtime/block-index are captured by `Arc` so the returned proposer is `'static` and can be
+    /// driven from a spawned task.
     #[allow(clippy::too_many_arguments)]
     pub fn apply<F, Fut>(
         validator_identity: ValidatorIdentity,
-        shard_id: &'a str,
+        shard_id: String,
         min_phlo_price: i64,
         epoch_length: i32,
-        dag: &'a dyn BlockDagStorage,
-        block_store: &'a BlockStore,
-        runtime: &'a RuntimeManager,
-        block_index: &'a F,
-        propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'a, ()> + 'a>,
-    ) -> Proposer<'a>
+        dag: Arc<dyn BlockDagStorage>,
+        block_store: BlockStore,
+        runtime: Arc<RuntimeManager>,
+        block_index: F,
+        propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
+    ) -> Proposer
     where
-        F: Fn(BlockHash) -> Fut + Sync + 'a,
-        Fut: Future<Output = Result<BlockIndex, String>> + 'a,
+        F: Fn(BlockHash) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<BlockIndex, String>> + Send + 'static,
     {
-        let get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<'a, i64> + 'a> =
+        let block_index = Arc::new(block_index);
+
+        let get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync> = {
+            let dag = dag.clone();
             Arc::new(move |sender| {
+                let dag = dag.clone();
                 Box::pin(async move {
                     let dag_repr = dag.get_representation().await;
                     dag_repr
@@ -167,77 +178,110 @@ impl<'a> Proposer<'a> {
                         .map(|m| m.sender_seq)
                         .unwrap_or(-1)
                 })
-            });
+            })
+        };
 
-        let check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'a, bool> + 'a> =
-            Arc::new(move |vi: &ValidatorIdentity| {
-                let sender = Validator::from_slice(vi.public_key.bytes());
-                Box::pin(async move {
-                    let dag_repr = dag.get_representation().await;
-                    let fringe = dag_repr.dag_message_state.latest_fringe();
-                    let bonds_map = if let Some(m) = fringe.iter().next() {
-                        m.bonds_map.clone()
-                    } else if let Some((_, hashes)) = dag_repr.height_map.iter().next() {
-                        match hashes.iter().next() {
-                            Some(h) => dag
-                                .lookup(h)
-                                .await
-                                .ok()
-                                .flatten()
-                                .map(|m| m.bonds_map)
-                                .unwrap_or_default(),
-                            None => Default::default(),
+        let check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync> =
+            {
+                let dag = dag.clone();
+                Arc::new(move |vi: &ValidatorIdentity| {
+                    let sender = Validator::from_slice(vi.public_key.bytes());
+                    let dag = dag.clone();
+                    Box::pin(async move {
+                        let dag_repr = dag.get_representation().await;
+                        let fringe = dag_repr.dag_message_state.latest_fringe();
+                        let bonds_map = if let Some(m) = fringe.iter().next() {
+                            m.bonds_map.clone()
+                        } else if let Some((_, hashes)) = dag_repr.height_map.iter().next() {
+                            match hashes.iter().next() {
+                                Some(h) => dag
+                                    .lookup(h)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .map(|m| m.bonds_map)
+                                    .unwrap_or_default(),
+                                None => Default::default(),
+                            }
+                        } else {
+                            Default::default()
+                        };
+                        bonds_map.contains_key(&sender)
+                    })
+                })
+            };
+
+        let create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync> =
+            {
+                let runtime = runtime.clone();
+                let dag = dag.clone();
+                let block_store = block_store.clone();
+                let block_index = block_index.clone();
+                let shard_id = shard_id.clone();
+                Arc::new(move |vi: &ValidatorIdentity| {
+                    let runtime = runtime.clone();
+                    let dag = dag.clone();
+                    let block_store = block_store.clone();
+                    let block_index = block_index.clone();
+                    let vi = vi.clone();
+                    let shard_id = shard_id.clone();
+                    Box::pin(async move {
+                        create_block(
+                            runtime.as_ref(),
+                            dag.as_ref(),
+                            &block_store,
+                            block_index.as_ref(),
+                            &vi,
+                            &shard_id,
+                            epoch_length,
+                        )
+                        .await
+                        .expect("create block failed")
+                    })
+                })
+            };
+
+        let validate_block: Arc<dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync> =
+            {
+                let runtime = runtime.clone();
+                let dag = dag.clone();
+                let block_store = block_store.clone();
+                let block_index = block_index.clone();
+                let shard_id = shard_id.clone();
+                Arc::new(move |block: &BlockMessage| {
+                    let runtime = runtime.clone();
+                    let dag = dag.clone();
+                    let block_store = block_store.clone();
+                    let block_index = block_index.clone();
+                    let block = block.clone();
+                    let shard_id = shard_id.clone();
+                    Box::pin(async move {
+                        match crate::multi_parent_casper::validate(
+                            dag.as_ref(),
+                            &block_store,
+                            runtime.as_ref(),
+                            &block,
+                            &shard_id,
+                            min_phlo_price,
+                            block_index.as_ref(),
+                        )
+                        .await
+                        {
+                            Ok(meta) => {
+                                dag.insert(meta, block.clone())
+                                    .await
+                                    .map_err(|e| {
+                                        ValidateError::Internal(format!(
+                                            "failed to insert block into DAG: {e}"
+                                        ))
+                                    })?;
+                                Ok(())
+                            }
+                            Err(err) => Err(err),
                         }
-                    } else {
-                        Default::default()
-                    };
-                    bonds_map.contains_key(&sender)
+                    })
                 })
-            });
-
-        let create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'a, BlockCreatorResult> + 'a> =
-            Arc::new(move |vi: &ValidatorIdentity| {
-                let vi = vi.clone();
-                Box::pin(async move {
-                    create_block(
-                        runtime,
-                        dag,
-                        block_store,
-                        block_index,
-                        &vi,
-                        shard_id,
-                        epoch_length,
-                    )
-                    .await
-                    .expect("create block failed")
-                })
-            });
-
-        let validate_block: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'a, Result<(), BlockStatus>> + 'a> =
-            Arc::new(move |block: &BlockMessage| {
-                let block = block.clone();
-                Box::pin(async move {
-                    match crate::multi_parent_casper::validate(
-                        dag,
-                        block_store,
-                        runtime,
-                        &block,
-                        shard_id,
-                        min_phlo_price,
-                        block_index,
-                    )
-                    .await
-                    {
-                        Ok(meta) => {
-                            dag.insert(meta, block.clone())
-                                .await
-                                .expect("failed to insert block into DAG");
-                            Ok(())
-                        }
-                        Err((_, status)) => Err(status),
-                    }
-                })
-            });
+            };
 
         Proposer::new(
             get_latest_seq_number,
@@ -394,21 +438,21 @@ where
 mod tests {
     use super::*;
 
-    fn proposer(create: BlockCreatorResult) -> Proposer<'static> {
-        let get_seq: Arc<dyn Fn(Validator) -> BoxFuture<'static, i64> + 'static> =
+    fn proposer(create: BlockCreatorResult) -> Proposer {
+        let get_seq: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync> =
             Arc::new(|_v| Box::pin(async { 0i64 }));
-        let check_active: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<'static, bool> + 'static> =
+        let check_active: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync> =
             Arc::new(|_v| Box::pin(async { true }));
         let create_block: Arc<
-            dyn Fn(&ValidatorIdentity) -> BoxFuture<'static, BlockCreatorResult> + 'static,
+            dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync,
         > = Arc::new(move |_v| {
             let create = create.clone();
             Box::pin(async move { create })
         });
         let validate: Arc<
-            dyn Fn(&BlockMessage) -> BoxFuture<'static, Result<(), BlockStatus>> + 'static,
+            dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
         > = Arc::new(|_b| Box::pin(async { Ok(()) }));
-        let effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<'static, ()> + 'static> =
+        let effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync> =
             Arc::new(|_b| Box::pin(async {}));
         let validator = ValidatorIdentity::from_hex(
             "67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530",

@@ -25,6 +25,16 @@ use crate::runtime_manager::RuntimeManager;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsingError(pub String);
 
+/// A block-validation failure (port of `MultiParentCasper.validate`'s error channel).
+///
+/// A validation failure marks the block invalid but still returns its (failed) metadata so the DAG
+/// can record it; an internal error is a store/runtime lookup failure with no block outcome.
+#[derive(Clone, Debug)]
+pub enum ValidateError {
+    ValidationFailed(BlockMetadata, BlockStatus),
+    Internal(String),
+}
+
 /// The size of the deploy safety range (port of `deployLifespan`).
 pub const DEPLOY_LIFESPAN: i64 = 50;
 
@@ -262,7 +272,7 @@ pub async fn validate<F, Fut>(
     shard_id: &str,
     min_phlo_price: i64,
     block_index: &F,
-) -> Result<BlockMetadata, (BlockMetadata, BlockStatus)>
+) -> Result<BlockMetadata, ValidateError>
 where
     F: Fn(BlockHash) -> Fut,
     Fut: std::future::Future<Output = Result<BlockIndex, String>>,
@@ -272,33 +282,58 @@ where
     // Block summary (justification regression, sequence/block number, deploy checks).
     match crate::validate::block_summary(dag, block_store, block, shard_id, DEPLOY_LIFESPAN).await {
         Ok(Ok(())) => {}
-        Ok(Err(status)) => return Err((mark_failed(&init_block_meta), status)),
-        Err(e) => panic!("block summary failed: {e}"),
+        Ok(Err(status)) => {
+            return Err(ValidateError::ValidationFailed(
+                mark_failed(&init_block_meta),
+                status,
+            ))
+        }
+        Err(e) => return Err(ValidateError::Internal(format!("block summary failed: {e}"))),
     }
 
     // Replay validation.
     let (block_metadata, validated) =
         validate_block_checkpoint(runtime, dag, block_store, block, block_index)
             .await
-            .expect("validateBlockCheckpoint failed");
+            .map_err(|e| ValidateError::Internal(format!("validateBlockCheckpoint failed: {e}")))?;
     match validated {
-        Err(status) => return Err((mark_failed(&block_metadata), status)),
+        Err(status) => {
+            return Err(ValidateError::ValidationFailed(
+                mark_failed(&block_metadata),
+                status,
+            ))
+        }
         Ok(true) => {}
-        Ok(false) => return Err((mark_failed(&block_metadata), BlockStatus::InvalidStateHash)),
+        Ok(false) => {
+            return Err(ValidateError::ValidationFailed(
+                mark_failed(&block_metadata),
+                BlockStatus::InvalidStateHash,
+            ))
+        }
     }
 
     // Bonds cache.
     match crate::validate::bonds_cache(runtime, block).await {
         Ok(Ok(())) => {}
-        Ok(Err(status)) => return Err((mark_failed(&block_metadata), status)),
-        Err(e) => panic!("bondsCache failed: {e}"),
+        Ok(Err(status)) => {
+            return Err(ValidateError::ValidationFailed(
+                mark_failed(&block_metadata),
+                status,
+            ))
+        }
+        Err(e) => return Err(ValidateError::Internal(format!("bondsCache failed: {e}"))),
     }
 
     // Neglected invalid block.
     match crate::validate::neglected_invalid_block(dag, block).await {
         Ok(Ok(())) => {}
-        Ok(Err(status)) => return Err((mark_failed(&block_metadata), status)),
-        Err(e) => panic!("neglectedInvalidBlock failed: {e}"),
+        Ok(Err(status)) => {
+            return Err(ValidateError::ValidationFailed(
+                mark_failed(&block_metadata),
+                status,
+            ))
+        }
+        Err(e) => return Err(ValidateError::Internal(format!("neglectedInvalidBlock failed: {e}"))),
     }
 
     // Phlo price (best-effort; treated as valid on failure, per the Scala recoverWith).

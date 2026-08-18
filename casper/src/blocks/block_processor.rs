@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::block_status::BlockStatus;
 use crate::merging::BlockIndex;
+use crate::multi_parent_casper::ValidateError;
 use crate::protocol::comm_util::CommUtil;
 use crate::runtime_manager::RuntimeManager;
 
@@ -40,7 +41,8 @@ where
     .await;
     let (block_meta, status) = match result {
         Ok(meta) => (meta, Ok(())),
-        Err((meta, status)) => (meta, Err(status)),
+        Err(ValidateError::ValidationFailed(meta, status)) => (meta, Err(status)),
+        Err(ValidateError::Internal(e)) => return Err(e),
     };
     dag.insert(block_meta, block).await?;
     Ok(status)

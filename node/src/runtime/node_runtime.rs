@@ -5,6 +5,8 @@
 //! discovery layer, the proposer, the block receiver/processor streams, the NodeLaunch state
 //! machines, and the report-store codec are deferred.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use prost::Message;
@@ -17,18 +19,21 @@ use rchain_block_storage::dag::codecs::{
     SignedDeployDataCodec,
 };
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
-use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus};
+use rchain_block_storage::syntax::put_block;
+use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus, ProposeFunction};
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::block_metadata_store::BlockMetadataStore;
 use rchain_casper::blocks::block_receiver::{self, BlockReceiverState};
 use rchain_casper::blocks::block_processor;
 use rchain_casper::blocks::block_retriever::BlockRetriever;
+use rchain_casper::blocks::proposer::proposer::{Proposer, ProposerResult};
 use rchain_casper::merging::BlockIndex;
 use rchain_casper::dag::BlockDagKeyValueStorage;
 use rchain_casper::engine::node_launch::{self, PeerMessage};
 use rchain_casper::protocol::comm_util::{CommUtil, ConnectionsCell};
 use rchain_casper::reporting::noop;
 use rchain_casper::runtime_manager::RuntimeManager;
+use rchain_casper::state::ProposerState;
 use rchain_casper::storage::rnode_key_value_store_manager;
 use rchain_casper::validator_identity::ValidatorIdentity;
 use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
@@ -71,6 +76,7 @@ use crate::api::web_api::WebApi;
 use crate::api::web_api_impl::WebApiImpl;
 use crate::configuration::model::NodeConf;
 use crate::diagnostics::NewPrometheusReporter;
+use crate::instances::proposer_instance;
 use crate::web::http::{acquire_admin_http_server, acquire_http_server, StatusProvider};
 use crate::web::transaction::{TransactionApi, TransactionInfo};
 
@@ -283,6 +289,16 @@ pub struct SetupParts {
     pub approved_store: ApprovedStore,
     pub store_manager: LmdbDirStoreManager,
     pub validator_identity_opt: Option<ValidatorIdentity>,
+    pub proposer: Option<ProposerParts>,
+}
+
+/// The proposer request queue + shared state (port of the `proposerQueue`/`proposerStateRefOpt` in
+/// `Setup.setupNodeProgram`). Built in [`setup`] (so `BlockApiImpl` can get the trigger + state);
+/// consumed in [`setup_node_program`] to drive the proposer stream.
+pub struct ProposerParts {
+    pub queue_tx: mpsc::Sender<(bool, tokio::sync::oneshot::Sender<ProposerResult>)>,
+    pub queue_rx: mpsc::Receiver<(bool, tokio::sync::oneshot::Sender<ProposerResult>)>,
+    pub state: Arc<tokio::sync::Mutex<ProposerState>>,
 }
 
 /// Wire the block receiver + processor streams (port of the `BlockReceiver`/`BlockProcessor` part of
@@ -474,15 +490,14 @@ fn build_protocol_server(
 
 /// Assemble the full running node program (port of `Setup.setupNodeProgram` +
 /// `NodeRuntime.main`): comm/discovery state, block receiver/processor, peer-message stream,
-/// transport server, `NodeLaunch.apply`, and the request-missing-dependencies loop. The proposer
-/// stream is deferred (its `Proposer<'a>` borrows the DAG/store/runtime by reference, so wiring it
-/// into a `'static` task needs an `Arc`-owning refactor of `Proposer::apply`).
+/// transport server, `NodeLaunch.apply`, the proposer stream, and the request-missing-dependencies
+/// loop.
 pub async fn setup_node_program(
     conf: &NodeConf,
     id: &NodeIdentifier,
     log: Arc<dyn Log>,
 ) -> Result<NodeProgram, String> {
-    let (mut program, parts) = setup(conf, id).await?;
+    let (mut program, mut parts) = setup(conf, id).await?;
     let comm_state = create_comm_state(conf, id, log.clone()).await?;
     let importer = create_rspace_importer(&parts.store_manager).await?;
 
@@ -543,6 +558,62 @@ pub async fn setup_node_program(
         }
     };
     tokio::spawn(request_deps);
+
+    // Proposer stream (port of `proposerStream` in `Setup.setupNodeProgram`). Runs only when a
+    // validator identity is configured; the propose trigger + state were wired into `BlockApiImpl`
+    // by [`setup`].
+    let proposer_parts = parts.proposer.take();
+    let validator = parts.validator_identity_opt.clone();
+    if let (Some(proposer_parts), Some(validator)) = (proposer_parts, validator) {
+        let block_index = {
+            let runtime = parts.runtime_manager.clone();
+            let block_store = parts.block_store.clone();
+            move |hash: BlockHash| {
+                let runtime = runtime.clone();
+                let block_store = block_store.clone();
+                async move { BlockIndex::get_block_index(&runtime, &block_store, hash).await }
+            }
+        };
+        let propose_effect: Arc<
+            dyn Fn(&BlockMessage) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync,
+        > = {
+            let block_store = parts.block_store.clone();
+            let comm_util = comm_state.comm_util.clone();
+            Arc::new(move |block: &BlockMessage| {
+                let block_store = block_store.clone();
+                let comm_util = comm_util.clone();
+                let block = block.clone();
+                Box::pin(async move {
+                    put_block(&block_store, block.clone()).await;
+                    comm_util
+                        .send_block_hash(&block.block_hash, block.sender.as_bytes())
+                        .await;
+                })
+            })
+        };
+        let proposer = Proposer::apply(
+            validator,
+            conf.casper.shard_name.clone(),
+            conf.casper.min_phlo_price,
+            conf.casper.genesis_block_data.epoch_length,
+            parts.dag.clone(),
+            parts.block_store.clone(),
+            parts.runtime_manager.clone(),
+            block_index,
+            propose_effect,
+        );
+        let proposer_stream = proposer_instance::create(
+            proposer_parts.queue_rx,
+            proposer_parts.queue_tx,
+            proposer,
+            proposer_parts.state,
+        );
+        tokio::spawn(async move {
+            use futures_util::StreamExt;
+            let mut stream = Box::pin(proposer_stream);
+            while stream.next().await.is_some() {}
+        });
+    }
 
     Ok(program)
 }
@@ -665,6 +736,32 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         .as_deref()
         .and_then(ValidatorIdentity::from_hex);
 
+    // Proposer queue + trigger + state (port of the `proposerQueue`/`triggerProposeFOpt`/
+    // `proposerStateRefOpt` in `Setup.setupNodeProgram`). The proposer stream itself is driven in
+    // `setup_node_program`, but the trigger + state must be available to `BlockApiImpl` here.
+    let (proposer_queue_tx, proposer_queue_rx) =
+        mpsc::channel::<(bool, tokio::sync::oneshot::Sender<ProposerResult>)>(100);
+    let proposer_state: Option<Arc<tokio::sync::Mutex<ProposerState>>> = validator_opt
+        .as_ref()
+        .map(|_| Arc::new(tokio::sync::Mutex::new(ProposerState::default())));
+    let trigger_propose: Option<ProposeFunction> = validator_opt.as_ref().map(|_| {
+        let tx = proposer_queue_tx.clone();
+        Box::new(move |is_async: bool| {
+            let tx = tx.clone();
+            Box::pin(async move {
+                let (otx, orx) = tokio::sync::oneshot::channel();
+                let _ = tx.send((is_async, otx)).await;
+                orx.await.unwrap_or(ProposerResult::Empty)
+            })
+        })
+    });
+    let proposer_parts: Option<ProposerParts> =
+        proposer_state.as_ref().map(|state| ProposerParts {
+            queue_tx: proposer_queue_tx.clone(),
+            queue_rx: proposer_queue_rx,
+            state: state.clone(),
+        });
+
     let network_id = conf.protocol_server.network_id.clone();
     let shard_id = conf.casper.shard_name.clone();
     let network_status: Box<dyn Fn() -> NetworkStatus + Send + Sync> = Box::new({
@@ -689,8 +786,8 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         conf.casper.validator_private_key.is_none(),
         conf.api_server.max_blocks_limit,
         conf.dev_mode,
-        None,
-        None,
+        trigger_propose,
+        proposer_state.clone(),
         conf.autopropose,
         std::collections::BTreeSet::new(),
     ));
@@ -747,6 +844,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
             approved_store,
             store_manager,
             validator_identity_opt: validator_opt,
+            proposer: proposer_parts,
         },
     ))
 }

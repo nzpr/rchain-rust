@@ -16,12 +16,12 @@ use rchain_casper::state::ProposerState;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 
 /// Create the proposer stream (port of `ProposerInstance.create`).
-pub fn create<'a>(
+pub fn create(
     propose_requests_rx: mpsc::Receiver<(bool, oneshot::Sender<ProposerResult>)>,
     propose_requests_tx: mpsc::Sender<(bool, oneshot::Sender<ProposerResult>)>,
-    proposer: Proposer<'a>,
+    proposer: Proposer,
     state: Arc<tokio::sync::Mutex<ProposerState>>,
-) -> impl tokio_stream::Stream<Item = (ProposeResult, Option<BlockMessage>)> + 'a {
+) -> impl tokio_stream::Stream<Item = (ProposeResult, Option<BlockMessage>)> + Send + 'static {
     let input = ReceiverStream::new(propose_requests_rx);
     let lock = Arc::new(Semaphore::new(1));
     let trigger = Arc::new(AtomicBool::new(false));
