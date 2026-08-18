@@ -11,6 +11,7 @@ clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 hocon = "0.9"
 linked-hash-map = "0.5"
+rchain-block-storage = { path = "../block-storage" }
 rchain-casper = { path = "../casper" }
 rchain-comm = { path = "../comm" }
 rchain-crypto = { path = "../crypto" }
@@ -24,3 +25,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tonic = { version = "0.12", features = ["transport"] }
+
+[[bin]]
+name = "rnode"
+path = "src/main.rs"
