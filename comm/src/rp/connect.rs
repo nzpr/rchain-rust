@@ -5,12 +5,22 @@
 
 use std::collections::HashSet;
 
+use rand::seq::SliceRandom;
+
 use crate::discovery::NodeDiscovery;
 use crate::errors::CommErr;
 use crate::peer_node::PeerNode;
 use crate::rp::protocol_helper;
 use crate::rp::rp_conf::RPConf;
 use crate::transport::transport_layer::TransportLayer;
+
+/// Shuffle the connections and take up to `max` (port of `ConnectionsCell.random`).
+pub fn random_connections(connections: &[PeerNode], max: usize) -> Vec<PeerNode> {
+    let mut shuffled: Vec<PeerNode> = connections.to_vec();
+    shuffled.shuffle(&mut rand::thread_rng());
+    shuffled.truncate(max);
+    shuffled
+}
 
 /// Append `to_be_added`, first removing any existing peer with the same id (port of `addConn`).
 pub fn add_conn(connections: &[PeerNode], to_be_added: &[PeerNode]) -> Vec<PeerNode> {
@@ -137,6 +147,25 @@ mod tests {
             remove_conn(&[a.clone(), b.clone()], &[peer(9, "x")]),
             vec![a, b]
         );
+    }
+
+    #[test]
+    fn random_connections_takes_at_most_max() {
+        let peers: Vec<PeerNode> = (0..10).map(|i| peer(i, "host")).collect();
+        let picked = random_connections(&peers, 3);
+        assert_eq!(picked.len(), 3);
+        // All picked peers come from the input and are unique (a shuffle is a permutation subset).
+        let ids: Vec<Vec<u8>> = picked.iter().map(|p| p.key().to_vec()).collect();
+        assert_eq!(ids.len(), 3);
+        for p in &picked {
+            assert!(peers.contains(p));
+        }
+    }
+
+    #[test]
+    fn random_connections_takes_empty_when_max_zero() {
+        let peers: Vec<PeerNode> = (0..5).map(|i| peer(i, "host")).collect();
+        assert!(random_connections(&peers, 0).is_empty());
     }
 
     #[test]
