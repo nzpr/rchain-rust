@@ -744,17 +744,22 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
     let proposer_state: Option<Arc<tokio::sync::Mutex<ProposerState>>> = validator_opt
         .as_ref()
         .map(|_| Arc::new(tokio::sync::Mutex::new(ProposerState::default())));
-    let trigger_propose: Option<ProposeFunction> = validator_opt.as_ref().map(|_| {
+    let trigger_propose: Option<ProposeFunction> = if validator_opt.is_some() {
         let tx = proposer_queue_tx.clone();
-        Box::new(move |is_async: bool| {
-            let tx = tx.clone();
-            Box::pin(async move {
-                let (otx, orx) = tokio::sync::oneshot::channel();
-                let _ = tx.send((is_async, otx)).await;
-                orx.await.unwrap_or(ProposerResult::Empty)
-            })
-        })
-    });
+        let f: ProposeFunction = Box::new(
+            move |is_async: bool| -> Pin<Box<dyn Future<Output = ProposerResult> + Send + 'static>> {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    let (otx, orx) = tokio::sync::oneshot::channel();
+                    let _ = tx.send((is_async, otx)).await;
+                    orx.await.unwrap_or(ProposerResult::Empty)
+                })
+            },
+        );
+        Some(f)
+    } else {
+        None
+    };
     let proposer_parts: Option<ProposerParts> =
         proposer_state.as_ref().map(|state| ProposerParts {
             queue_tx: proposer_queue_tx.clone(),
