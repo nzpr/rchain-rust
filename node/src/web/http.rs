@@ -9,12 +9,15 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use rchain_casper::api::block_report_api::BlockReportApi;
+use rchain_models::block_hash::BlockHash;
 
 use crate::api::admin_web_api::AdminWebApi;
 use crate::api::dto::{
@@ -23,14 +26,16 @@ use crate::api::dto::{
 };
 use crate::api::web_api::WebApi;
 use crate::diagnostics::NewPrometheusReporter;
+use crate::web::reporting::transform_result;
 use crate::web::version_info;
 
-/// State shared by the public HTTP server (port of the `webApi` + `prometheusReporter` arguments
-/// of `acquireHttpServer`).
+/// State shared by the public HTTP server (port of the `webApi` + `prometheusReporter` +
+/// `blockReportAPI` arguments of `acquireHttpServer`).
 #[derive(Clone)]
 pub struct HttpState {
     pub reporter: Arc<NewPrometheusReporter>,
     pub web_api: Arc<dyn WebApi>,
+    pub block_report_api: Arc<BlockReportApi>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -149,6 +154,28 @@ async fn api_get_transaction(
     json_result(state.web_api.get_transaction(&hash).await)
 }
 
+// --- Reporting routes (port of `ReportingRoutes.service`) ---
+
+/// `GET /reporting/trace` query params (`blockHash` + optional `forceReplay`).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportingQuery {
+    block_hash: String,
+    force_replay: Option<bool>,
+}
+
+async fn reporting_trace(
+    State(state): State<HttpState>,
+    Query(query): Query<ReportingQuery>,
+) -> Response {
+    let hash = BlockHash::from_hex(&query.block_hash);
+    let result = state
+        .block_report_api
+        .block_report(&hash, query.force_replay.unwrap_or(false))
+        .await;
+    (StatusCode::OK, Json(transform_result(result))).into_response()
+}
+
 // --- Admin Web API routes (port of `AdminWebApiRoutes.service`) ---
 
 async fn admin_propose(State(state): State<AdminState>) -> Response {
@@ -156,11 +183,12 @@ async fn admin_propose(State(state): State<AdminState>) -> Response {
 }
 
 /// Build the public HTTP routes (port of `acquireHttpServer`'s route map: `/version`, `/metrics`,
-/// and the `/api` JSON routes). The `/status`, `/api/v1`, and reporting routes are deferred.
+/// the `/api` JSON routes, and `/reporting`). The `/status` and `/api/v1` routes are deferred.
 pub fn router(state: HttpState) -> Router {
     Router::new()
         .route("/version", get(version))
         .route("/metrics", get(metrics))
+        .route("/reporting/trace", get(reporting_trace))
         .route("/api/status", get(api_status))
         .route("/api/deploy", post(api_deploy))
         .route("/api/explore-deploy", post(api_explore_deploy))
@@ -192,12 +220,13 @@ pub fn admin_router(state: AdminState) -> Router {
 }
 
 /// Bind and serve the public HTTP routes (port of `web/acquireHttpServer`; the `/status`,
-/// `/api/v1`, and reporting routes, and the CORS/connection-timeout configuration are deferred).
+/// `/api/v1`, and the CORS/connection-timeout configuration are deferred).
 pub async fn acquire_http_server(
     host: &str,
     port: u16,
     reporter: Arc<NewPrometheusReporter>,
     web_api: Arc<dyn WebApi>,
+    block_report_api: Arc<BlockReportApi>,
 ) -> Result<(), String> {
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
@@ -205,9 +234,16 @@ pub async fn acquire_http_server(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| e.to_string())?;
-    axum::serve(listener, router(HttpState { reporter, web_api }))
-        .await
-        .map_err(|e| e.to_string())
+    axum::serve(
+        listener,
+        router(HttpState {
+            reporter,
+            web_api,
+            block_report_api,
+        }),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Bind and serve the admin HTTP routes (port of `web/acquireAdminHttpServer`).
@@ -237,7 +273,47 @@ mod tests {
     use crate::web::transaction::TransactionResponse;
     use async_trait::async_trait;
     use axum::body::to_bytes;
+    use rchain_block_storage::dag::codecs::{BlockHashCodec, BlockMessageCodec};
+    use rchain_casper::reporting::noop;
     use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo};
+    use rchain_models::casper::protocol::report::BlockEventInfo;
+    use rchain_shared::store::InMemoryKeyValueStore;
+    use rchain_shared::typed_store::{Codec, KeyValueTypedStoreCodec, SharedStore};
+    use std::marker::PhantomData;
+
+    struct JsonCodec<T>(PhantomData<T>);
+
+    impl<T: Serialize + serde::de::DeserializeOwned + Send + Sync> Codec<T> for JsonCodec<T> {
+        fn encode(&self, value: &T) -> Vec<u8> {
+            serde_json::to_vec(value).expect("json encode")
+        }
+
+        fn decode(&self, bytes: &[u8]) -> Result<T, String> {
+            serde_json::from_slice(bytes).map_err(|e| e.to_string())
+        }
+    }
+
+    fn test_block_report_api() -> Arc<BlockReportApi> {
+        let store: SharedStore = Arc::new(tokio::sync::Mutex::new(
+            Box::new(InMemoryKeyValueStore::default()),
+        ));
+        let block_store = Arc::new(KeyValueTypedStoreCodec::new(
+            store.clone(),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        let report_store = Arc::new(KeyValueTypedStoreCodec::new(
+            store,
+            Arc::new(BlockHashCodec),
+            Arc::new(JsonCodec::<BlockEventInfo>(PhantomData)),
+        ));
+        Arc::new(BlockReportApi::new(
+            block_store,
+            Arc::new(noop()),
+            report_store,
+            None,
+        ))
+    }
 
     fn test_status() -> ApiStatus {
         ApiStatus {
@@ -335,6 +411,7 @@ mod tests {
             web_api: Arc::new(MockWebApi {
                 status: test_status(),
             }),
+            block_report_api: test_block_report_api(),
         }
     }
 

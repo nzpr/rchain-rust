@@ -21,14 +21,16 @@ pub struct ParWithRandom {
 }
 
 /// A list of `Par`s plus a split random state (port of `ListParWithRandom`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListParWithRandom {
     pub pars: Vec<Par>,
     pub random_state: Blake2b512Random,
 }
 
 /// A bound receive pattern (port of `BindPattern`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BindPattern {
     pub patterns: Vec<Par>,
     pub remainder: Option<Var>,

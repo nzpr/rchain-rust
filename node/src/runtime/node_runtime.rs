@@ -79,6 +79,7 @@ pub struct NodeProgram {
     grpc_services: GrpcServices,
     web_api: Arc<dyn WebApi>,
     admin_web_api: Arc<dyn AdminWebApi>,
+    block_report_api: Arc<BlockReportApi>,
     reporter: Arc<NewPrometheusReporter>,
     host: String,
     port_http: i32,
@@ -99,8 +100,16 @@ impl NodeProgram {
         let host = self.host.clone();
         let reporter = self.reporter.clone();
         let web_api = self.web_api.clone();
+        let block_report_api = self.block_report_api.clone();
         let http = tokio::spawn(async move {
-            acquire_http_server(&host, self.port_http as u16, reporter, web_api).await
+            acquire_http_server(
+                &host,
+                self.port_http as u16,
+                reporter,
+                web_api,
+                block_report_api,
+            )
+            .await
         });
 
         let host = self.host.clone();
@@ -280,7 +289,11 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, 
         validator_opt,
     ));
 
-    let grpc_services = GrpcServices::build(block_api.clone(), block_report_api, eval_runtime);
+    let grpc_services = GrpcServices::build(
+        block_api.clone(),
+        block_report_api.clone(),
+        eval_runtime,
+    );
     let web_api: Arc<dyn WebApi> = Arc::new(WebApiImpl::new(
         block_api.clone(),
         Arc::new(NoopTransactionApi),
@@ -291,6 +304,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, 
         grpc_services,
         web_api,
         admin_web_api,
+        block_report_api,
         reporter: Arc::new(NewPrometheusReporter::new(
             crate::diagnostics::scrape_data_builder::Configuration::default(),
         )),

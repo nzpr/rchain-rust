@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 
 use prost::Message as _;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_shared::serialize::Serialize;
 
 use crate::block::state_hash::StateHash;
@@ -141,7 +142,8 @@ impl SignedDeployData {
 // -------------------------------------------------------------------------------------------------
 
 /// A peek event (port of `Peek`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Peek {
     pub channel_index: i32,
 }
@@ -279,7 +281,8 @@ impl Event {
 // -------------------------------------------------------------------------------------------------
 
 /// System deploy data (port of the sealed `SystemDeployData`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum SystemDeployData {
     Slash(Validator),
     CloseBlock,
@@ -775,6 +778,123 @@ impl BlockHashMessage {
 }
 
 // -------------------------------------------------------------------------------------------------
+// Store items (last finalized state)
+// -------------------------------------------------------------------------------------------------
+
+/// The non-existent store-node index encoding (port of `StoreNodeKey.noneIndex`).
+const STORE_NODE_KEY_NONE_INDEX: i32 = 0x100;
+
+/// Decode a `(hash, index)` store-node key (port of `StoreNodeKey.from`).
+fn store_node_key_from_proto(s: &StoreNodeKeyProto) -> (Blake2b256Hash, Option<u8>) {
+    let hash = Blake2b256Hash::from_byte_array(&s.hash);
+    let idx = if s.index == STORE_NODE_KEY_NONE_INDEX {
+        None
+    } else {
+        Some(s.index as u8)
+    };
+    (hash, idx)
+}
+
+/// Encode a `(hash, index)` store-node key (port of `StoreNodeKey.toProto`).
+fn store_node_key_to_proto(s: &(Blake2b256Hash, Option<u8>)) -> StoreNodeKeyProto {
+    StoreNodeKeyProto {
+        hash: s.0.as_bytes().to_vec(),
+        index: s.1.map(|b| b as i32).unwrap_or(STORE_NODE_KEY_NONE_INDEX),
+    }
+}
+
+/// A store-items request (port of `StoreItemsMessageRequest`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreItemsMessageRequest {
+    pub start_path: Vec<(Blake2b256Hash, Option<u8>)>,
+    pub skip: i32,
+    pub take: i32,
+}
+
+impl StoreItemsMessageRequest {
+    pub fn from_proto(m: &StoreItemsMessageRequestProto) -> Self {
+        StoreItemsMessageRequest {
+            start_path: m.start_path.iter().map(store_node_key_from_proto).collect(),
+            skip: m.skip,
+            take: m.take,
+        }
+    }
+    pub fn to_proto(&self) -> StoreItemsMessageRequestProto {
+        StoreItemsMessageRequestProto {
+            start_path: self.start_path.iter().map(store_node_key_to_proto).collect(),
+            skip: self.skip,
+            take: self.take,
+        }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = StoreItemsMessageRequestProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(Self::from_proto(&proto))
+    }
+}
+
+/// A store-items response (port of `StoreItemsMessage`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreItemsMessage {
+    pub start_path: Vec<(Blake2b256Hash, Option<u8>)>,
+    pub last_path: Vec<(Blake2b256Hash, Option<u8>)>,
+    pub history_items: Vec<(Blake2b256Hash, Vec<u8>)>,
+    pub data_items: Vec<(Blake2b256Hash, Vec<u8>)>,
+}
+
+impl StoreItemsMessage {
+    pub fn from_proto(m: &StoreItemsMessageProto) -> Self {
+        StoreItemsMessage {
+            start_path: m.start_path.iter().map(store_node_key_from_proto).collect(),
+            last_path: m.last_path.iter().map(store_node_key_from_proto).collect(),
+            history_items: m
+                .history_items
+                .iter()
+                .map(|y| (Blake2b256Hash::from_byte_array(&y.key), y.value.clone()))
+                .collect(),
+            data_items: m
+                .data_items
+                .iter()
+                .map(|y| (Blake2b256Hash::from_byte_array(&y.key), y.value.clone()))
+                .collect(),
+        }
+    }
+    pub fn to_proto(&self) -> StoreItemsMessageProto {
+        StoreItemsMessageProto {
+            start_path: self.start_path.iter().map(store_node_key_to_proto).collect(),
+            last_path: self.last_path.iter().map(store_node_key_to_proto).collect(),
+            history_items: self
+                .history_items
+                .iter()
+                .map(|(k, v)| StoreItemProto {
+                    key: k.as_bytes().to_vec(),
+                    value: v.clone(),
+                })
+                .collect(),
+            data_items: self
+                .data_items
+                .iter()
+                .map(|(k, v)| StoreItemProto {
+                    key: k.as_bytes().to_vec(),
+                    value: v.clone(),
+                })
+                .collect(),
+        }
+    }
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
+        let proto = StoreItemsMessageProto::decode(bytes)
+            .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
+        Ok(Self::from_proto(&proto))
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
 // Casper message (sum type)
 // -------------------------------------------------------------------------------------------------
 
@@ -789,8 +909,8 @@ pub enum CasperMessage {
     ForkChoiceTipRequest(ForkChoiceTipRequest),
     FinalizedFringe(FinalizedFringe),
     FinalizedFringeRequest(FinalizedFringeRequest),
-    StoreItemsMessageRequest,
-    StoreItemsMessage,
+    StoreItemsMessageRequest(StoreItemsMessageRequest),
+    StoreItemsMessage(StoreItemsMessage),
 }
 
 /// The sealed `CasperMessageProto` sum type (the scalapb `sealed trait CasperMessageProto`).
@@ -843,12 +963,13 @@ impl CasperMessage {
                     trim_state: m.trim_state,
                 }),
             ),
-            // Store items require `RSpaceExporter` / casper — deferred.
-            CasperMessageProto::StoreItemsMessageRequest(_) => {
-                Err(crate::errors::ModelsError::Decode("StoreItemsMessageRequest decode deferred to casper/RSpaceExporter".to_string()))
+            CasperMessageProto::StoreItemsMessageRequest(m) => {
+                Ok(CasperMessage::StoreItemsMessageRequest(
+                    StoreItemsMessageRequest::from_proto(m),
+                ))
             }
-            CasperMessageProto::StoreItemsMessage(_) => {
-                Err(crate::errors::ModelsError::Decode("StoreItemsMessage decode deferred to casper/RSpaceExporter".to_string()))
+            CasperMessageProto::StoreItemsMessage(m) => {
+                Ok(CasperMessage::StoreItemsMessage(StoreItemsMessage::from_proto(m)))
             }
         }
     }
@@ -881,11 +1002,11 @@ impl CasperMessage {
                     trim_state: m.trim_state,
                 })
             }
-            CasperMessage::StoreItemsMessageRequest => {
-                CasperMessageProto::StoreItemsMessageRequest(StoreItemsMessageRequestProto::default())
+            CasperMessage::StoreItemsMessageRequest(m) => {
+                CasperMessageProto::StoreItemsMessageRequest(m.to_proto())
             }
-            CasperMessage::StoreItemsMessage => {
-                CasperMessageProto::StoreItemsMessage(StoreItemsMessageProto::default())
+            CasperMessage::StoreItemsMessage(m) => {
+                CasperMessageProto::StoreItemsMessage(m.to_proto())
             }
         }
     }
@@ -983,5 +1104,38 @@ mod tests {
         let proto = msg.to_proto();
         let decoded = CasperMessage::from_proto(&proto).unwrap();
         assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn store_items_message_round_trips() {
+        let msg = StoreItemsMessage {
+            start_path: vec![(Blake2b256Hash::from_bytes([1u8; 32]), None)],
+            last_path: vec![(Blake2b256Hash::from_bytes([2u8; 32]), Some(3))],
+            history_items: vec![(Blake2b256Hash::from_bytes([4u8; 32]), vec![5, 6])],
+            data_items: vec![(Blake2b256Hash::from_bytes([7u8; 32]), vec![8])],
+        };
+        let decoded = StoreItemsMessage::from_bytes(&msg.to_bytes()).unwrap();
+        assert_eq!(decoded, msg);
+
+        let casper = CasperMessage::StoreItemsMessage(msg.clone());
+        let proto = casper.to_proto();
+        let decoded_casper = CasperMessage::from_proto(&proto).unwrap();
+        assert_eq!(decoded_casper, casper);
+    }
+
+    #[test]
+    fn store_items_message_request_round_trips() {
+        let req = StoreItemsMessageRequest {
+            start_path: vec![(Blake2b256Hash::from_bytes([9u8; 32]), Some(1))],
+            skip: 2,
+            take: 3,
+        };
+        let decoded = StoreItemsMessageRequest::from_bytes(&req.to_bytes()).unwrap();
+        assert_eq!(decoded, req);
+
+        let casper = CasperMessage::StoreItemsMessageRequest(req.clone());
+        let proto = casper.to_proto();
+        let decoded_casper = CasperMessage::from_proto(&proto).unwrap();
+        assert_eq!(decoded_casper, casper);
     }
 }

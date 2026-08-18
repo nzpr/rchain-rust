@@ -2,6 +2,8 @@
 //!
 //! Mirrors `models/src/main/scala/coop/rchain/models/Validator.scala`.
 
+use rchain_shared::base16;
+
 /// The length of a `Validator` in bytes (an uncompressed secp256k1 public key).
 pub const LENGTH: usize = 65;
 
@@ -23,5 +25,26 @@ impl Validator {
 
     pub fn as_bytes(&self) -> &[u8; LENGTH] {
         &self.0
+    }
+}
+
+// `Validator` serializes as lowercase hex (the Scala `ByteString` → `buildStringNoLimit`).
+impl serde::Serialize for Validator {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&base16::encode(self.as_bytes()))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Validator {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let bytes =
+            base16::decode(&s).ok_or_else(|| serde::de::Error::custom("invalid validator hex"))?;
+        if bytes.len() != LENGTH {
+            return Err(serde::de::Error::custom("invalid validator length"));
+        }
+        let mut arr = [0u8; LENGTH];
+        arr.copy_from_slice(&bytes);
+        Ok(Validator(arr))
     }
 }

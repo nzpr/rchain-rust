@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 /// serde helpers encoding byte vectors as lowercase hex (the Scala `encodeByteString`/
 /// `decodeByteString` via `Base16`).
-mod hex_serde {
+pub(crate) mod hex_serde {
     use rchain_shared::base16;
     use serde::{Deserialize, Deserializer, Serializer};
 
