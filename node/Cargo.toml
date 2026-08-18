@@ -11,6 +11,7 @@ clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 hocon = "0.9"
 linked-hash-map = "0.5"
+prost = "0.13"
 rchain-block-storage = { path = "../block-storage" }
 rchain-casper = { path = "../casper" }
 rchain-comm = { path = "../comm" }

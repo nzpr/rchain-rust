@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use prost::Message;
+
 use rchain_block_storage::block_store;
 use rchain_block_storage::dag::codecs::{
     Blake2b256HashCodec, BlockHashCodec, BlockMetadataCodec, FringeDataCodec,
@@ -58,15 +60,17 @@ impl TransactionApi for NoopTransactionApi {
     }
 }
 
-/// A deferred report-store codec (the `BlockEventInfo` wire codec is not yet ported).
-struct NoopBlockEventInfoCodec;
+/// The `BlockEventInfo` report-store codec (prost wire round-trip).
+struct BlockEventInfoCodec;
 
-impl Codec<BlockEventInfo> for NoopBlockEventInfoCodec {
-    fn encode(&self, _value: &BlockEventInfo) -> Vec<u8> {
-        Vec::new()
+impl Codec<BlockEventInfo> for BlockEventInfoCodec {
+    fn encode(&self, value: &BlockEventInfo) -> Vec<u8> {
+        crate::api::grpc::tonic::block_event_info_to_wire(value).encode_to_vec()
     }
-    fn decode(&self, _bytes: &[u8]) -> Result<BlockEventInfo, String> {
-        Err("BlockEventInfo codec deferred".to_string())
+    fn decode(&self, bytes: &[u8]) -> Result<BlockEventInfo, String> {
+        let wire = <rchain_models::proto::casper::BlockEventInfo as prost::Message>::decode(bytes)
+            .map_err(|e| e.to_string())?;
+        crate::api::grpc::tonic::block_event_info_from_wire(&wire)
     }
 }
 
@@ -265,7 +269,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, 
             &store_manager,
             "reporting-cache",
             Arc::new(BlockHashCodec),
-            Arc::new(NoopBlockEventInfoCodec),
+            Arc::new(BlockEventInfoCodec),
         )
         .await,
     );

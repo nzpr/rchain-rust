@@ -9,7 +9,7 @@ use std::pin::Pin;
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
 
-use rchain_models::casper::protocol::casper_message::SignedDeployData;
+use rchain_models::casper::protocol::casper_message::{Peek, SignedDeployData, SystemDeployData};
 use rchain_models::casper::protocol::deploy_service::{
     BlockInfo, BlockQuery, BlocksQuery, BlocksQueryByHeight, BondInfo, BondStatusQuery,
     ContinuationAtNameQuery, ContinuationsWithBlockInfo, DataAtNameByBlockQuery, DataAtNameQuery,
@@ -31,7 +31,10 @@ use rchain_models::proto::casper::{
 use rchain_models::proto::casper as wire;
 use rchain_models::proto::repl::repl_server::Repl;
 use rchain_models::proto::repl::ReplResponse as TonicReplResponse;
-use rchain_models::wire::{bind_pattern_to_proto, list_par_with_random_to_proto, par_to_proto};
+use rchain_models::wire::{
+    bind_pattern_from_proto, bind_pattern_to_proto, list_par_with_random_from_proto,
+    list_par_with_random_to_proto, par_from_proto, par_to_proto,
+};
 
 use super::deploy_grpc_service_v1::DeployGrpcServiceV1;
 use super::propose_grpc_service_v1::ProposeGrpcServiceV1;
@@ -310,7 +313,7 @@ fn system_deploy_info_with_event_data_to_wire(
     }
 }
 
-fn block_event_info_to_wire(b: &BlockEventInfo) -> wire::BlockEventInfo {
+pub fn block_event_info_to_wire(b: &BlockEventInfo) -> wire::BlockEventInfo {
     wire::BlockEventInfo {
         block_info: Some(light_block_info_to_wire(&b.block_info)),
         deploys: b
@@ -325,6 +328,158 @@ fn block_event_info_to_wire(b: &BlockEventInfo) -> wire::BlockEventInfo {
             .collect(),
         post_state_hash: b.post_state_hash.clone(),
     }
+}
+
+fn bond_info_from_wire(b: &wire::BondInfo) -> BondInfo {
+    BondInfo {
+        validator: b.validator.clone(),
+        stake: b.stake,
+    }
+}
+
+fn light_block_info_from_wire(b: &wire::LightBlockInfo) -> LightBlockInfo {
+    LightBlockInfo {
+        version: b.version,
+        shard_id: b.shard_id.clone(),
+        block_hash: b.block_hash.clone(),
+        block_number: b.block_number,
+        sender: b.sender.clone(),
+        seq_num: b.seq_num,
+        pre_state_hash: b.pre_state_hash.clone(),
+        post_state_hash: b.post_state_hash.clone(),
+        justifications: b.justifications.clone(),
+        bonds: b.bonds.iter().map(bond_info_from_wire).collect(),
+        sig_algorithm: b.sig_algorithm.clone(),
+        sig: b.sig.clone(),
+        block_size: b.block_size.clone(),
+        deploy_count: b.deploy_count,
+        rejected_deploys: b.rejected_deploys.clone(),
+    }
+}
+
+fn deploy_info_from_wire(d: &wire::DeployInfo) -> DeployInfo {
+    DeployInfo {
+        deployer: d.deployer.clone(),
+        term: d.term.clone(),
+        timestamp: d.timestamp,
+        sig: d.sig.clone(),
+        sig_algorithm: d.sig_algorithm.clone(),
+        phlo_price: d.phlo_price,
+        phlo_limit: d.phlo_limit,
+        valid_after_block_number: d.valid_after_block_number,
+        cost: d.cost,
+        errored: d.errored,
+        system_deploy_error: d.system_deploy_error.clone(),
+    }
+}
+
+fn report_produce_from_wire(r: &wire::ReportProduceProto) -> Result<ReportProduceProto, String> {
+    let channel = r.channel.as_ref().ok_or("missing channel")?;
+    let data = r.data.as_ref().ok_or("missing data")?;
+    Ok(ReportProduceProto {
+        channel: par_from_proto(channel).map_err(|e| e.to_string())?,
+        data: list_par_with_random_from_proto(data).map_err(|e| e.to_string())?,
+    })
+}
+
+fn report_consume_from_wire(r: &wire::ReportConsumeProto) -> Result<ReportConsumeProto, String> {
+    let mut channels = Vec::new();
+    for c in &r.channels {
+        channels.push(par_from_proto(c).map_err(|e| e.to_string())?);
+    }
+    let mut patterns = Vec::new();
+    for p in &r.patterns {
+        patterns.push(bind_pattern_from_proto(p).map_err(|e| e.to_string())?);
+    }
+    let peeks = r
+        .peeks
+        .iter()
+        .map(|p| Peek {
+            channel_index: p.channel_index,
+        })
+        .collect();
+    Ok(ReportConsumeProto {
+        channels,
+        patterns,
+        peeks,
+    })
+}
+
+fn report_comm_from_wire(r: &wire::ReportCommProto) -> Result<ReportCommProto, String> {
+    let consume = r.consume.as_ref().ok_or("missing consume")?;
+    let mut produces = Vec::new();
+    for p in &r.produces {
+        produces.push(report_produce_from_wire(p)?);
+    }
+    Ok(ReportCommProto {
+        consume: report_consume_from_wire(consume)?,
+        produces,
+    })
+}
+
+fn report_proto_from_wire(r: &wire::ReportProto) -> Result<ReportProto, String> {
+    use wire::report_proto::Report as WireReport;
+    match r.report.as_ref().ok_or("missing report")? {
+        WireReport::Produce(p) => Ok(ReportProto::Produce(report_produce_from_wire(p)?)),
+        WireReport::Consume(c) => Ok(ReportProto::Consume(report_consume_from_wire(c)?)),
+        WireReport::Comm(c) => Ok(ReportProto::Comm(report_comm_from_wire(c)?)),
+    }
+}
+
+fn single_report_from_wire(s: &wire::SingleReport) -> Result<SingleReport, String> {
+    let mut events = Vec::new();
+    for e in &s.events {
+        events.push(report_proto_from_wire(e)?);
+    }
+    Ok(SingleReport { events })
+}
+
+fn deploy_info_with_event_data_from_wire(
+    d: &wire::DeployInfoWithEventData,
+) -> Result<DeployInfoWithEventData, String> {
+    let deploy_info = d.deploy_info.as_ref().ok_or("missing deploy_info")?;
+    let mut report = Vec::new();
+    for r in &d.report {
+        report.push(single_report_from_wire(r)?);
+    }
+    Ok(DeployInfoWithEventData {
+        deploy_info: deploy_info_from_wire(deploy_info),
+        report,
+    })
+}
+
+fn system_deploy_info_with_event_data_from_wire(
+    s: &wire::SystemDeployInfoWithEventData,
+) -> Result<SystemDeployInfoWithEventData, String> {
+    let system_deploy = s.system_deploy.as_ref().ok_or("missing system_deploy")?;
+    let mut report = Vec::new();
+    for r in &s.report {
+        report.push(single_report_from_wire(r)?);
+    }
+    Ok(SystemDeployInfoWithEventData {
+        system_deploy: SystemDeployData::from_proto(system_deploy),
+        report,
+    })
+}
+
+/// Decode a `wire::BlockEventInfo` back into the domain `BlockEventInfo` (mirror of
+/// [`block_event_info_to_wire`]).
+pub fn block_event_info_from_wire(b: &wire::BlockEventInfo) -> Result<BlockEventInfo, String> {
+    let block_info = b.block_info.as_ref().ok_or("missing block_info")?;
+    let mut deploys = Vec::new();
+    for d in &b.deploys {
+        deploys.push(deploy_info_with_event_data_from_wire(d)?);
+    }
+    let mut system_deploys = Vec::new();
+    for s in &b.system_deploys {
+        system_deploys.push(system_deploy_info_with_event_data_from_wire(s)?);
+    }
+    Ok(BlockEventInfo {
+        block_info: light_block_info_from_wire(block_info),
+        deploys,
+        system_deploys,
+        post_state_hash: b.post_state_hash.clone(),
+    })
 }
 
 type StreamOf<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
