@@ -21,6 +21,58 @@ pub struct Blake2b512Random {
     position: usize,
 }
 
+/// A well-formed serialized `Blake2b512Random` state. `TryFrom<&[u8]>` validates the layout (length,
+/// `path_position`/`remainder_position` bounds, and slice extents); [`Blake2b512Random::from_bytes`]
+/// is then *total* on this refinement.
+pub struct SerializedRandom<'a>(&'a [u8]);
+
+impl<'a> TryFrom<&'a [u8]> for SerializedRandom<'a> {
+    type Error = CryptoError;
+
+    fn try_from(bytes: &'a [u8]) -> Result<Self, CryptoError> {
+        if bytes.is_empty() {
+            return Ok(SerializedRandom(bytes));
+        }
+        if bytes.len() < 98 {
+            return Err(CryptoError::InvalidLength {
+                expected: 98,
+                actual: bytes.len(),
+            });
+        }
+        let path_position = bytes[96] as usize;
+        let remainder_position = bytes[97] as usize;
+        if path_position > PATH_CAPACITY {
+            return Err(CryptoError::InvalidLength {
+                expected: PATH_CAPACITY,
+                actual: path_position,
+            });
+        }
+        if remainder_position > 64 {
+            return Err(CryptoError::InvalidLength {
+                expected: 64,
+                actual: remainder_position,
+            });
+        }
+        let path_end = 98 + path_position;
+        if path_end > bytes.len() {
+            return Err(CryptoError::InvalidLength {
+                expected: path_end,
+                actual: bytes.len(),
+            });
+        }
+        if remainder_position != 0 {
+            let rem_len = 64 - remainder_position;
+            if path_end + rem_len > bytes.len() {
+                return Err(CryptoError::InvalidLength {
+                    expected: path_end + rem_len,
+                    actual: bytes.len(),
+                });
+            }
+        }
+        Ok(SerializedRandom(bytes))
+    }
+}
+
 impl Blake2b512Random {
     /// A fresh state with the given fanout and an empty block (the internal merge constructor).
     fn new_with_fanout(fanout: u8) -> Self {
@@ -176,12 +228,22 @@ impl Blake2b512Random {
         result
     }
 
-    /// Deserialize from bytes (the Scala `typeMapper.toCustom`).
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+    /// Deserialize from a validated serialized state (total; the Scala `typeMapper.toCustom`).
+    ///
+    /// The layout is guaranteed by [`SerializedRandom`], so the slicing below cannot go out of
+    /// bounds and the 80-byte digest block is always present.
+    pub fn from_bytes(serialized: &SerializedRandom) -> Self {
+        let bytes = serialized.0;
         if bytes.is_empty() {
-            return Ok(Self::from_init(&[]));
+            return Self::from_init(&[]);
         }
-        let digest = Blake2b512Block::from_bytes(&bytes[16..96])?;
+        let path_position = bytes[96] as usize;
+        let remainder_position = bytes[97] as usize;
+        let path_end = 98 + path_position;
+        let digest = match Blake2b512Block::from_bytes(&bytes[16..96]) {
+            Ok(digest) => digest,
+            Err(_) => unreachable!("SerializedRandom guarantees an 80-byte digest block"),
+        };
         let mut result = Self {
             digest,
             last_block: [0u8; 128],
@@ -191,17 +253,15 @@ impl Blake2b512Random {
         };
         result.last_block[112..120].copy_from_slice(&bytes[0..8]);
         result.last_block[120..128].copy_from_slice(&bytes[8..16]);
-        let path_position = bytes[96] as usize;
-        let remainder_position = bytes[97] as usize;
-        result.last_block[..path_position].copy_from_slice(&bytes[98..98 + path_position]);
+        result.last_block[..path_position].copy_from_slice(&bytes[98..path_end]);
         result.path_position = path_position;
         if remainder_position != 0 {
             let rem_len = 64 - remainder_position;
             result.hash_array[remainder_position..64]
-                .copy_from_slice(&bytes[98 + path_position..98 + path_position + rem_len]);
+                .copy_from_slice(&bytes[path_end..path_end + rem_len]);
         }
         result.position = remainder_position;
-        Ok(result)
+        result
     }
 
     /// Diagnostic string (mirrors `Blake2b512Random.debugStr`).
@@ -514,7 +574,9 @@ mod tests {
 
         for state in &states {
             let bytes = state.to_bytes();
-            let restored = Blake2b512Random::from_bytes(&bytes).expect("deserialize Blake2b512Random state");
+            let serialized =
+                SerializedRandom::try_from(bytes.as_slice()).expect("valid serialized state");
+            let restored = Blake2b512Random::from_bytes(&serialized);
             assert_eq!(restored, *state, "round-trip mismatch");
             assert_eq!(restored.to_bytes(), bytes, "encoding not idempotent");
             // A round-tripped state must produce the same next value.

@@ -7,7 +7,7 @@
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 
 use crate::history::key_segment::KeySegment;
-use crate::history::radix_tree::{decode, Item, Node};
+use crate::history::radix_tree::{decode, Item, Node, SerializedNode};
 
 /// The exported node/leaf streams (port of `RadixTree.ExportData`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -67,7 +67,7 @@ fn init_node_path(
     loop {
         let node_bytes = get_node_data(&hash)
             .ok_or_else(|| format!("Export error: node with key {} not found.", hash.to_hex()))?;
-        let node = decode(&node_bytes);
+        let node = decode(&SerializedNode::try_from(node_bytes.as_slice())?);
         if rest_prefix.is_empty() {
             path.insert(
                 0,
@@ -185,7 +185,7 @@ fn add_node_ptr(
 ) -> Result<StepData, String> {
     let child_bytes = get_node_data(&ptr)
         .ok_or_else(|| format!("Export error: Node with key {} not found", ptr.to_hex()))?;
-    let child_decoded = decode(&child_bytes);
+    let child_decoded = decode(&SerializedNode::try_from(child_bytes.as_slice())?);
     let child_np = cur_node_prefix.append(item_index).concat(ptr_prefix);
     let child_node_data = NodeData {
         prefix: child_np.clone(),

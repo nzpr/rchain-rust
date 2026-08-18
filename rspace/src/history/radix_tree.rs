@@ -74,13 +74,48 @@ pub fn encode(node: &Node) -> Vec<u8> {
     out
 }
 
-/// Deserialize a node from bytes (port of `RadixTree.Codecs.decode`).
-pub fn decode(bytes: &[u8]) -> Node {
-    let mut node = empty_node();
+/// A well-formed serialized radix node. `TryFrom<&[u8]>` validates the record framing (bounds,
+/// prefix sizes, 32-byte values, and no duplicate item index); [`decode`] is then *total* on this
+/// refinement — it cannot observe malformed bytes.
+pub struct SerializedNode<'a>(&'a [u8]);
+
+impl<'a> TryFrom<&'a [u8]> for SerializedNode<'a> {
+    type Error = String;
+
+    fn try_from(bytes: &'a [u8]) -> Result<Self, String> {
+        let mut pos = 0;
+        let mut seen = [false; 256];
+        while pos < bytes.len() {
+            if pos + 2 > bytes.len() {
+                return Err("truncated radix node header".to_string());
+            }
+            let idx = bytes[pos] as usize;
+            if seen[idx] {
+                return Err(format!("duplicate item index {idx}"));
+            }
+            seen[idx] = true;
+            let prefix_size = (bytes[pos + 1] & 0x7F) as usize;
+            let prefix_start = pos + 2;
+            if prefix_start + prefix_size > bytes.len() {
+                return Err("truncated radix node prefix".to_string());
+            }
+            let val_start = prefix_start + prefix_size;
+            if val_start + 32 > bytes.len() {
+                return Err("truncated radix node value".to_string());
+            }
+            pos = val_start + 32;
+        }
+        Ok(SerializedNode(bytes))
+    }
+}
+
+/// Deserialize a node from validated bytes (total; port of `RadixTree.Codecs.decode`).
+pub fn decode(node: &SerializedNode) -> Node {
+    let bytes = node.0;
+    let mut result = empty_node();
     let mut pos = 0;
     while pos < bytes.len() {
         let idx = bytes[pos] as usize;
-        assert_eq!(node[idx], Item::Empty, "wrong index of item");
         let second = bytes[pos + 1];
         let prefix_size = (second & 0x7F) as usize;
         let prefix_start = pos + 2;
@@ -92,10 +127,10 @@ pub fn decode(bytes: &[u8]) -> Node {
         } else {
             Item::NodePtr { prefix, ptr: val }
         };
-        node[idx] = item;
+        result[idx] = item;
         pos = val_start + 32;
     }
-    node
+    result
 }
 
 /// Hash a serialized node (port of `RadixTree.hashNode`).
@@ -120,16 +155,22 @@ impl RadixTreeImpl {
         }
     }
 
-    async fn load_node_from_store(&self, node_ptr: Blake2b256Hash) -> Option<Node> {
+    async fn load_node_from_store(&self, node_ptr: Blake2b256Hash) -> Result<Option<Node>, String> {
         // `BytesCodec` cannot fail to decode, so the store error is unreachable.
-        self.store
+        let bytes = self
+            .store
             .get(&[node_ptr])
             .await
-            .ok()?
-            .into_iter()
-            .next()
-            .flatten()
-            .map(|bytes| decode(&bytes))
+            .ok()
+            .and_then(|v| v.into_iter().next().flatten());
+        match bytes {
+            None => Ok(None),
+            Some(bytes) => {
+                let serialized = SerializedNode::try_from(bytes.as_slice())
+                    .map_err(|e| format!("corrupt node {}: {e}", node_ptr.to_hex()))?;
+                Ok(Some(decode(&serialized)))
+            }
+        }
     }
 
     /// Load a node, using the read cache and falling back to the store (port of `loadNode`).
@@ -138,16 +179,20 @@ impl RadixTreeImpl {
             return node;
         }
         match self.load_node_from_store(node_ptr).await {
-            Some(node) => {
+            Ok(Some(node)) => {
                 crate::lock::mlock(&self.cache_read).insert(node_ptr, node.clone());
                 node
             }
-            None => {
+            Ok(None) => {
                 assert!(
                     no_assert,
                     "Missing node in database. ptr={}",
                     node_ptr.to_hex()
                 );
+                empty_node()
+            }
+            Err(e) => {
+                assert!(no_assert, "Corrupt node {}: {e}", node_ptr.to_hex());
                 empty_node()
             }
         }
@@ -567,7 +612,7 @@ mod tests {
             prefix: KeySegment::new(vec![]),
             ptr: Blake2b256Hash::from_bytes([0x22; 32]),
         };
-        let decoded = decode(&encode(&node));
+        let decoded = decode(&SerializedNode::try_from(encode(&node).as_slice()).unwrap());
         assert_eq!(decoded, node);
         // node hash is deterministic
         assert_eq!(hash_node(&node).0, hash_node(&decoded).0);
@@ -576,7 +621,10 @@ mod tests {
     #[test]
     fn empty_node_encoding_is_empty() {
         assert!(encode(&empty_node()).is_empty());
-        assert_eq!(decode(&[]), empty_node());
+        assert_eq!(
+            decode(&SerializedNode::try_from(&[][..]).unwrap()),
+            empty_node()
+        );
     }
 
     fn in_memory_tree() -> RadixTreeImpl {
