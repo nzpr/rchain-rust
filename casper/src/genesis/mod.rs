@@ -1,19 +1,24 @@
 //! Genesis block creation (port of `casper/genesis/Genesis.scala`).
-//!
-//! `defaultBlessedTerms` and `createGenesisBlock` are deferred pending the standard-deploy
-//! template resources (`StandardDeploys`).
 
 pub mod contracts;
+pub mod standard_deploys;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::public_key::PublicKey;
 use rchain_models::block_version::CURRENT;
-use rchain_models::casper::protocol::casper_message::{BlockMessage, ProcessedDeploy, RholangState};
+use rchain_models::casper::protocol::casper_message::{
+    BlockMessage, ProcessedDeploy, RholangState, SignedDeployData,
+};
 use rchain_models::validator::Validator as ModelsValidator;
+use rchain_rholang::system_processes::BlockData;
 
+use crate::block_random_seed::BlockRandomSeed;
 use crate::genesis::contracts::{ProofOfStake, Registry, Vault};
+use crate::genesis::standard_deploys::StandardDeploys;
 use crate::proto_util::unsigned_block_proto;
+use crate::runtime_manager::RuntimeManager;
+use crate::validator_identity::ValidatorIdentity;
 
 /// Genesis parameters (port of `Genesis`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,7 +32,6 @@ pub struct Genesis {
 }
 
 /// Build the bonds map (validator pubkey → stake) from the PoS validators (port of `buildBondsMap`).
-#[allow(dead_code)] // used by the deferred `createGenesisBlock`
 fn build_bonds_map(proof_of_stake: &ProofOfStake) -> BTreeMap<ModelsValidator, i64> {
     proof_of_stake
         .validators
@@ -38,7 +42,6 @@ fn build_bonds_map(proof_of_stake: &ProofOfStake) -> BTreeMap<ModelsValidator, i
 
 /// Build the unsigned genesis block from processed deploys (port of
 /// `createBlockWithProcessedDeploys`).
-#[allow(dead_code)] // used by the deferred `createGenesisBlock`
 fn create_block_with_processed_deploys(
     genesis: &Genesis,
     pre_state_hash: Vec<u8>,
@@ -66,6 +69,85 @@ fn create_block_with_processed_deploys(
         BTreeSet::new(),
         state,
     )
+}
+
+/// The ordered list of blessed (standard) genesis deploys (port of `defaultBlessedTerms`).
+pub fn default_blessed_terms(
+    proof_of_stake: &ProofOfStake,
+    registry: &Registry,
+    vaults: &[Vault],
+    shard_id: &str,
+) -> Vec<SignedDeployData> {
+    // Split the initial vault creation into batches of 100 (the last batch is marked so the
+    // `RevVault` init channel is not continued).
+    let vault_batches: Vec<&[Vault]> = vaults.chunks(100).collect();
+    let batch_count = vault_batches.len();
+    let vault_deploys: Vec<SignedDeployData> = vault_batches
+        .into_iter()
+        .enumerate()
+        .map(|(idx, batch)| {
+            StandardDeploys::rev_generator(
+                batch,
+                1565818101792 + idx as i64,
+                1 + idx == batch_count,
+                shard_id,
+            )
+        })
+        .collect();
+
+    // Order matters: dependencies must be defined before their users.
+    let mut terms = vec![
+        StandardDeploys::registry_generator(registry, shard_id),
+        StandardDeploys::list_ops(shard_id),
+        StandardDeploys::either(shard_id),
+        StandardDeploys::non_negative_number(shard_id),
+        StandardDeploys::make_mint(shard_id),
+        StandardDeploys::auth_key(shard_id),
+        StandardDeploys::rev_vault(shard_id),
+        StandardDeploys::multi_sig_rev_vault(shard_id),
+    ];
+    terms.extend(vault_deploys);
+    terms.push(StandardDeploys::pos_generator(proof_of_stake, shard_id));
+    terms
+}
+
+/// Create the signed genesis block (port of `Genesis.createGenesisBlock`).
+pub async fn create_genesis_block(
+    validator: &ValidatorIdentity,
+    genesis: &Genesis,
+    runtime: &RuntimeManager,
+) -> Result<BlockMessage, String> {
+    let blessed_terms = default_blessed_terms(
+        &genesis.proof_of_stake,
+        &genesis.registry,
+        &genesis.vaults,
+        &genesis.shard_id,
+    );
+    let block_data = BlockData {
+        block_number: genesis.block_number,
+        sender: genesis.sender.clone(),
+        seq_num: 0,
+    };
+    let rand = BlockRandomSeed::random_generator_from_shard_id(&genesis.shard_id);
+    let (start_hash, state_hash, processed_results) = runtime
+        .compute_genesis(&blessed_terms, &rand, block_data)
+        .await?;
+    let processed_deploys: Vec<ProcessedDeploy> =
+        processed_results.into_iter().map(|r| r.deploy).collect();
+
+    let unsigned_block = create_block_with_processed_deploys(
+        genesis,
+        start_hash.to_byte_array().to_vec(),
+        state_hash.to_byte_array().to_vec(),
+        processed_deploys,
+    );
+    let signed_block = validator.sign_block(&unsigned_block);
+
+    // Signing must not change the block hash.
+    if unsigned_block.block_hash != signed_block.block_hash {
+        return Err("Signed block has different block hash than unsigned".to_string());
+    }
+    Ok(signed_block)
 }
 
 #[cfg(test)]

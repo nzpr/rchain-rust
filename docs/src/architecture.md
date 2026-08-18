@@ -41,7 +41,7 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util, state/exporters incl. `traverseHistory`/`validateStateItems` + store-backed instances, store→ReplayRSpace factory); LMDB FFI (`RSpaceExporterDisk`) deferred |
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration); weupnp SSDP/SOAP gateway discovery deferred |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
-| `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis, protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers) |
+| `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers) |
 | `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients); `/status`/`/api/v1`/`/reporting` routes deferred (gated on the OpenAPI/endpoints4s layer + `NodeLaunch`/`NodeSyncing`) |
 | `rspace-bench` | gated |
 
@@ -97,8 +97,7 @@ repl/eval/listen over tonic gRPC clients), and the comm/discovery engine wiring 
 - **node HTTP routes** — `/status`, `/api/v1`, and `/reporting` remain deferred (gated on the
   OpenAPI/endpoints4s layer + `NodeLaunch`/`NodeSyncing`).
 - **casper engine** — `NodeLaunch`/`NodeSyncing` and the fs2 `BlockReceiver.apply`/`LfsBlockRequester`
-  streaming loops remain deferred (gated on `Genesis.createGenesisBlock`, itself deferred pending the
-  `StandardDeploys` genesis contract templates).
+  streaming loops remain deferred.
 - **comm** — the weupnp SSDP/SOAP gateway-discovery protocol is deferred (UPnP orchestration +
   `WhoAmI` are ported).
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
