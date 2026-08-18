@@ -1,10 +1,13 @@
 //! The node entry point (port of `Main.scala` + `NodeMain.startNode`).
 
+use std::sync::Arc;
+
 use clap::Parser;
 
 use rchain_node::configuration::commandline::options::{Commands, Options};
 use rchain_node::configuration::configuration::Configuration;
 use rchain_node::runtime::{node_environment, node_runtime, run_cli};
+use rchain_shared::log::StderrLog;
 
 #[tokio::main]
 async fn main() {
@@ -37,7 +40,7 @@ async fn main() {
         }
     };
 
-    let (program, _parts) = match node_runtime::setup(&node_conf, &id).await {
+    let program = match node_runtime::setup_node_program(&node_conf, &id, Arc::new(StderrLog)).await {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Setup error: {e}");

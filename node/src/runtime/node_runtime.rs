@@ -190,8 +190,8 @@ pub async fn create_comm_state(
 /// `NetworkServers.protocolServer`).
 pub struct ProtocolServer {
     server: TransportLayerServer,
-    dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
-    handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
+    dispatch: Box<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
+    handle_streamed: Box<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
 }
 
 /// The assembled node program (port of the `setupNodeProgram` result).
@@ -422,12 +422,12 @@ fn build_protocol_server(
         conf.protocol_server.grpc_max_recv_stream_message_size,
     )?;
 
-    let dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync> = {
+    let dispatch: Box<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync> = {
         let transport = comm_state.transport.clone();
         let rp_conf = comm_state.rp_conf.clone();
         let connections = comm_state.connections.clone();
         let routing_tx = routing_tx.clone();
-        Arc::new(move |proto: Protocol| {
+        Box::new(move |proto: Protocol| {
             let transport = transport.clone();
             let rp_conf = rp_conf.clone();
             let connections = connections.clone();
@@ -440,9 +440,9 @@ fn build_protocol_server(
         })
     };
 
-    let handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync> = {
+    let handle_streamed: Box<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync> = {
         let routing_tx = routing_tx.clone();
-        Arc::new(move |blob: Blob| {
+        Box::new(move |blob: Blob| {
             let routing_tx = routing_tx.clone();
             Box::pin(async move {
                 let _ = routing_tx
@@ -692,7 +692,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         block_store.clone(),
         Arc::new(noop()),
         report_store,
-        validator_opt,
+        validator_opt.clone(),
     ));
 
     let grpc_services = GrpcServices::build(
@@ -729,7 +729,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
             runtime_manager,
             approved_store,
             store_manager,
-            validator_identity_opt,
+            validator_identity_opt: validator_opt,
         },
     ))
 }
