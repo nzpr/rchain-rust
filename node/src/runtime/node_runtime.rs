@@ -71,7 +71,7 @@ use crate::api::web_api::WebApi;
 use crate::api::web_api_impl::WebApiImpl;
 use crate::configuration::model::NodeConf;
 use crate::diagnostics::NewPrometheusReporter;
-use crate::web::http::{acquire_admin_http_server, acquire_http_server};
+use crate::web::http::{acquire_admin_http_server, acquire_http_server, StatusProvider};
 use crate::web::transaction::{TransactionApi, TransactionInfo};
 
 /// A no-op transaction API (the cache-backed `TransactionAPI` is deferred).
@@ -206,6 +206,7 @@ pub struct NodeProgram {
     port_admin_http: Port,
     port_grpc_internal: Port,
     protocol_server: Option<ProtocolServer>,
+    status_provider: Option<StatusProvider>,
 }
 
 impl NodeProgram {
@@ -222,6 +223,7 @@ impl NodeProgram {
             port_admin_http,
             port_grpc_internal,
             protocol_server,
+            status_provider,
         } = self;
 
         let grpc_addr: std::net::SocketAddr = format!("{}:{}", host, u16::from(port_grpc_internal))
@@ -233,7 +235,15 @@ impl NodeProgram {
         let http = tokio::spawn({
             let host = host.clone();
             async move {
-                acquire_http_server(&host, port_http, reporter, web_api, block_report_api).await
+                acquire_http_server(
+                    &host,
+                    port_http,
+                    reporter,
+                    web_api,
+                    block_report_api,
+                    status_provider,
+                )
+                .await
             }
         });
 
@@ -491,6 +501,12 @@ pub async fn setup_node_program(
     // Transport (protocol) server.
     program.protocol_server = Some(build_protocol_server(conf, &comm_state, routing_tx)?);
 
+    // Comm state for the `/status` HTTP route.
+    program.status_provider = Some(StatusProvider {
+        connections: comm_state.connections.clone(),
+        rp_conf: comm_state.rp_conf.clone(),
+    });
+
     // Node launch mode dispatch (genesis → syncing → running over the peer-message stream).
     let node_launch = node_launch::apply(
         peer_message_rx,
@@ -722,6 +738,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
             port_grpc_internal: Port::try_from(conf.api_server.port_grpc_internal)
                 .map_err(|e| e.to_string())?,
             protocol_server: None,
+            status_provider: None,
         },
         SetupParts {
             block_store,

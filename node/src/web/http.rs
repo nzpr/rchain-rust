@@ -17,6 +17,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use rchain_casper::api::block_report_api::BlockReportApi;
+use rchain_casper::protocol::comm_util::ConnectionsCell;
+use rchain_comm::peer_node::PeerNode;
+use rchain_comm::rp::rp_conf::RPConf;
 use rchain_models::block_hash::BlockHash;
 use rchain_shared::refined::Port;
 
@@ -28,7 +31,16 @@ use crate::api::dto::{
 use crate::api::web_api::WebApi;
 use crate::diagnostics::NewPrometheusReporter;
 use crate::web::reporting::transform_result;
+use crate::web::status_info;
 use crate::web::version_info;
+
+/// Comm state needed by `GET /status` (port of the `ConnectionsCell`/`NodeDiscovery`/`RPConfAsk`
+/// arguments of `StatusInfo.service`; the discovered-peers source is deferred, so `nodes` is 0).
+#[derive(Clone)]
+pub struct StatusProvider {
+    pub connections: ConnectionsCell,
+    pub rp_conf: RPConf,
+}
 
 /// State shared by the public HTTP server (port of the `webApi` + `prometheusReporter` +
 /// `blockReportAPI` arguments of `acquireHttpServer`).
@@ -37,6 +49,7 @@ pub struct HttpState {
     pub reporter: Arc<NewPrometheusReporter>,
     pub web_api: Arc<dyn WebApi>,
     pub block_report_api: Arc<BlockReportApi>,
+    pub status_provider: Option<StatusProvider>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -54,6 +67,20 @@ pub async fn version() -> String {
 /// `GET /metrics` (port of `NewPrometheusReporter.service`): the Prometheus scrape data.
 pub async fn metrics(State(state): State<HttpState>) -> String {
     state.reporter.scrape_data()
+}
+
+/// `GET /status` (port of `StatusInfo.service`): the node address, version, and peer/node counts.
+pub async fn status(State(state): State<HttpState>) -> Response {
+    match &state.status_provider {
+        Some(provider) => {
+            let connections = provider.connections.read().await;
+            let discovered: Vec<PeerNode> = Vec::new();
+            let version = version_info::get(env!("CARGO_PKG_VERSION"), None);
+            let status = status_info::status(&version, &connections, &discovered, &provider.rp_conf);
+            (StatusCode::OK, Json(status)).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, ()).into_response(),
+    }
 }
 
 /// Map a `WebApi`/`AdminWebApi` result to an HTTP response: `200` with a JSON body on success,
@@ -199,6 +226,7 @@ pub fn router(state: HttpState) -> Router {
     Router::new()
         .route("/version", get(version))
         .route("/metrics", get(metrics))
+        .route("/status", get(status))
         .route("/reporting/trace", get(reporting_trace))
         .route("/api/status", get(api_status))
         .route("/api/deploy", post(api_deploy))
@@ -256,6 +284,7 @@ pub async fn acquire_http_server(
     reporter: Arc<NewPrometheusReporter>,
     web_api: Arc<dyn WebApi>,
     block_report_api: Arc<BlockReportApi>,
+    status_provider: Option<StatusProvider>,
 ) -> Result<(), String> {
     let port = u16::from(port); // single discharge at the bind boundary
     let addr: SocketAddr = format!("{host}:{port}")
@@ -270,6 +299,7 @@ pub async fn acquire_http_server(
             reporter,
             web_api,
             block_report_api,
+            status_provider,
         }),
     )
     .await
@@ -306,6 +336,8 @@ mod tests {
     use axum::body::to_bytes;
     use rchain_block_storage::dag::codecs::{BlockHashCodec, BlockMessageCodec};
     use rchain_casper::reporting::noop;
+    use rchain_comm::peer_node::NodeIdentifier;
+    use rchain_comm::rp::rp_conf::ClearConnectionsConf;
     use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo};
     use rchain_models::casper::protocol::report::BlockEventInfo;
     use rchain_shared::store::InMemoryKeyValueStore;
@@ -443,6 +475,7 @@ mod tests {
                 status: test_status(),
             }),
             block_report_api: test_block_report_api(),
+            status_provider: None,
         }
     }
 
@@ -468,5 +501,44 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["address"], "addr");
         assert_eq!(json["version"]["api"], "1.0");
+    }
+
+    fn status_provider() -> StatusProvider {
+        let local = PeerNode::from(
+            NodeIdentifier::new(vec![1]),
+            "localhost".to_string(),
+            rchain_shared::refined::Port::new(40400),
+            rchain_shared::refined::Port::new(40404),
+        );
+        StatusProvider {
+            connections: Arc::new(tokio::sync::RwLock::new(vec![local])),
+            rp_conf: RPConf {
+                local: PeerNode::from(
+                    NodeIdentifier::new(vec![2]),
+                    "localhost".to_string(),
+                    rchain_shared::refined::Port::new(40400),
+                    rchain_shared::refined::Port::new(40404),
+                ),
+                network_id: "testnet".to_string(),
+                bootstrap: None,
+                default_timeout: std::time::Duration::from_secs(10),
+                max_num_of_connections: 100,
+                clear_connections: ClearConnectionsConf {
+                    num_of_connections_pinged: 10,
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn status_returns_comm_state() {
+        let mut s = state();
+        s.status_provider = Some(status_provider());
+        let response = status(State(s)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["peers"], 1);
+        assert_eq!(json["nodes"], 0);
     }
 }

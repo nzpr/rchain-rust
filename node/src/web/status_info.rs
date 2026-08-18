@@ -6,9 +6,10 @@
 
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
+use serde::Serialize;
 
 /// Lightweight node status (port of `StatusInfo.Status`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Status {
     pub address: String,
     pub version: String,

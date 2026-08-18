@@ -42,7 +42,7 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration + weupnp SSDP/SOAP gateway discovery) |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
 | `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers, engine state machines: LfsState/LfsTupleSpaceState/LfsBlockRequester/LfsTupleSpaceRequester/NodeSyncing/NodeRunning/BlockReceiver.apply + NodeLaunch genesis helpers) |
-| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`, `/api/v1` JSON routes, node runtime wiring (`setupNodeProgram`: `RSpaceImporterStore` factory, block receiver/processor streams, transport/protocol server + peer-message stream, `NodeLaunch.apply`, request-dependencies loop)); `/status` + the `/api/v1` OpenAPI schema route + the proposer stream (lifetime-bound `Proposer<'a>`) deferred |
+| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`, `/status` route, `/api/v1` JSON routes, node runtime wiring (`setupNodeProgram`: `RSpaceImporterStore` factory, block receiver/processor streams, transport/protocol server + peer-message stream, `NodeLaunch.apply`, request-dependencies loop)); the `/api/v1` OpenAPI schema route + the proposer stream (lifetime-bound `Proposer<'a>`) deferred |
 | `rspace-bench` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rosette/` (C++ VM).
@@ -99,9 +99,8 @@ block receiver/processor streams, the transport/protocol server + peer-message s
 `NodeLaunch.apply`, and the request-dependencies loop.
 Remaining (Phase 4):
 
-- **node HTTP routes** — `/status` (needs the comm state threaded into the HTTP server state) and the
-  `/api/v1` OpenAPI schema route (needs endpoints4s) remain deferred; the `/reporting` trace route
-  and the `/api/v1` JSON routes are ported.
+- **node HTTP routes** — the `/api/v1` OpenAPI schema route (needs endpoints4s) remains deferred; the
+  `/reporting` trace route, `/status`, and the `/api/v1` JSON routes are ported.
 - **proposer stream** — `Proposer::apply`/`ProposerInstance::create` are ported and tested; wiring the
   `Proposer<'a>` (which borrows the DAG/store/runtime) into a `'static` task needs an `Arc`-owning
   refactor.
