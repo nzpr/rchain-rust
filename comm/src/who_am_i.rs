@@ -8,6 +8,8 @@
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
 
+use rchain_shared::refined::Port;
+
 use crate::peer_node::{NodeIdentifier, PeerNode};
 
 const AMAZON: &str = "http://checkip.amazonaws.com";
@@ -17,13 +19,20 @@ const WHAT_IS_MY_IP: &str = "http://bot.whatismyipaddress.com";
 /// `fetchLocalPeerNode`).
 pub fn fetch_local_peer_node(
     host: Option<String>,
-    protocol_port: i32,
-    discovery_port: i32,
+    protocol_port: Port,
+    discovery_port: Port,
     no_upnp: bool,
     id: NodeIdentifier,
     log: &mut dyn FnMut(String),
 ) -> PeerNode {
-    let external = retrieve_external_address(no_upnp, &[protocol_port, discovery_port], log);
+    let external = retrieve_external_address(
+        no_upnp,
+        &[
+            i32::from(u16::from(protocol_port)),
+            i32::from(u16::from(discovery_port)),
+        ],
+        log,
+    );
     let host = fetch_host(host, external.as_deref(), log);
     PeerNode::from(id, host, protocol_port, discovery_port)
 }
@@ -31,8 +40,8 @@ pub fn fetch_local_peer_node(
 /// Re-check the local peer node, returning a new one if the external IP changed (port of
 /// `checkLocalPeerNode`).
 pub fn check_local_peer_node(
-    protocol_port: i32,
-    discovery_port: i32,
+    protocol_port: Port,
+    discovery_port: Port,
     peer_node: PeerNode,
     log: &mut dyn FnMut(String),
 ) -> Option<PeerNode> {
@@ -188,15 +197,15 @@ mod tests {
         let mut logs = Vec::new();
         let peer = fetch_local_peer_node(
             Some("example.com".to_string()),
-            40400,
-            40404,
+            Port::new(40400),
+            Port::new(40404),
             true,
             NodeIdentifier::new(vec![1, 2, 3]),
             &mut |msg| logs.push(msg),
         );
         assert_eq!(peer.endpoint.host, "example.com");
-        assert_eq!(peer.endpoint.tcp_port, 40400);
-        assert_eq!(peer.endpoint.udp_port, 40404);
+        assert_eq!(peer.endpoint.tcp_port, Port::new(40400));
+        assert_eq!(peer.endpoint.udp_port, Port::new(40404));
         assert!(logs.is_empty());
     }
 }

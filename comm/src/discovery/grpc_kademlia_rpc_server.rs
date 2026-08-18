@@ -46,7 +46,9 @@ impl KademliaRpcService for GrpcKademliaRpcServer {
         let ping = request.into_inner();
         if ping.network_id == self.network_id {
             if let Some(sender) = ping.sender.as_ref() {
-                (self.ping_handler)(to_peer_node(sender)).await;
+                if let Ok(peer) = to_peer_node(sender) {
+                    (self.ping_handler)(peer).await;
+                }
             }
         }
         Ok(Response::new(Pong {
@@ -60,9 +62,9 @@ impl KademliaRpcService for GrpcKademliaRpcServer {
     ) -> Result<Response<LookupResponse>, Status> {
         let lookup = request.into_inner();
         let nodes = if lookup.network_id == self.network_id {
-            match lookup.sender.as_ref() {
+            match lookup.sender.as_ref().and_then(|s| to_peer_node(s).ok()) {
                 Some(sender) => {
-                    let peers = (self.lookup_handler)(to_peer_node(sender), lookup.id).await;
+                    let peers = (self.lookup_handler)(sender, lookup.id).await;
                     peers.iter().map(to_node).collect()
                 }
                 None => Vec::new(),

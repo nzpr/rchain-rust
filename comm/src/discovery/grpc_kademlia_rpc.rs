@@ -31,7 +31,8 @@ impl GrpcKademliaRpc {
     async fn client(&self, peer: &PeerNode) -> Result<KademliaRpcServiceClient<Channel>, String> {
         let endpoint = Endpoint::from_shared(format!(
             "http://{}:{}",
-            peer.endpoint.host, peer.endpoint.udp_port
+            peer.endpoint.host,
+            u16::from(peer.endpoint.udp_port)
         ))
         .map_err(|e| e.to_string())?;
         let channel = endpoint.connect().await.map_err(|e| e.to_string())?;
@@ -76,7 +77,11 @@ impl KademliaRpc for GrpcKademliaRpc {
         };
         match tokio::time::timeout(self.timeout, result).await {
             Ok(Ok(response)) if response.network_id == self.network_id => {
-                response.nodes.iter().map(to_peer_node).collect()
+                response
+                    .nodes
+                    .iter()
+                    .filter_map(|n| to_peer_node(n).ok())
+                    .collect()
             }
             _ => Vec::new(),
         }

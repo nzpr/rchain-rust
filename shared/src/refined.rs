@@ -127,9 +127,24 @@ impl TryFrom<i32> for Port {
     }
 }
 
+impl TryFrom<u32> for Port {
+    type Error = RefineError;
+    fn try_from(v: u32) -> Result<Self, Self::Error> {
+        u16::try_from(v)
+            .map(Port)
+            .map_err(|_| RefineError::new(format!("port out of range 0..=65535: {v}")))
+    }
+}
+
 impl From<Port> for u16 {
     fn from(v: Port) -> u16 {
         v.0
+    }
+}
+
+impl From<Port> for u32 {
+    fn from(v: Port) -> u32 {
+        u32::from(v.0)
     }
 }
 
@@ -183,6 +198,17 @@ macro_rules! len_newtype {
 len_newtype!(ByteLen, u8);
 len_newtype!(ShortLen, u16);
 len_newtype!(WireLen, u32);
+
+/// Decode a `WireLen` from a protobuf `int32` (the `contentLength` wire field), rejecting negative
+/// values.
+impl TryFrom<i32> for WireLen {
+    type Error = RefineError;
+    fn try_from(v: i32) -> Result<Self, RefineError> {
+        u32::try_from(v)
+            .map(WireLen)
+            .map_err(|_| RefineError::new(format!("content length must be non-negative: {v}")))
+    }
+}
 
 #[cfg(test)]
 mod tests {

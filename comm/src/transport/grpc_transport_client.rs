@@ -14,7 +14,6 @@ use http::Uri;
 use hyper_util::rt::TokioIo;
 use rchain_models::comm::protocol::transport_layer_client::TransportLayerClient;
 use rchain_models::comm::protocol::Protocol;
-use rchain_shared::refined::Port;
 use rustls::pki_types::ServerName;
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -62,7 +61,8 @@ impl GrpcTransportClient {
     async fn create_channel(&self, peer: &PeerNode) -> Result<Channel, CommError> {
         let endpoint = Endpoint::from_shared(format!(
             "https://{}:{}",
-            peer.endpoint.host, peer.endpoint.tcp_port
+            peer.endpoint.host,
+            u16::from(peer.endpoint.tcp_port)
         ))
         .map_err(|e| CommError::ParseError(e.to_string()))?;
 
@@ -70,8 +70,7 @@ impl GrpcTransportClient {
         let server_name = ServerName::try_from(peer.id.to_string())
             .map_err(|e| CommError::ParseError(e.to_string()))?;
         let host = peer.endpoint.host.clone();
-        let port = Port::try_from(peer.endpoint.tcp_port)
-            .map_err(|e| CommError::ParseError(e.to_string()))?;
+        let port = peer.endpoint.tcp_port;
 
         Ok(endpoint.connect_with_connector_lazy(service_fn(move |_: Uri| {
             let connector = connector.clone();

@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use rchain_models::comm::protocol::{chunk, Chunk};
+use rchain_shared::refined::WireLen;
 
 use crate::peer_node::PeerNode;
 use crate::rp::protocol_helper::blob;
@@ -17,7 +18,7 @@ use crate::transport::chunker::Blob;
 pub struct Header {
     pub sender: PeerNode,
     pub type_id: String,
-    pub content_length: i32,
+    pub content_length: WireLen,
     pub network_id: String,
     pub compressed: bool,
 }
@@ -83,9 +84,11 @@ pub fn collect(
                     .as_ref()
                     .ok_or_else(|| StreamError::Unexpected("chunk header missing sender".to_string()))?;
                 stmd.header = Some(Header {
-                    sender: PeerNode::from_node(sender),
+                    sender: PeerNode::from_node(sender)
+                        .map_err(|e| StreamError::Unexpected(e.message()))?,
                     type_id: h.type_id.clone(),
-                    content_length: h.content_length,
+                    content_length: WireLen::try_from(h.content_length)
+                        .map_err(|e| StreamError::Unexpected(e.to_string()))?,
                     network_id: h.network_id.clone(),
                     compressed: h.compressed,
                 });
@@ -132,7 +135,7 @@ pub fn to_result(stmd: &Streamed) -> Result<crate::transport::messages::StreamMe
                 compressed: h.compressed,
                 content_length: h.content_length,
             };
-            if !h.compressed && stmd.read_so_far != h.content_length as i64 {
+            if !h.compressed && stmd.read_so_far != i64::from(u32::from(h.content_length)) {
                 Err(StreamError::NotFullMessage(format!("{stmd:?}")))
             } else {
                 Ok(result)
@@ -158,11 +161,11 @@ pub fn restore(
 pub fn decompress_content(
     raw: &[u8],
     compressed: bool,
-    content_length: i32,
+    content_length: WireLen,
 ) -> Result<Vec<u8>, String> {
     if compressed {
-        let length = usize::try_from(content_length)
-            .map_err(|_| format!("invalid content length: {content_length}"))?;
+        let length = usize::try_from(u32::from(content_length))
+            .map_err(|_| "content length too large".to_string())?;
         rchain_shared::compression::decompress(raw, length)
             .ok_or_else(|| "Could not decompress data".to_string())
     } else {
@@ -177,7 +180,7 @@ mod tests {
     use rchain_models::comm::protocol::{ChunkData, ChunkHeader};
 
     fn peer() -> PeerNode {
-        PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "host".into(), 40400, 40404)
+        PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "host".into(), rchain_shared::refined::Port::new(40400), rchain_shared::refined::Port::new(40404))
     }
 
     fn header_chunk(content_length: i32, compressed: bool) -> Chunk {
@@ -216,7 +219,7 @@ mod tests {
         let stmd = collect(&init, &chunks, &closed_breaker, &mut cache).unwrap();
         assert_eq!(stmd.read_so_far, 6);
         let msg = to_result(&stmd).unwrap();
-        assert_eq!(msg.content_length, 6);
+        assert_eq!(u32::from(msg.content_length), 6);
         assert_eq!(msg.type_id, "BlockMessage");
     }
 
@@ -238,7 +241,7 @@ mod tests {
             type_id: "BlockMessage".to_string(),
             key: "k".to_string(),
             compressed: true,
-            content_length: raw.len() as i32,
+            content_length: WireLen::try_from(raw.len()).unwrap(),
         };
         let mut cache = HashMap::from([("k".to_string(), compressed)]);
         let blob = restore(&msg, &mut cache).unwrap();

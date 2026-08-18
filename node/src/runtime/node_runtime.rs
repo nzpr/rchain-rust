@@ -83,20 +83,18 @@ pub struct NodeProgram {
     block_report_api: Arc<BlockReportApi>,
     reporter: Arc<NewPrometheusReporter>,
     host: String,
-    port_http: i32,
-    port_admin_http: i32,
-    port_grpc_internal: i32,
+    port_http: Port,
+    port_admin_http: Port,
+    port_grpc_internal: Port,
 }
 
 impl NodeProgram {
     /// Serve the gRPC + HTTP servers (port of `NetworkServers.create`; the protocol/discovery
     /// servers are deferred).
     pub async fn serve(self) -> Result<(), String> {
-        let grpc_addr: std::net::SocketAddr = format!("{}:{}", self.host, self.port_grpc_internal)
+        let grpc_addr: std::net::SocketAddr = format!("{}:{}", self.host, u16::from(self.port_grpc_internal))
             .parse::<std::net::SocketAddr>()
             .map_err(|e| e.to_string())?;
-        let port_http = Port::try_from(self.port_http).map_err(|e| e.to_string())?;
-        let port_admin_http = Port::try_from(self.port_admin_http).map_err(|e| e.to_string())?;
 
         let grpc = tokio::spawn(self.grpc_services.serve(grpc_addr));
 
@@ -107,7 +105,7 @@ impl NodeProgram {
         let http = tokio::spawn(async move {
             acquire_http_server(
                 &host,
-                u16::from(port_http),
+                self.port_http,
                 reporter,
                 web_api,
                 block_report_api,
@@ -118,7 +116,7 @@ impl NodeProgram {
         let host = self.host.clone();
         let admin_web_api = self.admin_web_api.clone();
         let admin = tokio::spawn(async move {
-            acquire_admin_http_server(&host, u16::from(port_admin_http), admin_web_api).await
+            acquire_admin_http_server(&host, self.port_admin_http, admin_web_api).await
         });
 
         let (g, h, a) = tokio::join!(grpc, http, admin);
@@ -312,9 +310,10 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, 
             crate::diagnostics::scrape_data_builder::Configuration::default(),
         )),
         host: conf.api_server.host.clone(),
-        port_http: conf.api_server.port_http,
-        port_admin_http: conf.api_server.port_admin_http,
-        port_grpc_internal: conf.api_server.port_grpc_internal,
+        port_http: Port::try_from(conf.api_server.port_http).map_err(|e| e.to_string())?,
+        port_admin_http: Port::try_from(conf.api_server.port_admin_http).map_err(|e| e.to_string())?,
+        port_grpc_internal: Port::try_from(conf.api_server.port_grpc_internal)
+            .map_err(|e| e.to_string())?,
     })
 }
 
@@ -352,9 +351,18 @@ mod tests {
 
         let program = setup(&conf, &id).await.expect("setup should assemble");
         assert_eq!(program.host, "127.0.0.1");
-        assert_eq!(program.port_http, conf.api_server.port_http);
-        assert_eq!(program.port_admin_http, conf.api_server.port_admin_http);
-        assert_eq!(program.port_grpc_internal, conf.api_server.port_grpc_internal);
+        assert_eq!(
+            u16::from(program.port_http),
+            u16::try_from(conf.api_server.port_http).unwrap()
+        );
+        assert_eq!(
+            u16::from(program.port_admin_http),
+            u16::try_from(conf.api_server.port_admin_http).unwrap()
+        );
+        assert_eq!(
+            u16::from(program.port_grpc_internal),
+            u16::try_from(conf.api_server.port_grpc_internal).unwrap()
+        );
 
         drop(program);
         let _ = std::fs::remove_dir_all(&dir);

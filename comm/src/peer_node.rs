@@ -4,6 +4,7 @@
 
 use rchain_models::comm::protocol::Node;
 use rchain_shared::base16;
+use rchain_shared::refined::Port;
 
 /// A node identifier (a raw public key, hex-encoded in its string form).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -48,8 +49,8 @@ impl std::fmt::Display for NodeIdentifier {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub host: String,
-    pub tcp_port: i32,
-    pub udp_port: i32,
+    pub tcp_port: Port,
+    pub udp_port: Port,
 }
 
 /// A peer node (identifier + endpoint).
@@ -74,12 +75,12 @@ impl PeerNode {
             "rnode://{}@{}?protocol={}&discovery={}",
             self.s_key(),
             self.endpoint.host,
-            self.endpoint.tcp_port,
-            self.endpoint.udp_port
+            u16::from(self.endpoint.tcp_port),
+            u16::from(self.endpoint.udp_port)
         )
     }
 
-    pub fn from(id: NodeIdentifier, host: String, protocol: i32, discovery: i32) -> PeerNode {
+    pub fn from(id: NodeIdentifier, host: String, protocol: Port, discovery: Port) -> PeerNode {
         PeerNode {
             id,
             endpoint: Endpoint {
@@ -91,15 +92,19 @@ impl PeerNode {
     }
 
     /// Build a peer from a routing `Node` (port of `PeerNode.from(node)`).
-    pub fn from_node(node: &Node) -> PeerNode {
-        PeerNode {
+    pub fn from_node(node: &Node) -> Result<PeerNode, crate::errors::CommError> {
+        Ok(PeerNode {
             id: NodeIdentifier::new(node.id.clone()),
             endpoint: Endpoint {
                 host: String::from_utf8_lossy(&node.host).to_string(),
-                tcp_port: node.tcp_port as i32,
-                udp_port: node.udp_port as i32,
+                tcp_port: Port::try_from(node.tcp_port).map_err(|e| {
+                    crate::errors::CommError::ParseError(format!("invalid tcp port: {e}"))
+                })?,
+                udp_port: Port::try_from(node.udp_port).map_err(|e| {
+                    crate::errors::CommError::ParseError(format!("invalid udp port: {e}"))
+                })?,
             },
-        }
+        })
     }
 
     /// Build a routing `Node` from this peer (port of `ProtocolHelper.node(peer)`).
@@ -107,8 +112,8 @@ impl PeerNode {
         Node {
             id: self.key().to_vec(),
             host: self.endpoint.host.as_bytes().to_vec(),
-            tcp_port: self.endpoint.tcp_port as u32,
-            udp_port: self.endpoint.udp_port as u32,
+            tcp_port: u32::from(self.endpoint.tcp_port),
+            udp_port: u32::from(self.endpoint.udp_port),
         }
     }
 
@@ -123,13 +128,13 @@ impl PeerNode {
         for pair in query.split('&') {
             let (k, v) = pair.split_once('=').ok_or_else(err)?;
             match k {
-                "protocol" => protocol = v.parse::<i32>().ok(),
-                "discovery" => discovery = v.parse::<i32>().ok(),
+                "protocol" => protocol = v.parse::<u16>().ok(),
+                "discovery" => discovery = v.parse::<u16>().ok(),
                 _ => {}
             }
         }
-        let protocol = protocol.ok_or_else(err)?;
-        let discovery = discovery.ok_or_else(err)?;
+        let protocol = Port::new(protocol.ok_or_else(err)?);
+        let discovery = Port::new(discovery.ok_or_else(err)?);
         Ok(PeerNode::from(
             NodeIdentifier::from_hex(key_hex),
             host.to_string(),
@@ -158,7 +163,7 @@ mod tests {
 
     #[test]
     fn to_address_formats_rnode_uri() {
-        let peer = PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "example.com".into(), 40400, 40404);
+        let peer = PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "example.com".into(), rchain_shared::refined::Port::new(40400), rchain_shared::refined::Port::new(40404));
         assert_eq!(
             peer.to_address(),
             "rnode://010203@example.com?protocol=40400&discovery=40404"
@@ -170,8 +175,8 @@ mod tests {
         let peer = PeerNode::from(
             NodeIdentifier::new(vec![0xde, 0xad]),
             "example.com".into(),
-            40400,
-            40404,
+            rchain_shared::refined::Port::new(40400),
+            rchain_shared::refined::Port::new(40404),
         );
         assert_eq!(PeerNode::from_address(&peer.to_address()).unwrap(), peer);
     }

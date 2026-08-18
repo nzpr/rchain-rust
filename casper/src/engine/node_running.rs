@@ -397,12 +397,12 @@ mod tests {
 
     use crate::protocol::comm_util::{CommUtil, ConnectionsCell};
 
-    fn peer(name: &str, port: i32) -> PeerNode {
+    fn peer(name: &str, port: u16) -> PeerNode {
         PeerNode::from(
             NodeIdentifier::new(name.as_bytes().to_vec()),
             "host".to_string(),
-            port,
-            port,
+            rchain_shared::refined::Port::new(port),
+            rchain_shared::refined::Port::new(port),
         )
     }
 

@@ -198,8 +198,8 @@ mod tests {
         PeerNode::from(
             crate::peer_node::NodeIdentifier::new(vec![byte; 32]),
             "host".to_string(),
-            40400,
-            40404,
+            rchain_shared::refined::Port::new(40400),
+            rchain_shared::refined::Port::new(40404),
         )
     }
 

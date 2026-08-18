@@ -53,7 +53,8 @@ pub async fn stream(
     blob: &Blob,
     packet_chunk_size: usize,
 ) -> CommErr<()> {
-    let chunks = chunk_it(network_id, blob, packet_chunk_size);
+    let chunks = chunk_it(network_id, blob, packet_chunk_size)
+        .map_err(CommError::InternalCommunicationError)?;
     let result = client.stream(tokio_stream::iter(chunks)).await;
     process_response(peer, result)
 }
@@ -65,7 +66,7 @@ mod tests {
     use crate::peer_node::NodeIdentifier;
 
     fn peer() -> PeerNode {
-        PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "host".into(), 40400, 40404)
+        PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "host".into(), rchain_shared::refined::Port::new(40400), rchain_shared::refined::Port::new(40404))
     }
 
     fn ack() -> TlResponse {

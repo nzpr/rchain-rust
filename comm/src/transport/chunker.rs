@@ -14,7 +14,11 @@ pub struct Blob {
 }
 
 /// Chunk a blob into a header chunk followed by data chunks (port of `Chunker.chunkIt`).
-pub fn chunk_it(network_id: &str, blob: &Blob, max_message_size: usize) -> Vec<Chunk> {
+pub fn chunk_it(
+    network_id: &str,
+    blob: &Blob,
+    max_message_size: usize,
+) -> Result<Vec<Chunk>, String> {
     let raw = blob.packet.content.clone();
     let kb500 = 1024 * 500;
     let compress = raw.len() > kb500;
@@ -29,7 +33,7 @@ pub fn chunk_it(network_id: &str, blob: &Blob, max_message_size: usize) -> Vec<C
             sender: Some(blob.sender.to_node()),
             type_id: blob.packet.type_id.clone(),
             compressed: compress,
-            content_length: raw.len() as i32,
+            content_length: i32::try_from(raw.len()).map_err(|e| e.to_string())?,
             network_id: network_id.to_string(),
         })),
     };
@@ -44,5 +48,5 @@ pub fn chunk_it(network_id: &str, blob: &Blob, max_message_size: usize) -> Vec<C
             })),
         });
     }
-    chunks
+    Ok(chunks)
 }

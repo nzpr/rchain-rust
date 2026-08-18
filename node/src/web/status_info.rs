@@ -39,7 +39,7 @@ mod tests {
     use std::time::Duration;
 
     fn peer(id: u8, host: &str) -> PeerNode {
-        PeerNode::from(NodeIdentifier::new(vec![id]), host.to_string(), 40400, 40404)
+        PeerNode::from(NodeIdentifier::new(vec![id]), host.to_string(), rchain_shared::refined::Port::new(40400), rchain_shared::refined::Port::new(40404))
     }
 
     fn rp_conf() -> RPConf {

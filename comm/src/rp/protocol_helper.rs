@@ -29,10 +29,10 @@ pub fn node(n: &PeerNode) -> Node {
 pub fn sender(proto: &Protocol) -> CommErr<PeerNode> {
     let header = proto.header.as_ref().ok_or(CommError::HeaderNotAvailable)?;
     let sender = header.sender.as_ref().ok_or(CommError::SenderNotAvailable)?;
-    Ok(PeerNode::from_node(sender))
+    PeerNode::from_node(sender)
 }
 
-pub fn to_peer_node(n: &Node) -> PeerNode {
+pub fn to_peer_node(n: &Node) -> CommErr<PeerNode> {
     PeerNode::from_node(n)
 }
 
@@ -133,7 +133,7 @@ mod tests {
     use crate::peer_node::NodeIdentifier;
 
     fn peer() -> PeerNode {
-        PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "host".into(), 40400, 40404)
+        PeerNode::from(NodeIdentifier::new(vec![1, 2, 3]), "host".into(), rchain_shared::refined::Port::new(40400), rchain_shared::refined::Port::new(40404))
     }
 
     #[test]

@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_models::block_hash::BlockHash;
+use rchain_shared::refined::Port;
 
 use crate::api::admin_web_api::AdminWebApi;
 use crate::api::dto::{
@@ -223,11 +224,12 @@ pub fn admin_router(state: AdminState) -> Router {
 /// `/api/v1`, and the CORS/connection-timeout configuration are deferred).
 pub async fn acquire_http_server(
     host: &str,
-    port: u16,
+    port: Port,
     reporter: Arc<NewPrometheusReporter>,
     web_api: Arc<dyn WebApi>,
     block_report_api: Arc<BlockReportApi>,
 ) -> Result<(), String> {
+    let port = u16::from(port); // single discharge at the bind boundary
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
         .map_err(|e| format!("invalid bind address {host}:{port}: {e}"))?;
@@ -249,9 +251,10 @@ pub async fn acquire_http_server(
 /// Bind and serve the admin HTTP routes (port of `web/acquireAdminHttpServer`).
 pub async fn acquire_admin_http_server(
     host: &str,
-    port: u16,
+    port: Port,
     admin_web_api: Arc<dyn AdminWebApi>,
 ) -> Result<(), String> {
+    let port = u16::from(port); // single discharge at the bind boundary
     let addr: SocketAddr = format!("{host}:{port}")
         .parse()
         .map_err(|e| format!("invalid bind address {host}:{port}: {e}"))?;
