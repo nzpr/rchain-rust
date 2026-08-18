@@ -148,7 +148,11 @@ impl BlockCreator {
                     finalization,
                     state,
                 );
-                Ok(BlockCreatorResult::Created(self.id.sign_block(&unsigned_block)))
+                let signed_block = self
+                    .id
+                    .sign_block(&unsigned_block)
+                    .map_err(|e| e.to_string())?;
+                Ok(BlockCreatorResult::Created(signed_block))
             }
         }
     }

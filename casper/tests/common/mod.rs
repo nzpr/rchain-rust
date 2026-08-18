@@ -40,7 +40,8 @@ pub async fn build_runtime_manager() -> RuntimeManager {
             Arc::new(BytesCodec),
             Arc::new(DeployMergeableDataCodec),
         )
-        .await,
+        .await
+        .expect("mergeable store"),
     );
     RuntimeManager::new(rho, replay, history, mergeable)
 }

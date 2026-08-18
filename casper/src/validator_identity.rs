@@ -1,5 +1,6 @@
 //! Validator signing identity (port of `ValidatorIdentity.scala`).
 
+use rchain_crypto::errors::CryptoError;
 use rchain_crypto::private_key::PrivateKey;
 use rchain_crypto::public_key::PublicKey;
 use rchain_crypto::signatures::secp256k1::Secp256k1;
@@ -19,39 +20,36 @@ pub struct ValidatorIdentity {
 
 impl ValidatorIdentity {
     /// Sign `data` with the identity's private key (port of `signature`).
-    pub fn signature(&self, data: &[u8]) -> Vec<u8> {
-        from_algorithm(&self.sig_algorithm)
-            .expect("unsupported signature algorithm")
-            .sign(data, self.private_key.bytes())
-            .expect("signing failed")
+    pub fn signature(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let alg = from_algorithm(&self.sig_algorithm).ok_or(CryptoError::InvalidKey)?;
+        alg.sign(data, self.private_key.bytes())
     }
 
     /// Compute the block's content-addressed hash and sign it (port of `signBlock`).
-    pub fn sign_block(&self, block: &BlockMessage) -> BlockMessage {
+    pub fn sign_block(&self, block: &BlockMessage) -> Result<BlockMessage, CryptoError> {
         let block_hash = hash_block(block);
-        let sig = self.signature(block_hash.as_bytes());
-        BlockMessage {
+        let sig = self.signature(block_hash.as_bytes())?;
+        Ok(BlockMessage {
             sig,
             block_hash,
             ..block.clone()
-        }
+        })
     }
 
     /// Build an identity from a private key (port of `ValidatorIdentity.apply`).
-    pub fn from_private_key(private_key: PrivateKey) -> ValidatorIdentity {
-        let public_key = Secp256k1
-            .to_public(&private_key)
-            .expect("derive public key from private key");
-        ValidatorIdentity {
+    pub fn from_private_key(private_key: PrivateKey) -> Result<ValidatorIdentity, CryptoError> {
+        let public_key = Secp256k1.to_public(&private_key)?;
+        Ok(ValidatorIdentity {
             public_key,
             private_key,
             sig_algorithm: Secp256k1.name().to_string(),
-        }
+        })
     }
 
     /// Build an identity from a hex-encoded private key (port of `fromHex`).
     pub fn from_hex(hex: &str) -> Option<ValidatorIdentity> {
-        base16::decode(hex).map(|bytes| ValidatorIdentity::from_private_key(PrivateKey::new(bytes)))
+        base16::decode(hex)
+            .and_then(|bytes| ValidatorIdentity::from_private_key(PrivateKey::new(bytes)).ok())
     }
 }
 
@@ -94,7 +92,7 @@ mod tests {
             std::collections::BTreeSet::new(),
             rchain_models::casper::protocol::casper_message::RholangState::default(),
         );
-        let signed = identity.sign_block(&block);
+        let signed = identity.sign_block(&block).unwrap();
         assert_eq!(signed.block_hash, hash_block(&block));
         assert!(!signed.sig.is_empty());
     }

@@ -142,7 +142,7 @@ pub async fn create_genesis_block(
         state_hash.to_byte_array().to_vec(),
         processed_deploys,
     );
-    let signed_block = validator.sign_block(&unsigned_block);
+    let signed_block = validator.sign_block(&unsigned_block).map_err(|e| e.to_string())?;
 
     // Signing must not change the block hash.
     if unsigned_block.block_hash != signed_block.block_hash {
