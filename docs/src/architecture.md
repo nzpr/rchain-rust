@@ -41,8 +41,8 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util, state/exporters incl. `traverseHistory`/`validateStateItems` + store-backed instances, store→ReplayRSpace factory); LMDB FFI (`RSpaceExporterDisk`) deferred |
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration + weupnp SSDP/SOAP gateway discovery) |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
-| `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers, LFS requester state machines: LfsState/LfsTupleSpaceState) |
-| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`); `/status`/`/api/v1` routes deferred (gated on the OpenAPI/endpoints4s layer + `NodeLaunch`/`NodeSyncing`) |
+| `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers, engine state machines: LfsState/LfsTupleSpaceState/LfsBlockRequester/LfsTupleSpaceRequester/NodeSyncing/NodeRunning/BlockReceiver.apply + NodeLaunch genesis helpers) |
+| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`); `/status`/`/api/v1` routes deferred (gated on the OpenAPI/endpoints4s layer + `NodeLaunch`) |
 | `rspace-bench` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rosette/` (C++ VM).
@@ -95,11 +95,11 @@ repl/eval/listen over tonic gRPC clients), and the comm/discovery engine wiring 
 `BlockReceiver`/`BlockRetriever`/`NodeRunning`). Remaining (Phase 4):
 
 - **node HTTP routes** — `/status` and `/api/v1` remain deferred (gated on the
-  OpenAPI/endpoints4s layer + `NodeLaunch`/`NodeSyncing`); the `/reporting` trace route is ported.
-- **casper engine** — the effectful fs2 stream wiring (`BlockReceiver.apply`,
-  `LfsBlockRequester.stream`, `LfsTupleSpaceRequester.stream`) and the `NodeLaunch`/`NodeSyncing`
-  state machines remain deferred (the pure `LfsState`/`LfsTupleSpaceState` requester state machines
-  are ported).
+  OpenAPI/endpoints4s layer + `NodeLaunch`); the `/reporting` trace route is ported.
+- **casper engine** — the `NodeLaunch.apply` mode dispatch remains deferred (pending the node
+  runtime's comm/discovery wiring); the LFS requester states + `LfsBlockRequester`/
+  `LfsTupleSpaceRequester` stream orchestration, `NodeSyncing`, `NodeRunning`, `BlockReceiver.apply`,
+  and the `NodeLaunch` genesis-from-config helpers are ported.
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).

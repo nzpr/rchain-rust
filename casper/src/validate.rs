@@ -34,6 +34,14 @@ pub fn block_hash(b: &BlockMessage) -> bool {
     b.block_hash == hash_block(b)
 }
 
+/// Validate the block signature against the sender's public key (port of `blockSignature`).
+pub fn block_signature(b: &BlockMessage) -> bool {
+    match rchain_crypto::signatures::signatures_alg::from_algorithm(&b.sig_algorithm) {
+        Some(alg) => alg.verify(b.block_hash.as_bytes(), &b.sig, b.sender.as_bytes()),
+        None => false,
+    }
+}
+
 /// Validate that no deploy is scheduled for a future block (port of `futureTransaction`).
 pub fn future_transaction(b: &BlockMessage) -> BlockStatus {
     if b.state

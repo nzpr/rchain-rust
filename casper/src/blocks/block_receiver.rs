@@ -1,14 +1,21 @@
 //! Block receiver (port of `blocks/BlockReceiver.scala`).
 //!
-//! The pure `BlockReceiverState` state machine (begin/end storing + finished) and the
-//! `not_validated` helper are fully ported. The fs2 `BlockReceiver.apply` stream wiring (incoming
-//! + validated block streams, validation queue) is deferred pending the comm/stream layer.
+//! The pure `BlockReceiverState` state machine (begin/end storing + finished), the `not_validated`
+//! helper, and the `apply` stream wiring (incoming + validated block streams → validation queue)
+//! are ported.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_models::block_hash::BlockHash;
+use rchain_models::casper::protocol::casper_message::BlockMessage;
+use rchain_shared::log::{Log, LogSource};
+use tokio::sync::mpsc;
+
+use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
+use crate::validate::{block_hash, block_signature, format_of_fields};
 
 /// Block-receive status (port of `RecvStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,6 +229,227 @@ pub async fn not_validated(
     }
     let repr = dag.get_representation().await;
     !repr.contains(hash)
+}
+
+// -------------------------------------------------------------------------------------------------
+// Stream wiring (port of `BlockReceiver.apply`)
+// -------------------------------------------------------------------------------------------------
+
+/// Check that a block is cryptographically safe and part of the same shard (port of
+/// `checkIfOfInterest`).
+async fn check_if_of_interest(
+    block: &BlockMessage,
+    conf_shard_name: &str,
+    log: &dyn Log,
+    source: LogSource,
+) -> bool {
+    let valid_shard = conf_shard_name == block.shard_id;
+    if !valid_shard {
+        log.info(
+            source,
+            &format!(
+                "Ignored block with invalid shard, expected: {conf_shard_name}, received: {}",
+                block.shard_id
+            ),
+        );
+    }
+    valid_shard
+        && format_of_fields(block)
+        && block_hash(block)
+        && block_signature(block)
+}
+
+/// Check that a block is older than the current DAG's lowest height (port of `checkIfKnown`).
+async fn check_if_known(block: &BlockMessage, dag: &dyn BlockDagStorage) -> bool {
+    let repr = dag.get_representation().await;
+    repr.height_map
+        .first_key_value()
+        .map(|(h, _)| *h)
+        .unwrap_or(-1)
+        > block.block_number
+}
+
+/// Request the missing dependencies of a block (port of `requestMissingDependencies`).
+async fn request_missing_dependencies(
+    deps: &BTreeSet<BlockHash>,
+    block_retriever: &BlockRetriever,
+) {
+    for hash in deps {
+        block_retriever
+            .admit_hash(hash, None, AdmitHashReason::MissingDependencyRequested)
+            .await;
+    }
+}
+
+/// Re-send stored blocks back to the incoming queue for validation (port of `sendToValidate`).
+async fn send_to_validate(
+    hashes: &BTreeSet<BlockHash>,
+    block_store: &BlockStore,
+    put_to_incoming_queue: &(dyn Fn(BlockMessage) + Send + Sync),
+) {
+    for hash in hashes {
+        let block = block_store
+            .get(&[*hash])
+            .await
+            .ok()
+            .and_then(|mut v| v.pop())
+            .flatten();
+        if let Some(block) = block {
+            put_to_incoming_queue(block);
+        }
+    }
+}
+
+/// Process incoming blocks (port of `incomingBlocks`): filter, store, resolve dependencies, and
+/// forward dependency-free blocks to the output queue.
+async fn incoming_blocks(
+    mut incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
+    state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
+    conf_shard_name: Arc<str>,
+    block_store: BlockStore,
+    dag: Arc<dyn BlockDagStorage>,
+    block_retriever: Arc<BlockRetriever>,
+    put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
+    out_tx: mpsc::Sender<BlockHash>,
+    log: Arc<dyn Log>,
+) {
+    let source = LogSource::new("casper.blocks.BlockReceiver");
+    while let Some(block) = incoming_blocks_rx.recv().await {
+        // Filter out blocks that are not of interest.
+        if !check_if_of_interest(&block, &conf_shard_name, log.as_ref(), source).await {
+            log.info(
+                source,
+                &format!("Block {} is malformed. Dropped", block.block_hash.to_hex()),
+            );
+            continue;
+        }
+
+        // Begin storing the block.
+        let should_check = {
+            let mut guard = state.lock().await;
+            let (new_state, should_check) = guard.begin_stored(block.block_hash);
+            *guard = new_state;
+            should_check
+        };
+
+        // Ignore blocks older than the DAG.
+        if check_if_known(&block, dag.as_ref()).await {
+            log.info(
+                source,
+                &format!("Block {} is not of interest. Dropped", block.block_hash.to_hex()),
+            );
+            continue;
+        }
+
+        if !should_check {
+            continue;
+        }
+
+        // Store the block and resolve its parent dependencies.
+        let block_stored = block_store
+            .contains(&[block.block_hash])
+            .await
+            .first()
+            .copied()
+            .unwrap_or(false);
+        if !block_stored {
+            block_store.put(&[(block.block_hash, block.clone())]).await;
+        }
+
+        let mut parents = Vec::new();
+        for hash in &block.justifications {
+            let not_stored = !block_store
+                .contains(&[*hash])
+                .await
+                .first()
+                .copied()
+                .unwrap_or(false);
+            parents.push((*hash, not_stored));
+        }
+
+        let pending_requests = {
+            let mut guard = state.lock().await;
+            let (new_state, unseen) = guard.end_stored(block.block_hash, parents);
+            *guard = new_state;
+            unseen
+        };
+
+        block_retriever.ack_received(&block.block_hash).await;
+
+        let repr = dag.get_representation().await;
+        let has_all_deps = block.justifications.iter().all(|h| repr.contains(h));
+
+        let mut parents_to_validate = BTreeSet::new();
+        for hash in &block.justifications {
+            if not_validated(&block_store, dag.as_ref(), hash).await {
+                parents_to_validate.insert(*hash);
+            }
+        }
+
+        if has_all_deps {
+            let _ = out_tx.send(block.block_hash).await;
+        } else {
+            if !pending_requests.is_empty() {
+                request_missing_dependencies(&pending_requests, block_retriever.as_ref()).await;
+            }
+            if !parents_to_validate.is_empty() {
+                send_to_validate(&parents_to_validate, &block_store, put_to_incoming_queue.as_ref())
+                    .await;
+            }
+        }
+    }
+}
+
+/// Process validated blocks (port of `validatedBlocks`): update state and forward the next
+/// dependency-free blocks to the output queue.
+async fn validated_blocks(
+    mut finished_processing_rx: mpsc::Receiver<BlockMessage>,
+    state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
+    out_tx: mpsc::Sender<BlockHash>,
+) {
+    while let Some(block) = finished_processing_rx.recv().await {
+        let parents: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
+        let next = {
+            let mut guard = state.lock().await;
+            let (new_state, next) = guard.finished(block.block_hash, parents);
+            *guard = new_state;
+            next
+        };
+        for hash in next {
+            let _ = out_tx.send(hash).await;
+        }
+    }
+}
+
+/// Wire the incoming and validated block streams to a shared validation queue (port of
+/// `BlockReceiver.apply`). Returns the queue of block hashes ready for validation.
+pub fn apply(
+    state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
+    incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
+    finished_processing_rx: mpsc::Receiver<BlockMessage>,
+    conf_shard_name: String,
+    block_store: BlockStore,
+    dag: Arc<dyn BlockDagStorage>,
+    block_retriever: Arc<BlockRetriever>,
+    put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync>,
+    log: Arc<dyn Log>,
+) -> mpsc::Receiver<BlockHash> {
+    let (out_tx, out_rx) = mpsc::channel::<BlockHash>(100);
+
+    tokio::spawn(incoming_blocks(
+        incoming_blocks_rx,
+        state.clone(),
+        Arc::from(conf_shard_name),
+        block_store,
+        dag.clone(),
+        block_retriever,
+        put_to_incoming_queue,
+        out_tx.clone(),
+        log,
+    ));
+    tokio::spawn(validated_blocks(finished_processing_rx, state, out_tx));
+
+    out_rx
 }
 
 #[cfg(test)]

@@ -1,12 +1,13 @@
-//! Node engine (port of the pure data types in `casper/engine/`).
+//! Node engine (port of the `casper/engine/` state machines).
 //!
-//! The pure `LfsState` state machine (the `LfsBlockRequester.ST` requester state) is ported here;
-//! the effectful state machines live in their own submodules. The fs2/network effectful parts
-//! (`LfsBlockRequester.stream`, `NodeLaunch`/`NodeSyncing`) are deferred pending the comm/stream
-//! layer.
+//! The pure `LfsState`/`LfsTupleSpaceState` requester states and the effectful
+//! `LfsBlockRequester`/`LfsTupleSpaceRequester`/`NodeSyncing`/`NodeRunning` machines are ported.
+//! `NodeLaunch`'s genesis-from-config helpers are ported; its `apply` mode-dispatch is deferred
+//! pending the node runtime's comm/discovery wiring.
 
 pub mod lfs_block_requester;
 pub mod lfs_tuple_space_requester;
+pub mod node_launch;
 pub mod node_running;
 pub mod node_syncing;
 

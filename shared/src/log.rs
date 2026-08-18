@@ -17,7 +17,7 @@ impl LogSource {
 }
 
 /// A logger (port of `Log[F]`).
-pub trait Log {
+pub trait Log: Send + Sync {
     fn is_trace_enabled(&self, source: LogSource) -> bool;
     fn trace(&self, source: LogSource, msg: &str);
     fn debug(&self, source: LogSource, msg: &str);
