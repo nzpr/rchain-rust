@@ -363,7 +363,7 @@ impl NodeRunning {
                     );
                 }
             }
-            CasperMessage::StoreItemsMessageRequest => {
+            CasperMessage::StoreItemsMessageRequest(_) => {
                 // Deferred: responding to store-items requests requires RSpaceStateManager and
                 // RSpaceExporter, both deferred.
                 self.log.info(
@@ -371,7 +371,7 @@ impl NodeRunning {
                     &format!("Received StoreItemsMessage request but the node does not respond to StoreItemsMessage, from {peer}."),
                 );
             }
-            CasperMessage::StoreItemsMessage => {}
+            CasperMessage::StoreItemsMessage(_) => {}
             CasperMessage::FinalizedFringe(_) => {}
         }
     }

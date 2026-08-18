@@ -5,7 +5,7 @@
 
 use rchain_models::casper::protocol::casper_message::{
     BlockHashMessage, BlockMessage, BlockRequest, FinalizedFringe, FinalizedFringeRequest,
-    ForkChoiceTipRequest, HasBlock, HasBlockRequest,
+    ForkChoiceTipRequest, HasBlock, HasBlockRequest, StoreItemsMessage, StoreItemsMessageRequest,
 };
 use rchain_models::casper::protocol::packet_type_tag::{
     FromPacket, PacketParseResult, PacketTypeTag, ToPacket,
@@ -58,6 +58,16 @@ impl_serde!(
     FinalizedFringeRequestSerde,
     FinalizedFringeRequest,
     PacketTypeTag::FinalizedFringeRequest
+);
+impl_serde!(
+    StoreItemsMessageRequestSerde,
+    StoreItemsMessageRequest,
+    PacketTypeTag::StoreItemsMessageRequest
+);
+impl_serde!(
+    StoreItemsMessageSerde,
+    StoreItemsMessage,
+    PacketTypeTag::StoreItemsMessage
 );
 
 #[cfg(test)]

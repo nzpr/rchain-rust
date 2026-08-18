@@ -15,6 +15,7 @@ pub mod matcher;
 pub mod maybe_cell;
 pub mod path_ops;
 pub mod printer;
+pub mod refined;
 pub mod seq_ops;
 pub mod serialize;
 pub mod state;

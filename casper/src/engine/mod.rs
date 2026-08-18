@@ -1,8 +1,14 @@
-//! Node engine state types (port of the pure data types in `casper/engine/`).
+//! Node engine (port of the pure data types in `casper/engine/`).
 //!
-//! The fs2/network effectful parts (`LfsBlockRequester.stream`, `handleBlockHashMessage`, and the
-//! `NodeLaunch`/`NodeSyncing`/`NodeRunning` state machines) are deferred pending the comm/stream
+//! The pure `LfsState` state machine (the `LfsBlockRequester.ST` requester state) is ported here;
+//! the effectful state machines live in their own submodules. The fs2/network effectful parts
+//! (`LfsBlockRequester.stream`, `NodeLaunch`/`NodeSyncing`) are deferred pending the comm/stream
 //! layer.
+
+pub mod lfs_block_requester;
+pub mod lfs_tuple_space_requester;
+pub mod node_running;
+pub mod node_syncing;
 
 use std::collections::{BTreeMap, BTreeSet};
 

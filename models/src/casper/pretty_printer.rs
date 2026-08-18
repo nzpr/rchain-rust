@@ -108,7 +108,7 @@ fn limit(s: &str, max_length: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::casper::protocol::casper_message::RholangState;
+    use crate::casper::protocol::casper_message::{RholangState, StoreItemsMessage};
     use crate::validator::Validator;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -152,8 +152,14 @@ mod tests {
 
     #[test]
     fn unknown_message() {
+        let msg = CasperMessage::StoreItemsMessage(StoreItemsMessage {
+            start_path: vec![],
+            last_path: vec![],
+            history_items: vec![],
+            data_items: vec![],
+        });
         assert_eq!(
-            build_string_casper_message(&CasperMessage::StoreItemsMessage, false),
+            build_string_casper_message(&msg, false),
             "Unknown consensus protocol message"
         );
     }
