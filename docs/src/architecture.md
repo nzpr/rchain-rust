@@ -42,7 +42,7 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration); weupnp SSDP/SOAP gateway discovery deferred |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
 | `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis, protocol/engine/storage) |
-| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport); CLI subcommands + comm/discovery wiring + `/status`/`/api/v1`/`/reporting` routes deferred (gated on the deferred comm/discovery engine + the OpenAPI/endpoints4s layer) |
+| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients); comm/discovery wiring + `/status`/`/api/v1`/`/reporting` routes deferred (gated on the deferred comm/discovery engine + the OpenAPI/endpoints4s layer) |
 | `rspace-bench` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rosette/` (C++ VM).
@@ -97,10 +97,18 @@ pure/API surface. Remaining (Phase 4):
 - **comm** — the weupnp SSDP/SOAP gateway-discovery protocol is deferred (UPnP orchestration +
   `WhoAmI` are ported).
 - **node transport** — the tonic gRPC (Deploy/Propose/Repl) and axum HTTP `/api` (WebApi +
-  AdminWebApi) transport binding and the `NodeRuntime`/`Setup` assembly (`rnode` binary →
-  `node_environment` → `node_runtime::setup` → `NodeProgram::serve`) are ported; the CLI
-  subcommands (`runCLI`), the comm/discovery engine wiring (`BlockReceiver`/`BlockRetriever`/
-  `CommUtil`/`NodeLaunch`), and the `/status`/`/api/v1`/`/reporting` routes remain deferred.
+  AdminWebApi) transport binding, the `NodeRuntime`/`Setup` assembly (`rnode` binary →
+  `node_environment` → `node_runtime::setup` → `NodeProgram::serve`), and the CLI subcommands
+  (`runCLI`: thin-client deploy/propose/status/keygen/repl/eval/listen commands over tonic gRPC
+  clients in `casper/src/protocol/client.rs` + `node/src/runtime/node_main.rs`) are ported; the
+  `/status`/`/api/v1`/`/reporting` routes remain deferred.
+- **comm/discovery engine wiring** — `CommUtil` (`casper/src/protocol/comm_util.rs`, incl. the
+  `ConnectionsCell.random` shuffle in `comm/src/rp/connect.rs`), `BlockReceiverState` +
+  `not_validated` (`casper/src/blocks/block_receiver.rs`), `BlockRetriever`
+  (`casper/src/blocks/block_retriever.rs`), and the `NodeRunning` message handlers
+  (`casper/src/node_running.rs`) are ported. `NodeLaunch`/`NodeSyncing` and the fs2
+  `BlockReceiver.apply` streaming loop remain deferred (gated on `Genesis.createGenesisBlock` +
+  `RSpaceStateManager`/`RSpaceImporter`, themselves deferred).
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).

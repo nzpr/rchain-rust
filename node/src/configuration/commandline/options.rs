@@ -34,9 +34,10 @@ pub struct Options {
     #[arg(short = 'h', long = "grpc-host", default_value = "localhost")]
     pub grpc_host: String,
 
-    /// Remote gRPC port for client calls.
-    #[arg(short = 'p', long = "grpc-port", default_value_t = 40401)]
-    pub grpc_port: i32,
+    /// Remote gRPC port for client calls. Defaults to 40401 (external) for `deploy`, and 40402
+    /// (internal) for `repl`/`propose`.
+    #[arg(short = 'p', long = "grpc-port")]
+    pub grpc_port: Option<i32>,
 
     /// Max inbound gRPC message size for client calls.
     #[arg(short = 's', long = "grpc-max-recv-message-size", default_value_t = 16 * 1024 * 1024)]
@@ -84,7 +85,7 @@ pub enum Commands {
         #[arg(long = "phlo-price", required = true)]
         phlo_price: i64,
         #[arg(long = "valid-after-block-number")]
-        valid_after_block_number: i64,
+        valid_after_block_number: Option<i64>,
         #[arg(long = "private-key", value_parser = parse_base16)]
         private_key: Option<Vec<u8>>,
         #[arg(long = "private-key-path")]
@@ -108,12 +109,12 @@ pub enum Commands {
     ShowBlocks {
         /// Lists blocks to the given depth.
         #[arg(long = "depth")]
-        depth: i32,
+        depth: Option<i32>,
     },
     /// DAG in DOT format.
     Vdag {
         #[arg(long = "depth")]
-        depth: i32,
+        depth: Option<i32>,
         #[arg(long = "showJustificationlines")]
         show_justification_lines: bool,
     },

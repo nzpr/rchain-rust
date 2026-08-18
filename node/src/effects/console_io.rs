@@ -13,6 +13,52 @@ pub trait ConsoleIo {
     fn close(&mut self);
 }
 
+/// A stdin/stdout console (port of `effects.consoleIO`/`JLineConsoleIO`; the jline line-editing
+/// and prompt are not reproduced — only plain line reads/writes).
+#[derive(Default)]
+pub struct StdioConsole;
+
+impl ConsoleIo for StdioConsole {
+    fn read_line(&mut self) -> Option<String> {
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => {
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Some(line)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn read_password(&mut self, prompt: &str) -> String {
+        use std::io::Write;
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(prompt.as_bytes());
+        let _ = stdout.flush();
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        line.trim().to_string()
+    }
+
+    fn println(&mut self, s: &str) {
+        println!("{s}");
+    }
+
+    fn println_colored(&mut self, s: &ColoredString) {
+        println!("{}", s.colorize());
+    }
+
+    fn update_completion(&mut self, _history: &[String]) {}
+
+    fn close(&mut self) {}
+}
+
 /// A no-op console (port of `NOPConsoleIO`).
 #[derive(Default)]
 pub struct NopConsoleIo;

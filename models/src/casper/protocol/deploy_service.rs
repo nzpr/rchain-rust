@@ -69,14 +69,16 @@ pub struct DataWithBlockInfo {
 }
 
 /// API/node version info (port of `VersionInfo`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
     pub api: String,
     pub node: String,
 }
 
 /// Node status (port of `Status`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Status {
     pub version: VersionInfo,
     pub address: String,
@@ -104,7 +106,8 @@ pub struct WaitingContinuationInfo {
 }
 
 /// A deploy execution status (port of `DeployExecStatus`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DeployExecStatus {
     ProcessedWithSuccess {
         deploy_result: Vec<Par>,

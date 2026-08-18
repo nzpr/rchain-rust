@@ -3,5 +3,5 @@
 pub mod console_io;
 pub mod repl_client;
 
-pub use console_io::{ConsoleIo, NopConsoleIo};
-pub use repl_client::ReplClient;
+pub use console_io::{ConsoleIo, NopConsoleIo, StdioConsole};
+pub use repl_client::{GrpcReplClient, ReplClient};
