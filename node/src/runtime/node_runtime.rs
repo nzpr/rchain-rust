@@ -311,12 +311,29 @@ pub fn wire_block_processing(
     shard_id: &str,
     min_phlo_price: i64,
     log: Arc<dyn Log>,
+    autopropose: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> (
     mpsc::UnboundedSender<BlockMessage>,
     mpsc::UnboundedSender<BlockMessage>,
 ) {
     let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::unbounded_channel();
     let (validated_blocks_tx, validated_blocks_rx) = mpsc::unbounded_channel();
+
+    // Tap the validated-blocks stream for autopropose (fire a propose on each validated block).
+    let validated_blocks_rx = match autopropose {
+        Some(tap) => {
+            let (tap_tx, tap_rx) = mpsc::unbounded_channel();
+            let mut rx = validated_blocks_rx;
+            tokio::spawn(async move {
+                while let Some(block) = rx.recv().await {
+                    tap();
+                    let _ = tap_tx.send(block);
+                }
+            });
+            tap_rx
+        }
+        None => validated_blocks_rx,
+    };
 
     // Block receiver: incoming + validated blocks → a queue of dependency-free block hashes.
     let receiver_state =
@@ -504,9 +521,36 @@ pub async fn setup_node_program(
     let shard_id = conf.casper.shard_name.clone();
     let min_phlo_price = conf.casper.min_phlo_price;
 
+    // Extract the proposer queue/state before wiring block processing, so the autopropose tap can
+    // enqueue a propose on each validated block.
+    let proposer_parts = parts.proposer.take();
+
+    // Autopropose tap: fire an (async) propose on each validated block.
+    let autopropose: Option<Arc<dyn Fn() + Send + Sync>> = if conf.autopropose {
+        match &proposer_parts {
+            Some(pp) => {
+                let tx = pp.queue_tx.clone();
+                let tap: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+                    let (otx, _orx) = tokio::sync::oneshot::channel();
+                    let _ = tx.try_send((true, otx));
+                });
+                Some(tap)
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
     // Block receiver + processor streams (spawned internally).
-    let (incoming_blocks_tx, _validated_blocks_tx) =
-        wire_block_processing(&comm_state, &parts, &shard_id, min_phlo_price, log.clone());
+    let (incoming_blocks_tx, _validated_blocks_tx) = wire_block_processing(
+        &comm_state,
+        &parts,
+        &shard_id,
+        min_phlo_price,
+        log.clone(),
+        autopropose,
+    );
 
     // Routing queue → peer-message stream → NodeLaunch.
     let (routing_tx, routing_rx) = mpsc::channel::<RoutingMessage>(50);
@@ -562,7 +606,6 @@ pub async fn setup_node_program(
     // Proposer stream (port of `proposerStream` in `Setup.setupNodeProgram`). Runs only when a
     // validator identity is configured; the propose trigger + state were wired into `BlockApiImpl`
     // by [`setup`].
-    let proposer_parts = parts.proposer.take();
     let validator = parts.validator_identity_opt.clone();
     if let (Some(proposer_parts), Some(validator)) = (proposer_parts, validator) {
         let block_index = {
