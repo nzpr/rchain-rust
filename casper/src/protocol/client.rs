@@ -241,7 +241,10 @@ impl GrpcDeployService {
     pub async fn connect(host: &str, port: i32, max_message_size: i32) -> Result<Self, String> {
         let channel = connect_channel(host, port).await?;
         Ok(Self {
-            client: DeployServiceClient::new(channel).max_decoding_message_size(max_message_size as usize),
+            client: DeployServiceClient::new(channel).max_decoding_message_size(
+                usize::try_from(max_message_size)
+                    .map_err(|_| format!("negative max message size: {max_message_size}"))?,
+            ),
         })
     }
 }
@@ -525,7 +528,10 @@ impl GrpcProposeService {
     pub async fn connect(host: &str, port: i32, max_message_size: i32) -> Result<Self, String> {
         let channel = connect_channel(host, port).await?;
         Ok(Self {
-            client: ProposeServiceClient::new(channel).max_decoding_message_size(max_message_size as usize),
+            client: ProposeServiceClient::new(channel).max_decoding_message_size(
+                usize::try_from(max_message_size)
+                    .map_err(|_| format!("negative max message size: {max_message_size}"))?,
+            ),
         })
     }
 }

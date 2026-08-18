@@ -94,6 +94,30 @@ def TotalOn (f : Par → Par) : Prop := ∀ p, Closed p → Closed (f p)
 
 (see Fundamental 6).
 
+### 1.7 Refinement types are the security system (no type escape)
+
+The port's own Rust types carry the refinements of §1.6 **structurally**. A refinement type `R` over
+`T` is the sigma type `{ t : T | P t }` — the invariant `P` is *part of the type* and travels with the
+value through the whole domain.
+
+- **Construction** — the only ways to obtain an `R` are a *validated* constructor (`TryFrom<T>`, at a
+  boundary) or a *total* constructor on an already-valid input (`R::new`/`From`).
+- **Discharge** — exactly one: `From<R> for T`, an explicit, named, one-way conversion, used *only* at
+  a declared boundary (prost/wire encode, FFI, external API).
+- **No type escape** — a refinement newtype must **not** implement `Deref` or expose a public
+  `.get()`. Those silently drop `P` mid-domain and re-introduce the exact silent-cast bug the
+  refinement exists to prevent; they are the Rust analogue of projecting `.1` from `{ t // P t }`
+  without the proof.
+- **Domain arithmetic** uses the newtype's own `Add`/`Sub`/`Ord`/`Eq` impls that preserve `P`; where a
+  result may leave the invariant (e.g. a height *difference*), the operator's output is the raw
+  **signed** type, so the signedness is again visible in the type.
+
+Concrete newtypes live in [`shared/src/refined.rs`](../../shared/src/refined.rs) (`Port`, `Cost`,
+`BlockHeight`, `SeqNum`, `WireLen`/`ShortLen`/`ByteLen`, `NonNegI64`/`NonNegI32`); domain-specific
+serialized refinements (`SerializedNode`, `SerializedRandom`) live with their deserializers. The Lean
+spelling is `def Refined α P := { a : α // P a }` with `totalOn_lifts_to_refined`
+([`Rchain/Ty.lean`](Rchain/Ty.lean)).
+
 ---
 
 ## Part II — The fundamentals (proven in Lean)

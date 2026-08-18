@@ -178,10 +178,12 @@ impl<I: RSpaceImporter> NodeSyncing<I> {
     /// Request the approved (last finalized) state: download the blocks and the tuple space in
     /// parallel, then populate the DAG (port of `requestApprovedState`).
     async fn request_approved_state(&mut self, fringe: &FinalizedFringe) -> Result<(), String> {
+        let block_heights_before_fringe =
+            i32::try_from(DEPLOY_LIFESPAN).map_err(|e| e.to_string())?;
         let block_fut = request_blocks(
             fringe,
             &mut self.incoming_blocks_rx,
-            DEPLOY_LIFESPAN as i32,
+            block_heights_before_fringe,
             Duration::from_secs(30),
             &self.block_store,
             self.comm_util.as_ref(),

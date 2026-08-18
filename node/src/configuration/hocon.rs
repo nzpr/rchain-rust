@@ -124,7 +124,7 @@ fn to_bool(h: &Hocon) -> Result<bool, String> {
 
 fn to_i32(h: &Hocon) -> Result<i32, String> {
     match h {
-        Hocon::Integer(n) => Ok(*n as i32),
+        Hocon::Integer(n) => i32::try_from(*n).map_err(|_| format!("integer out of range: {n}")),
         _ => err("integer", h),
     }
 }
@@ -149,7 +149,11 @@ fn to_f64(h: &Hocon) -> Result<f64, String> {
 
 fn to_duration(h: &Hocon) -> Result<Duration, String> {
     match h {
-        Hocon::Integer(nanos) => Ok(Duration::from_nanos(*nanos as u64)),
+        Hocon::Integer(nanos) => {
+            let nanos =
+                u64::try_from(*nanos).map_err(|_| format!("negative duration: {nanos}"))?;
+            Ok(Duration::from_nanos(nanos))
+        }
         Hocon::String(s) => parse_duration(s).ok_or_else(|| format!("invalid duration `{s}`")),
         _ => err("duration", h),
     }

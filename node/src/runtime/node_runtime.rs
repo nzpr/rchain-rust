@@ -38,6 +38,7 @@ use rchain_rholang::storage::RhoMatch;
 use rchain_rspace::factory::create_history_repository;
 use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::rspace::RSpace;
+use rchain_shared::refined::Port;
 use rchain_shared::store_manager::database;
 use rchain_shared::typed_store::{BytesCodec, Codec, KeyValueTypedStore};
 
@@ -94,6 +95,8 @@ impl NodeProgram {
         let grpc_addr: std::net::SocketAddr = format!("{}:{}", self.host, self.port_grpc_internal)
             .parse::<std::net::SocketAddr>()
             .map_err(|e| e.to_string())?;
+        let port_http = Port::try_from(self.port_http).map_err(|e| e.to_string())?;
+        let port_admin_http = Port::try_from(self.port_admin_http).map_err(|e| e.to_string())?;
 
         let grpc = tokio::spawn(self.grpc_services.serve(grpc_addr));
 
@@ -104,7 +107,7 @@ impl NodeProgram {
         let http = tokio::spawn(async move {
             acquire_http_server(
                 &host,
-                self.port_http as u16,
+                u16::from(port_http),
                 reporter,
                 web_api,
                 block_report_api,
@@ -115,7 +118,7 @@ impl NodeProgram {
         let host = self.host.clone();
         let admin_web_api = self.admin_web_api.clone();
         let admin = tokio::spawn(async move {
-            acquire_admin_http_server(&host, self.port_admin_http as u16, admin_web_api).await
+            acquire_admin_http_server(&host, u16::from(port_admin_http), admin_web_api).await
         });
 
         let (g, h, a) = tokio::join!(grpc, http, admin);

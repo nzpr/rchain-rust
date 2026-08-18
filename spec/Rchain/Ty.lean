@@ -338,6 +338,22 @@ theorem TotalOn_comp {f g : Par → Par} (hf : TotalOn f) (hg : TotalOn g) :
   intro p hp
   exact hg (f p) (hf p hp)
 
+/-! ## Refinement types (the "no type escape" reading of totality) -/
+
+/-- A refinement type: a value paired with a proof that it satisfies a predicate `P`. This is the
+    sigma type that a Rust refinement newtype (`Port`, `Cost`, `BlockHeight`, …) corresponds to. The
+    invariant `P` is *structural* — it cannot be projected away without the proof, which is the Lean
+    reading of "no `Deref`/`.get()` type escape" in the Rust port. -/
+def Refined (α : Type) (P : α → Prop) := { a : α // P a }
+
+/-- `TotalOn f` is exactly "`f` lifts to a total map on the refinement `Refined Par Closed`": a
+    total operation composes with the proof that its input is closed to produce the proof that its
+    output is closed. Projecting the raw `Par` (dropping the proof) is the escape the Rust port
+    forbids; keeping the refinement through `f` is the totality the port demands. -/
+theorem totalOn_lifts_to_refined (f : Par → Par) :
+    TotalOn f ↔ ∀ p : Refined Par Closed, Closed (f p.1) := by
+  simp [TotalOn, Refined]
+
 /-! ## Substitution (minimal) and the full sort judgment -/
 
 /-- A simultaneous substitution: a term for each variable (de Bruijn level). -/

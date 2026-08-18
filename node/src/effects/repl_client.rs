@@ -33,8 +33,9 @@ impl GrpcReplClient {
         let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{host}:{port}"))
             .map_err(|e| e.to_string())?;
         let channel = endpoint.connect().await.map_err(|e| e.to_string())?;
-        let inner = TonicReplClient::new(channel)
-            .max_decoding_message_size(max_message_size as usize);
+        let max_message_size = usize::try_from(max_message_size)
+            .map_err(|_| format!("negative max message size: {max_message_size}"))?;
+        let inner = TonicReplClient::new(channel).max_decoding_message_size(max_message_size);
         Ok(Self {
             handle,
             inner: Mutex::new(inner),

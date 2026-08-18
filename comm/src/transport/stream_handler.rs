@@ -161,7 +161,9 @@ pub fn decompress_content(
     content_length: i32,
 ) -> Result<Vec<u8>, String> {
     if compressed {
-        rchain_shared::compression::decompress(raw, content_length as usize)
+        let length = usize::try_from(content_length)
+            .map_err(|_| format!("invalid content length: {content_length}"))?;
+        rchain_shared::compression::decompress(raw, length)
             .ok_or_else(|| "Could not decompress data".to_string())
     } else {
         Ok(raw.to_vec())

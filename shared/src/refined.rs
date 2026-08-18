@@ -1,10 +1,17 @@
 //! Refinement newtypes — the "no silent partiality" strong types.
 //!
-//! Mirrors the `TotalOn`/`Closed` refinements in [`Rchain/Ty.lean`](../../spec/Rchain/Ty.lean): each
-//! newtype carries a numeric invariant (non-negativity, a range, or a fixed wire width). It is
-//! constructed via `TryFrom` (fallible, at a declared boundary) or `From` (infallible, when the
-//! invariant is free), and read back via `Deref`/`get`. This makes a lossy `as` cast or a
-//! `.unwrap()` panic impossible on the happy path: the type forces the boundary to be explicit.
+//! Mirrors the `TotalOn`/`Closed` refinements in [`Rchain/Ty.lean`](../../spec/Rchain/Ty.lean). A
+//! refinement type is a value together with an invariant `P`: the invariant is **part of the type**
+//! and travels with the value through the domain. It is obtained only via a *validated* constructor
+//! (`TryFrom`) or a *total* constructor on an already-valid input, and it is discharged (the raw
+//! inner value observed) only via the explicit, one-way `From<Newtype> for Raw` conversion — used at
+//! a declared boundary (wire encode, FFI, external API).
+//!
+//! **No type escape.** Refinement newtypes must not implement `Deref` or expose a public `.get()`:
+//! those silently drop the invariant mid-domain and re-introduce the exact silent-cast bug the
+//! refinement exists to prevent. If you find yourself reaching for the raw value outside a boundary,
+//! the correct fix is to carry the newtype through the domain (make the field/parameter the newtype),
+//! not to unwrap it.
 
 /// A refinement violation (a value outside a newtype's invariant).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,17 +31,12 @@ impl std::fmt::Display for RefineError {
 
 impl std::error::Error for RefineError {}
 
-/// Define a non-negative signed-integer newtype (`TryFrom` validates `v >= 0`).
+/// Define a non-negative signed-integer newtype. Construction is `TryFrom` (validates `v >= 0`);
+/// discharge is `From<Newtype> for Inner`.
 macro_rules! non_neg_signed {
     ($name:ident, $inner:ty) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name($inner);
-
-        impl $name {
-            pub const fn get(self) -> $inner {
-                self.0
-            }
-        }
 
         impl TryFrom<$inner> for $name {
             type Error = RefineError;
@@ -50,16 +52,10 @@ macro_rules! non_neg_signed {
             }
         }
 
+        /// Boundary discharge (wire/FFI only): the raw signed value.
         impl From<$name> for $inner {
             fn from(v: $name) -> $inner {
                 v.0
-            }
-        }
-
-        impl std::ops::Deref for $name {
-            type Target = $inner;
-            fn deref(&self) -> &$inner {
-                &self.0
             }
         }
     };
@@ -68,33 +64,46 @@ macro_rules! non_neg_signed {
 non_neg_signed!(NonNegI64, i64);
 non_neg_signed!(NonNegI32, i32);
 
-/// A non-negative `usize`. Unsigned, so construction is total; the newtype keeps the refinement
-/// explicit (and symmetric with `NonNegI64`/`NonNegI32`) at call sites.
+/// A block height (non-negative). Used for `block_number`/`block_num`/`height` across the DAG and
+/// consensus layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NonNegUsize(usize);
+pub struct BlockHeight(i64);
 
-impl NonNegUsize {
-    pub const fn get(self) -> usize {
-        self.0
+impl TryFrom<i64> for BlockHeight {
+    type Error = RefineError;
+    fn try_from(v: i64) -> Result<Self, Self::Error> {
+        if v >= 0 {
+            Ok(BlockHeight(v))
+        } else {
+            Err(RefineError::new(format!("block height must be non-negative, got {v}")))
+        }
     }
 }
 
-impl From<usize> for NonNegUsize {
-    fn from(v: usize) -> Self {
-        NonNegUsize(v)
-    }
-}
-
-impl From<NonNegUsize> for usize {
-    fn from(v: NonNegUsize) -> usize {
+impl From<BlockHeight> for i64 {
+    fn from(v: BlockHeight) -> i64 {
         v.0
     }
 }
 
-impl std::ops::Deref for NonNegUsize {
-    type Target = usize;
-    fn deref(&self) -> &usize {
-        &self.0
+/// A sequence number (non-negative). Used for `seq_num`/`sender_seq`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SeqNum(i64);
+
+impl TryFrom<i64> for SeqNum {
+    type Error = RefineError;
+    fn try_from(v: i64) -> Result<Self, Self::Error> {
+        if v >= 0 {
+            Ok(SeqNum(v))
+        } else {
+            Err(RefineError::new(format!("sequence number must be non-negative, got {v}")))
+        }
+    }
+}
+
+impl From<SeqNum> for i64 {
+    fn from(v: SeqNum) -> i64 {
+        v.0
     }
 }
 
@@ -103,8 +112,9 @@ impl std::ops::Deref for NonNegUsize {
 pub struct Port(u16);
 
 impl Port {
-    pub const fn get(self) -> u16 {
-        self.0
+    /// Total constructor: a `u16` is already within the valid port range.
+    pub const fn new(port: u16) -> Self {
+        Port(port)
     }
 }
 
@@ -117,37 +127,36 @@ impl TryFrom<i32> for Port {
     }
 }
 
-impl TryFrom<u16> for Port {
-    type Error = RefineError;
-    fn try_from(v: u16) -> Result<Self, Self::Error> {
-        Ok(Port(v))
-    }
-}
-
 impl From<Port> for u16 {
     fn from(v: Port) -> u16 {
         v.0
     }
 }
 
-impl std::ops::Deref for Port {
-    type Target = u16;
-    fn deref(&self) -> &u16 {
-        &self.0
+/// A phantom/execution cost (non-negative by construction; the wire type is `uint64`). Replaces
+/// `u64 ↔ i64` cost casts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Cost(u64);
+
+impl Cost {
+    /// Total constructor: a `u64` is already non-negative.
+    pub const fn new(cost: u64) -> Self {
+        Cost(cost)
     }
 }
 
-/// Define a fixed-width length newtype (`TryFrom<usize>` validates the value fits the wire width).
+impl From<Cost> for u64 {
+    fn from(v: Cost) -> u64 {
+        v.0
+    }
+}
+
+/// Define a fixed-width length newtype. Construction is `TryFrom<usize>` (validates the value fits
+/// the wire width); discharge is `From<Newtype> for Inner`.
 macro_rules! len_newtype {
     ($name:ident, $inner:ty) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name($inner);
-
-        impl $name {
-            pub const fn get(self) -> $inner {
-                self.0
-            }
-        }
 
         impl TryFrom<usize> for $name {
             type Error = RefineError;
@@ -162,16 +171,10 @@ macro_rules! len_newtype {
             }
         }
 
+        /// Boundary discharge (wire/FFI only): the raw fixed-width length.
         impl From<$name> for $inner {
             fn from(v: $name) -> $inner {
                 v.0
-            }
-        }
-
-        impl std::ops::Deref for $name {
-            type Target = $inner;
-            fn deref(&self) -> &$inner {
-                &self.0
             }
         }
     };
@@ -187,36 +190,51 @@ mod tests {
 
     #[test]
     fn non_neg_i64_accepts_non_negative_rejects_negative() {
-        assert_eq!(NonNegI64::try_from(5).unwrap().get(), 5);
+        let v: NonNegI64 = 5.try_into().unwrap();
+        assert_eq!(i64::from(v), 5);
         assert!(NonNegI64::try_from(0).is_ok());
         assert!(NonNegI64::try_from(-1).is_err());
-        // Round-trips back to the inner type.
-        assert_eq!(i64::from(NonNegI64::try_from(7).unwrap()), 7);
     }
 
     #[test]
-    fn non_neg_i32_and_usize() {
-        assert_eq!(NonNegI32::try_from(3).unwrap().get(), 3);
+    fn non_neg_i32() {
+        let v: NonNegI32 = 3.try_into().unwrap();
+        assert_eq!(i32::from(v), 3);
         assert!(NonNegI32::try_from(-3).is_err());
-        assert_eq!(NonNegUsize::from(9usize).get(), 9);
+    }
+
+    #[test]
+    fn block_height_and_seq_num() {
+        let h: BlockHeight = 7.try_into().unwrap();
+        assert_eq!(i64::from(h), 7);
+        assert!(BlockHeight::try_from(-1).is_err());
+        let s: SeqNum = 9.try_into().unwrap();
+        assert_eq!(i64::from(s), 9);
+        assert!(SeqNum::try_from(-1).is_err());
     }
 
     #[test]
     fn port_bounds() {
-        assert_eq!(Port::try_from(40400).unwrap().get(), 40400);
-        assert_eq!(Port::try_from(0).unwrap().get(), 0);
-        assert_eq!(Port::try_from(65535).unwrap().get(), 65535);
+        assert_eq!(u16::from(Port::try_from(40400).unwrap()), 40400);
+        assert_eq!(u16::from(Port::try_from(0).unwrap()), 0);
+        assert_eq!(u16::from(Port::try_from(65535).unwrap()), 65535);
         assert!(Port::try_from(-1).is_err());
         assert!(Port::try_from(70000).is_err());
     }
 
     #[test]
+    fn cost_is_non_negative() {
+        let c = Cost::new(42);
+        assert_eq!(u64::from(c), 42);
+    }
+
+    #[test]
     fn length_widths() {
-        assert_eq!(ByteLen::try_from(255).unwrap().get(), 255);
+        assert_eq!(u8::from(ByteLen::try_from(255).unwrap()), 255);
         assert!(ByteLen::try_from(256).is_err());
-        assert_eq!(ShortLen::try_from(65535).unwrap().get(), 65535);
+        assert_eq!(u16::from(ShortLen::try_from(65535).unwrap()), 65535);
         assert!(ShortLen::try_from(65536).is_err());
-        assert_eq!(WireLen::try_from(4_000_000_000).unwrap().get(), 4_000_000_000);
+        assert_eq!(u32::from(WireLen::try_from(4_000_000_000).unwrap()), 4_000_000_000);
         assert!(WireLen::try_from(usize::MAX).is_err());
     }
 }
