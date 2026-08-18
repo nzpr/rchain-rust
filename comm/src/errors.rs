@@ -64,3 +64,11 @@ impl CommError {
         }
     }
 }
+
+impl std::fmt::Display for CommError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message())
+    }
+}
+
+impl std::error::Error for CommError {}

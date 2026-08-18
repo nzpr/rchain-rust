@@ -1,14 +1,17 @@
 //! Block processing (port of `blocks/BlockProcessor.scala`).
-//!
-//! The streaming `apply` (fs2 + `CommUtil` broadcast) is deferred.
+
+use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
+use rchain_shared::log::{Log, LogSource};
+use tokio::sync::mpsc;
 
 use crate::block_status::BlockStatus;
 use crate::merging::BlockIndex;
+use crate::protocol::comm_util::CommUtil;
 use crate::runtime_manager::RuntimeManager;
 
 /// Validate a block and insert it into the DAG (port of `validateAndAddToDag`).
@@ -41,4 +44,54 @@ where
     };
     dag.insert(block_meta, block).await?;
     Ok(status)
+}
+
+/// Process incoming blocks: validate, add to the DAG, notify the validated queue, and broadcast the
+/// block hash (port of `BlockProcessor.apply`).
+pub async fn apply<F, Fut>(
+    mut input_blocks: mpsc::Receiver<BlockMessage>,
+    validated_tx: mpsc::Sender<BlockMessage>,
+    shard_id: String,
+    min_phlo_price: i64,
+    dag: Arc<dyn BlockDagStorage>,
+    block_store: BlockStore,
+    runtime: Arc<RuntimeManager>,
+    comm_util: Arc<CommUtil>,
+    block_index: F,
+    log: Arc<dyn Log>,
+) where
+    F: Fn(BlockHash) -> Fut,
+    Fut: std::future::Future<Output = Result<BlockIndex, String>>,
+{
+    let source = LogSource::new("casper.blocks.BlockProcessor");
+    while let Some(block) = input_blocks.recv().await {
+        let result = validate_and_add_to_dag(
+            dag.as_ref(),
+            &block_store,
+            runtime.as_ref(),
+            block.clone(),
+            &shard_id,
+            min_phlo_price,
+            &block_index,
+        )
+        .await;
+        match result {
+            Ok(Err(status)) => log.warn(
+                source,
+                &format!(
+                    "Block {} failed validation: {status:?}",
+                    block.block_hash.to_hex()
+                ),
+            ),
+            Err(err) => log.error(
+                source,
+                &format!("Block {} processing error: {err}", block.block_hash.to_hex()),
+            ),
+            Ok(Ok(())) => {}
+        }
+        let _ = validated_tx.send(block.clone()).await;
+        comm_util
+            .send_block_hash(&block.block_hash, block.sender.as_bytes())
+            .await;
+    }
 }

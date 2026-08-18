@@ -35,6 +35,14 @@ pub type ConnectionsCell = Arc<tokio::sync::RwLock<Vec<PeerNode>>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StandaloneNodeSendToBootstrapError;
 
+impl std::fmt::Display for StandaloneNodeSendToBootstrapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("standalone node cannot send to the bootstrap node")
+    }
+}
+
+impl std::error::Error for StandaloneNodeSendToBootstrapError {}
+
 /// Comm utilities (port of `CommUtil[F]`).
 pub struct CommUtil {
     transport: Arc<dyn TransportLayer>,

@@ -569,7 +569,8 @@ pub fn list_par_with_random_from_proto(p: &p::ListParWithRandom) -> Result<ListP
         pars: p.pars.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>().map_err(|e| e.to_string())?,
         random_state: Blake2b512Random::from_bytes(
             &SerializedRandom::try_from(p.random_state.as_slice()).map_err(|e| e.to_string())?,
-        ),
+        )
+        .map_err(|e| e.to_string())?,
     })
 }
 
@@ -584,7 +585,8 @@ pub fn par_with_random_from_proto(p: &p::ParWithRandom) -> Result<ParWithRandom,
         body: par_from_proto(p.body.as_ref().ok_or(ModelsError::Malformed("body")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
         random_state: Blake2b512Random::from_bytes(
             &SerializedRandom::try_from(p.random_state.as_slice()).map_err(|e| e.to_string())?,
-        ),
+        )
+        .map_err(|e| e.to_string())?,
     })
 }
 

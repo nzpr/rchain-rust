@@ -262,11 +262,11 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             ));
         }
         // Verify evaluation cost matches.
-        if processed_deploy.cost.cost as i64 != result.cost.value {
-            return Err(ReplayFailure::replay_cost_mismatch(
-                processed_deploy.cost.cost as i64,
-                result.cost.value,
-            ));
+        let recorded_cost = i64::try_from(processed_deploy.cost.cost).map_err(|_| {
+            ReplayFailure::replay_cost_mismatch(i64::MAX, result.cost.value)
+        })?;
+        if recorded_cost != result.cost.value {
+            return Err(ReplayFailure::replay_cost_mismatch(recorded_cost, result.cost.value));
         }
         Ok(result)
     }
@@ -592,6 +592,11 @@ fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> i64 {
 
 /// The phlo refunded after a deploy (port of `ProcessedDeploy.refundAmount`).
 fn refund_amount(processed_deploy: &ProcessedDeploy) -> i64 {
-    (processed_deploy.deploy.data.phlo_limit - processed_deploy.cost.cost as i64).max(0)
+    processed_deploy
+        .deploy
+        .data
+        .phlo_limit
+        .saturating_sub_unsigned(processed_deploy.cost.cost)
+        .max(0)
         * processed_deploy.deploy.data.phlo_price
 }

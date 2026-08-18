@@ -42,7 +42,7 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration + weupnp SSDP/SOAP gateway discovery) |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler/parser + system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
 | `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers, engine state machines: LfsState/LfsTupleSpaceState/LfsBlockRequester/LfsTupleSpaceRequester/NodeSyncing/NodeRunning/BlockReceiver.apply + NodeLaunch genesis helpers) |
-| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`); `/status`/`/api/v1` routes deferred (gated on the OpenAPI/endpoints4s layer + `NodeLaunch`) |
+| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`, `/api/v1` JSON routes); `/status` + the `/api/v1` OpenAPI schema route deferred (gated on the OpenAPI/endpoints4s layer + `NodeLaunch`) |
 | `rspace-bench` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rosette/` (C++ VM).
@@ -94,8 +94,9 @@ the LMDB store, the node transport binding + `runCLI` (thin-client deploy/propos
 repl/eval/listen over tonic gRPC clients), and the comm/discovery engine wiring (`CommUtil`/
 `BlockReceiver`/`BlockRetriever`/`NodeRunning`). Remaining (Phase 4):
 
-- **node HTTP routes** — `/status` and `/api/v1` remain deferred (gated on the
-  OpenAPI/endpoints4s layer + `NodeLaunch`); the `/reporting` trace route is ported.
+- **node HTTP routes** — `/status` and the `/api/v1` OpenAPI schema route remain deferred (gated on
+  the OpenAPI/endpoints4s layer + `NodeLaunch`); the `/reporting` trace route and the `/api/v1` JSON
+  routes are ported.
 - **casper engine** — the `NodeLaunch.apply` mode dispatch remains deferred (pending the node
   runtime's comm/discovery wiring); the LFS requester states + `LfsBlockRequester`/
   `LfsTupleSpaceRequester` stream orchestration, `NodeSyncing`, `NodeRunning`, `BlockReceiver.apply`,

@@ -260,7 +260,7 @@ mod tests {
         assert!(ByteLen::try_from(256).is_err());
         assert_eq!(u16::from(ShortLen::try_from(65535).unwrap()), 65535);
         assert!(ShortLen::try_from(65536).is_err());
-        assert_eq!(u32::from(WireLen::try_from(4_000_000_000).unwrap()), 4_000_000_000);
+        assert_eq!(u32::from(WireLen::try_from(4_000_000_000usize).unwrap()), 4_000_000_000);
         assert!(WireLen::try_from(usize::MAX).is_err());
     }
 }

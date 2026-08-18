@@ -340,7 +340,7 @@ impl BlockIndex {
             .await?;
             deploy_indices.insert(DeployIndex {
                 deploy_id: d.deploy.sig.clone(),
-                cost: d.cost.cost as i64,
+                cost: i64::try_from(d.cost.cost).map_err(|e| e.to_string())?,
                 event_log_index,
             });
         }

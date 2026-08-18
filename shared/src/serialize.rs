@@ -33,10 +33,10 @@ mod tests {
             a.0.to_be_bytes().to_vec()
         }
         fn decode(bytes: &[u8]) -> Result<U32, String> {
-            if bytes.len() != 4 {
-                return Err(format!("expected 4 bytes, got {}", bytes.len()));
-            }
-            Ok(U32(u32::from_be_bytes(bytes.try_into().unwrap())))
+            let arr: [u8; 4] = bytes
+                .try_into()
+                .map_err(|_| format!("expected 4 bytes, got {}", bytes.len()))?;
+            Ok(U32(u32::from_be_bytes(arr)))
         }
     }
 

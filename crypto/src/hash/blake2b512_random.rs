@@ -232,18 +232,15 @@ impl Blake2b512Random {
     ///
     /// The layout is guaranteed by [`SerializedRandom`], so the slicing below cannot go out of
     /// bounds and the 80-byte digest block is always present.
-    pub fn from_bytes(serialized: &SerializedRandom) -> Self {
+    pub fn from_bytes(serialized: &SerializedRandom) -> Result<Self, CryptoError> {
         let bytes = serialized.0;
         if bytes.is_empty() {
-            return Self::from_init(&[]);
+            return Ok(Self::from_init(&[]));
         }
         let path_position = bytes[96] as usize;
         let remainder_position = bytes[97] as usize;
         let path_end = 98 + path_position;
-        let digest = match Blake2b512Block::from_bytes(&bytes[16..96]) {
-            Ok(digest) => digest,
-            Err(_) => unreachable!("SerializedRandom guarantees an 80-byte digest block"),
-        };
+        let digest = Blake2b512Block::from_bytes(&bytes[16..96])?;
         let mut result = Self {
             digest,
             last_block: [0u8; 128],
@@ -261,7 +258,7 @@ impl Blake2b512Random {
                 .copy_from_slice(&bytes[path_end..path_end + rem_len]);
         }
         result.position = remainder_position;
-        result
+        Ok(result)
     }
 
     /// Diagnostic string (mirrors `Blake2b512Random.debugStr`).
@@ -576,7 +573,7 @@ mod tests {
             let bytes = state.to_bytes();
             let serialized =
                 SerializedRandom::try_from(bytes.as_slice()).expect("valid serialized state");
-            let restored = Blake2b512Random::from_bytes(&serialized);
+            let restored = Blake2b512Random::from_bytes(&serialized).expect("deserialize state");
             assert_eq!(restored, *state, "round-trip mismatch");
             assert_eq!(restored.to_bytes(), bytes, "encoding not idempotent");
             // A round-tripped state must produce the same next value.

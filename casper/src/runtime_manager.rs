@@ -184,7 +184,7 @@ impl RuntimeManager {
         let processed = ProcessedDeploy {
             deploy: deploy.clone(),
             cost: PCost {
-                cost: eval_result.cost.value.max(0) as u64,
+                cost: u64::try_from(eval_result.cost.value).unwrap_or(0),
             },
             deploy_log,
             is_failed: !succeeded,

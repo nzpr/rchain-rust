@@ -155,6 +155,15 @@ async fn api_get_transaction(
     json_result(state.web_api.get_transaction(&hash).await)
 }
 
+// --- Web API v1 routes (port of `WebApiRoutesV1`; the OpenAPI schema route is deferred) ---
+
+async fn api_v1_deploy_status(
+    State(state): State<HttpState>,
+    Path(deploy_signature): Path<String>,
+) -> Response {
+    json_result(state.web_api.deploy_status(&deploy_signature).await)
+}
+
 // --- Reporting routes (port of `ReportingRoutes.service`) ---
 
 /// `GET /reporting/trace` query params (`blockHash` + optional `forceReplay`).
@@ -184,7 +193,8 @@ async fn admin_propose(State(state): State<AdminState>) -> Response {
 }
 
 /// Build the public HTTP routes (port of `acquireHttpServer`'s route map: `/version`, `/metrics`,
-/// the `/api` JSON routes, and `/reporting`). The `/status` and `/api/v1` routes are deferred.
+/// the `/api` JSON routes, `/reporting`, and the `/api/v1` routes). The `/status` route and the
+/// `/api/v1` OpenAPI schema route are deferred.
 pub fn router(state: HttpState) -> Router {
     Router::new()
         .route("/version", get(version))
@@ -210,13 +220,31 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/deploy/:deploy_id", get(api_find_deploy))
         .route("/api/is-finalized/:hash", get(api_is_finalized))
         .route("/api/transactions/:hash", get(api_get_transaction))
+        .route("/api/v1/status", get(api_status))
+        .route("/api/v1/deploy", post(api_deploy))
+        .route(
+            "/api/v1/deploy-status/:deploy_signature",
+            get(api_v1_deploy_status),
+        )
+        .route("/api/v1/explore-deploy", post(api_explore_deploy))
+        .route(
+            "/api/v1/explore-deploy-by-block-hash",
+            post(api_explore_deploy_by_block_hash),
+        )
+        .route(
+            "/api/v1/data-at-name-by-block-hash",
+            post(api_data_at_name_by_block_hash),
+        )
+        .route("/api/v1/blocks", get(api_get_blocks))
+        .route("/api/v1/block/:hash", get(api_get_block))
         .with_state(state)
 }
 
-/// Build the admin HTTP routes (port of `acquireAdminHttpServer`'s `/api` admin routes).
+/// Build the admin HTTP routes (port of `acquireAdminHttpServer`'s `/api` + `/api/v1` admin routes).
 pub fn admin_router(state: AdminState) -> Router {
     Router::new()
         .route("/api/propose", post(admin_propose))
+        .route("/api/v1/propose", get(admin_propose))
         .with_state(state)
 }
 

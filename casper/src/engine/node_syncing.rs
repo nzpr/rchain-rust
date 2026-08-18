@@ -93,6 +93,12 @@ impl<I: RSpaceImporter> NodeSyncing<I> {
         self.finished.notified().await;
     }
 
+    /// A cloneable handle to the syncing-finished notification, for waiting concurrently with the
+    /// `handle` loop without holding the engine's mutex.
+    pub fn finished_handle(&self) -> Arc<tokio::sync::Notify> {
+        self.finished.clone()
+    }
+
     /// Handle an incoming casper message (port of `handle`).
     pub async fn handle(&mut self, peer: &PeerNode, msg: &CasperMessage) -> Result<(), String> {
         match msg {
