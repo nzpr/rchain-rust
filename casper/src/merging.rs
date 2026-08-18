@@ -471,7 +471,7 @@ impl MergeScope {
         final_fringe: &BTreeSet<BlockHash>,
         child_map: &BTreeMap<BlockHash, BTreeSet<BlockHash>>,
         dag_data: &BTreeMap<BlockHash, Message<BlockHash, Validator>>,
-    ) -> (MergeScope, Option<BlockHash>) {
+    ) -> Result<(MergeScope, Option<BlockHash>), String> {
         let prune_fringe: BTreeSet<BlockHash> =
             message_map::prune_fringe(dag_data, final_fringe, child_map)
                 .iter()
@@ -486,19 +486,34 @@ impl MergeScope {
         final_fringe: &BTreeSet<BlockHash>,
         prune_fringe: &BTreeSet<BlockHash>,
         dag_data: &BTreeMap<BlockHash, Message<BlockHash, Validator>>,
-    ) -> (MergeScope, Option<BlockHash>) {
+    ) -> Result<(MergeScope, Option<BlockHash>), String> {
         let merge_msgs: BTreeSet<Message<BlockHash, Validator>> = merge_fringe
             .iter()
-            .map(|h| dag_data.get(h).expect("merge fringe not in dag").clone())
-            .collect();
+            .map(|h| {
+                dag_data
+                    .get(h)
+                    .cloned()
+                    .ok_or_else(|| format!("merge fringe not in dag: {}", h.to_hex()))
+            })
+            .collect::<Result<_, String>>()?;
         let final_msgs: BTreeSet<Message<BlockHash, Validator>> = final_fringe
             .iter()
-            .map(|h| dag_data.get(h).expect("final fringe not in dag").clone())
-            .collect();
+            .map(|h| {
+                dag_data
+                    .get(h)
+                    .cloned()
+                    .ok_or_else(|| format!("final fringe not in dag: {}", h.to_hex()))
+            })
+            .collect::<Result<_, String>>()?;
         let prune_msgs: BTreeSet<Message<BlockHash, Validator>> = prune_fringe
             .iter()
-            .map(|h| dag_data.get(h).expect("prune fringe not in dag").clone())
-            .collect();
+            .map(|h| {
+                dag_data
+                    .get(h)
+                    .cloned()
+                    .ok_or_else(|| format!("prune fringe not in dag: {}", h.to_hex()))
+            })
+            .collect::<Result<_, String>>()?;
 
         let c_scope = message_map::between(dag_data, &merge_msgs, &final_msgs);
         let f_scope = message_map::between(dag_data, &final_msgs, &prune_msgs);
@@ -506,7 +521,7 @@ impl MergeScope {
         let f_scope_ids: BTreeSet<BlockHash> = f_scope.iter().map(|m| m.id).collect();
         let base_msg = if f_scope.is_empty() {
             let genesis = message_map::find_with_empty_parents(dag_data)
-                .expect("Final scope is empty but no genesis found.");
+                .ok_or_else(|| "Final scope is empty but no genesis found.".to_string())?;
             Some(genesis.id)
         } else {
             None
@@ -517,13 +532,13 @@ impl MergeScope {
             .copied()
             .collect();
 
-        (
+        Ok((
             MergeScope {
                 final_scope: f_scope_ids,
                 conflict_scope,
             },
             base_msg,
-        )
+        ))
     }
 
     /// Merge the conflict scope into the base state, returning the new state hash + rejected
@@ -756,7 +771,8 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new(),
             &dag,
-        );
+        )
+        .unwrap();
         // Final scope empty -> genesis is the base; conflict scope excludes it.
         assert!(scope.final_scope.is_empty());
         assert_eq!(scope.conflict_scope, [c.id].into_iter().collect());

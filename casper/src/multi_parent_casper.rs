@@ -163,7 +163,7 @@ where
     let new_fringe_result = match &new_fringe_hashes {
         Some(fringe) => {
             let (m_scope, base_opt) =
-                MergeScope::from_dag(fringe, &prev_fringe_hashes, &dag_repr.child_map, msg_map);
+                MergeScope::from_dag(fringe, &prev_fringe_hashes, &dag_repr.child_map, msg_map)?;
             let base_state = match base_opt {
                 Some(h) => {
                     Blake2b256Hash::from_byte_array(
@@ -207,7 +207,7 @@ where
         )
     } else {
         let (m_scope, base_opt) =
-            MergeScope::from_dag(parent_hashes, &new_fringe, &dag_repr.child_map, msg_map);
+            MergeScope::from_dag(parent_hashes, &new_fringe, &dag_repr.child_map, msg_map)?;
         let base_state = match base_opt {
             Some(h) => {
                 Blake2b256Hash::from_byte_array(
