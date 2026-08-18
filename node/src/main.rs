@@ -37,7 +37,7 @@ async fn main() {
         }
     };
 
-    let program = match node_runtime::setup(&node_conf, &id).await {
+    let (program, _parts) = match node_runtime::setup(&node_conf, &id).await {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Setup error: {e}");

@@ -47,7 +47,7 @@ pub fn future_transaction(b: &BlockMessage) -> BlockStatus {
     if b.state
         .deploys
         .iter()
-        .any(|d| d.deploy.data.valid_after_block_number > b.block_number)
+        .any(|d| d.deploy.data.valid_after_block_number > i64::from(b.block_number))
     {
         BlockStatus::ContainsFutureDeploy
     } else {
@@ -127,10 +127,10 @@ pub async fn block_number(
             .await?
             .ok_or_else(|| format!("missing justification {}", j.to_hex()))?;
         if !meta.validation_failed {
-            max_block_number = max_block_number.max(meta.block_num);
+            max_block_number = max_block_number.max(i64::from(meta.block_num));
         }
     }
-    if max_block_number + 1 == b.block_number {
+    if max_block_number + 1 == i64::from(b.block_number) {
         Ok(Ok(()))
     } else {
         Ok(Err(BlockStatus::InvalidBlockNumber))
@@ -150,10 +150,10 @@ pub async fn sequence_number(
             .await?
             .ok_or_else(|| format!("missing justification {}", j.to_hex()))?;
         if meta.sender == b.sender {
-            creator_latest_seq = creator_latest_seq.max(meta.seq_num);
+            creator_latest_seq = creator_latest_seq.max(i64::from(meta.seq_num));
         }
     }
-    if creator_latest_seq + 1 == b.seq_num {
+    if creator_latest_seq + 1 == i64::from(b.seq_num) {
         Ok(Ok(()))
     } else {
         Ok(Err(BlockStatus::InvalidSequenceNumber))
@@ -367,9 +367,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: BlockHash::new([0xab; 32]),
-            block_number: 10,
+            block_number: 10.try_into().unwrap(),
             sender: Validator::new([0x11; 65]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             pre_state_hash: vec![1],
             post_state_hash: vec![2],
             justifications: vec![],
@@ -404,7 +404,7 @@ mod tests {
         let h = hash_block(&b);
         b.block_hash = h;
         assert!(block_hash(&b));
-        b.block_number = 999;
+        b.block_number = 999.try_into().unwrap();
         assert!(!block_hash(&b));
     }
 
@@ -454,9 +454,9 @@ mod effectful_tests {
     fn meta(hash: BlockHash, block_num: i64, sender_byte: u8, seq: i64, failed: bool) -> BlockMetadata {
         BlockMetadata {
             block_hash: hash,
-            block_num,
+            block_num: rchain_shared::refined::BlockHeight::try_from(block_num).unwrap(),
             sender: Validator::new([sender_byte; 65]),
-            seq_num: seq,
+            seq_num: rchain_shared::refined::SeqNum::try_from(seq).unwrap(),
             justifications: BTreeSet::new(),
             bonds_map: BTreeMap::new(),
             validated: true,
@@ -515,9 +515,9 @@ mod effectful_tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: hash(0xee),
-            block_number: block_num,
+            block_number: rchain_shared::refined::BlockHeight::try_from(block_num).unwrap(),
             sender: Validator::new([sender_byte; 65]),
-            seq_num: seq,
+            seq_num: rchain_shared::refined::SeqNum::try_from(seq).unwrap(),
             pre_state_hash: vec![1],
             post_state_hash: vec![2],
             justifications,

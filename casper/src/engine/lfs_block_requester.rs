@@ -29,7 +29,7 @@ async fn validate_received_block(
     log: &dyn Log,
     source: LogSource,
 ) -> bool {
-    let block_number = block.block_number;
+    let block_number = i64::from(block.block_number);
     let (info, minimum_height) = {
         let mut guard = st.lock().await;
         let (new_state, info) = guard.received(&block.block_hash, block_number);

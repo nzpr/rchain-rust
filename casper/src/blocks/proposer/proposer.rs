@@ -14,6 +14,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_models::validator::Validator;
+use rchain_shared::refined::BlockHeight;
 use rchain_sdk::consensus::is_super_majority;
 
 use super::block_creator::BlockCreator;
@@ -276,8 +277,8 @@ where
         .iter()
         .map(|m| m.block_num)
         .max()
-        .unwrap_or(-1)
-        + 1;
+        .map(|m| m + 1)
+        .unwrap_or_else(|| BlockHeight::try_from(0).unwrap());
     let parent_hashes: Vec<BlockHash> =
         pre_state.justifications.iter().map(|m| m.block_hash).collect();
     let offenders: BTreeSet<Validator> = pre_state
@@ -297,7 +298,8 @@ where
         .collect();
     let to_slash: BTreeSet<Validator> = offenders.intersection(&bonded).copied().collect();
 
-    let change_epoch = next_block_num != 0 && epoch_length as i64 % next_block_num == 0;
+    let change_epoch =
+        i64::from(next_block_num) != 0 && epoch_length as i64 % i64::from(next_block_num) == 0;
 
     // Attestation suppression: no new state transitions, or not yet a super-majority.
     let dag_repr = dag.get_representation().await;
@@ -364,7 +366,7 @@ where
     let pooled = dag.pooled_deploys().await?;
     let mut deploys: Vec<DeployId> = Vec::new();
     for (id, d) in pooled {
-        let future = d.data.valid_after_block_number > next_block_num;
+        let future = d.data.valid_after_block_number > i64::from(next_block_num);
         let expired = d.data.valid_after_block_number < next_block_num - DEPLOY_LIFESPAN;
         let replay_attack = dag.lookup_by_deploy_id(&id).await?.is_some();
         if !(future || expired || replay_attack) {
@@ -420,9 +422,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: BlockHash::new([1u8; 32]),
-            block_number: 0,
+            block_number: 0.try_into().unwrap(),
             sender: Validator::new([0u8; 65]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             pre_state_hash: vec![],
             post_state_hash: vec![],
             justifications: vec![],

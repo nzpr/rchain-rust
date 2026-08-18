@@ -91,16 +91,17 @@ Total in-scope (non-orphaned): roughly **200–220 person-days**.
 
 The execution core, RSpace, rholang, casper, and the node's pure/API surface are ported — including
 the LMDB store, the node transport binding + `runCLI` (thin-client deploy/propose/status/keygen/
-repl/eval/listen over tonic gRPC clients), and the comm/discovery engine wiring (`CommUtil`/
-`BlockReceiver`/`BlockRetriever`/`NodeRunning`). Remaining (Phase 4):
+repl/eval/listen over tonic gRPC clients), the comm/discovery engine wiring (`CommUtil`/
+`BlockReceiver`/`BlockRetriever`/`NodeRunning`), and the full casper engine (LFS requesters,
+`NodeSyncing`, `NodeRunning`, `NodeLaunch.apply`, `BlockReceiver.apply`, `BlockProcessor.apply`).
+Remaining (Phase 4):
 
-- **node HTTP routes** — `/status` and the `/api/v1` OpenAPI schema route remain deferred (gated on
-  the OpenAPI/endpoints4s layer + `NodeLaunch`); the `/reporting` trace route and the `/api/v1` JSON
-  routes are ported.
-- **casper engine** — the `NodeLaunch.apply` mode dispatch remains deferred (pending the node
-  runtime's comm/discovery wiring); the LFS requester states + `LfsBlockRequester`/
-  `LfsTupleSpaceRequester` stream orchestration, `NodeSyncing`, `NodeRunning`, `BlockReceiver.apply`,
-  and the `NodeLaunch` genesis-from-config helpers are ported.
+- **node runtime wiring** — the transport → packet-stream → `PeerMessage` comm/discovery assembly
+  (Scala `NodeRuntime`) that feeds `NodeLaunch.apply` and the block receiver/processor streams is
+  deferred.
+- **node HTTP routes** — `/status` (needs the comm state exposed by the runtime wiring) and the
+  `/api/v1` OpenAPI schema route (needs endpoints4s) remain deferred; the `/reporting` trace route
+  and the `/api/v1` JSON routes are ported.
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).

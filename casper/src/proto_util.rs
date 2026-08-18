@@ -8,11 +8,12 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, RholangState};
 use rchain_models::validator::Validator;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 
 /// The maximum block number among the given metadata, or `-1` if empty (port of
 /// `maxBlockNumberMetadata`).
 pub fn max_block_number_metadata(blocks: &[BlockMetadata]) -> i64 {
-    blocks.iter().fold(-1, |acc, b| acc.max(b.block_num))
+    blocks.iter().fold(-1, |acc, b| acc.max(i64::from(b.block_num)))
 }
 
 /// Look up a block's (non-failed) parent metadata (port of `ProtoUtil.getParentsMetadata`).
@@ -43,7 +44,7 @@ pub async fn get_parent_metadatas_above_block_number(
     let parents = get_parents_metadata(dag, b).await?;
     Ok(parents
         .into_iter()
-        .filter(|p| p.block_num >= block_number)
+        .filter(|p| i64::from(p.block_num) >= block_number)
         .collect())
 }
 
@@ -64,9 +65,9 @@ pub fn hash_block(block: &BlockMessage) -> BlockHash {
 pub fn unsigned_block_proto(
     version: i32,
     shard_id: String,
-    block_number: i64,
+    block_number: BlockHeight,
     sender: Validator,
-    seq_num: i64,
+    seq_num: SeqNum,
     pre_state_hash: Vec<u8>,
     post_state_hash: Vec<u8>,
     justifications: Vec<BlockHash>,
@@ -108,9 +109,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: BlockHash::new([0u8; 32]),
-            block_number: 0,
+            block_number: 0.try_into().unwrap(),
             sender: Validator::new([0x11; 65]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             pre_state_hash: vec![0x01],
             post_state_hash: vec![0x02],
             justifications: vec![],
@@ -139,7 +140,7 @@ mod tests {
     #[test]
     fn hash_block_changes_with_body() {
         let mut a = block();
-        a.block_number = 1;
+        a.block_number = 1.try_into().unwrap();
         let b = block();
         assert_ne!(hash_block(&a), hash_block(&b));
     }
@@ -147,12 +148,12 @@ mod tests {
     #[test]
     fn max_block_number_folds() {
         let mk = |n: i64| BlockMetadata {
-            block_num: n,
+            block_num: rchain_shared::refined::BlockHeight::try_from(n).unwrap(),
             ..BlockMetadata {
                 block_hash: BlockHash::new([0u8; 32]),
-                block_num: n,
+                block_num: rchain_shared::refined::BlockHeight::try_from(n).unwrap(),
                 sender: Validator::new([0u8; 65]),
-                seq_num: 0,
+                seq_num: 0.try_into().unwrap(),
                 justifications: BTreeSet::new(),
                 bonds_map: BTreeMap::new(),
                 validated: true,

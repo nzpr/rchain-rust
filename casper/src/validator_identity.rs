@@ -84,9 +84,9 @@ mod tests {
         let block = crate::proto_util::unsigned_block_proto(
             1,
             "root".to_string(),
-            0,
+            rchain_shared::refined::BlockHeight::try_from(0).unwrap(),
             rchain_models::validator::Validator::from_slice(&identity.public_key.bytes()),
-            0,
+            rchain_shared::refined::SeqNum::try_from(0).unwrap(),
             vec![],
             vec![],
             vec![],

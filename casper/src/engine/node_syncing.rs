@@ -240,7 +240,7 @@ impl<I: RSpaceImporter> NodeSyncing<I> {
                 .flatten()
                 .next()
                 .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
-            let block_height = block.block_number;
+            let block_height = i64::from(block.block_number);
             if block_height >= min_height {
                 self.log.info(
                     self.log_source,

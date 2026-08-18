@@ -264,9 +264,9 @@ async fn check_if_known(block: &BlockMessage, dag: &dyn BlockDagStorage) -> bool
     let repr = dag.get_representation().await;
     repr.height_map
         .first_key_value()
-        .map(|(h, _)| *h)
+        .map(|(h, _)| i64::from(*h))
         .unwrap_or(-1)
-        > block.block_number
+        > i64::from(block.block_number)
 }
 
 /// Request the missing dependencies of a block (port of `requestMissingDependencies`).

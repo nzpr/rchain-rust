@@ -86,6 +86,33 @@ impl From<BlockHeight> for i64 {
     }
 }
 
+impl std::fmt::Display for BlockHeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::ops::Add<i64> for BlockHeight {
+    type Output = BlockHeight;
+    fn add(self, rhs: i64) -> BlockHeight {
+        BlockHeight(self.0 + rhs) // non-negative by construction (heights only increment)
+    }
+}
+
+impl std::ops::Sub<i64> for BlockHeight {
+    type Output = i64;
+    fn sub(self, rhs: i64) -> i64 {
+        self.0 - rhs
+    }
+}
+
+impl std::ops::Sub<BlockHeight> for BlockHeight {
+    type Output = i64;
+    fn sub(self, rhs: BlockHeight) -> i64 {
+        self.0 - rhs.0
+    }
+}
+
 /// A sequence number (non-negative). Used for `seq_num`/`sender_seq`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeqNum(i64);
@@ -104,6 +131,33 @@ impl TryFrom<i64> for SeqNum {
 impl From<SeqNum> for i64 {
     fn from(v: SeqNum) -> i64 {
         v.0
+    }
+}
+
+impl std::fmt::Display for SeqNum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::ops::Add<i64> for SeqNum {
+    type Output = SeqNum;
+    fn add(self, rhs: i64) -> SeqNum {
+        SeqNum(self.0 + rhs) // non-negative by construction (sequence numbers only increment)
+    }
+}
+
+impl std::ops::Sub<i64> for SeqNum {
+    type Output = i64;
+    fn sub(self, rhs: i64) -> i64 {
+        self.0 - rhs
+    }
+}
+
+impl std::ops::Sub<SeqNum> for SeqNum {
+    type Output = i64;
+    fn sub(self, rhs: SeqNum) -> i64 {
+        self.0 - rhs.0
     }
 }
 

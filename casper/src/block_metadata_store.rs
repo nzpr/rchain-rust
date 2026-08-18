@@ -10,6 +10,7 @@ use rchain_block_storage::dag::metadata_store::{
 };
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
+use rchain_shared::refined::BlockHeight;
 use rchain_shared::typed_store::KeyValueTypedStore;
 
 /// The block metadata store: a persisted `KeyValueTypedStore` plus an in-memory [`DagState`] index
@@ -72,7 +73,7 @@ impl BlockMetadataStore {
         self.dag_state.read().await.child_map.clone()
     }
 
-    pub async fn height_map(&self) -> BTreeMap<i64, BTreeSet<BlockHash>> {
+    pub async fn height_map(&self) -> BTreeMap<BlockHeight, BTreeSet<BlockHash>> {
         self.dag_state.read().await.height_map.clone()
     }
 }
@@ -106,9 +107,9 @@ mod tests {
     fn meta(hash: BlockHash, parents: &[BlockHash], block_num: i64) -> BlockMetadata {
         BlockMetadata {
             block_hash: hash,
-            block_num,
+            block_num: rchain_shared::refined::BlockHeight::try_from(block_num).unwrap(),
             sender: rchain_models::validator::Validator::new([0u8; 65]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             justifications: parents.iter().copied().collect(),
             bonds_map: BTreeMap::new(),
             validated: true,
@@ -146,7 +147,13 @@ mod tests {
         assert!(child_map[&hash(1)].is_empty());
 
         let height_map = store.height_map().await;
-        assert_eq!(height_map[&0], [hash(0)].into_iter().collect());
-        assert_eq!(height_map[&1], [hash(1)].into_iter().collect());
+        assert_eq!(
+            height_map[&rchain_shared::refined::BlockHeight::try_from(0).unwrap()],
+            [hash(0)].into_iter().collect()
+        );
+        assert_eq!(
+            height_map[&rchain_shared::refined::BlockHeight::try_from(1).unwrap()],
+            [hash(1)].into_iter().collect()
+        );
     }
 }

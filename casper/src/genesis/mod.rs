@@ -17,6 +17,7 @@ use crate::block_random_seed::BlockRandomSeed;
 use crate::genesis::contracts::{ProofOfStake, Registry, Vault};
 use crate::genesis::standard_deploys::StandardDeploys;
 use crate::proto_util::unsigned_block_proto;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 use crate::runtime_manager::RuntimeManager;
 use crate::validator_identity::ValidatorIdentity;
 
@@ -59,9 +60,9 @@ fn create_block_with_processed_deploys(
     unsigned_block_proto(
         CURRENT,
         genesis.shard_id.clone(),
-        genesis.block_number,
+        BlockHeight::try_from(genesis.block_number).unwrap(),
         ModelsValidator::from_slice(genesis.sender.bytes()),
-        0,
+        SeqNum::try_from(0).unwrap(),
         pre_state_hash,
         post_state_hash,
         Vec::new(),
@@ -126,7 +127,7 @@ pub async fn create_genesis_block(
     let block_data = BlockData {
         block_number: genesis.block_number,
         sender: genesis.sender.clone(),
-        seq_num: 0,
+        seq_num: 0.try_into().unwrap(),
     };
     let rand = BlockRandomSeed::random_generator_from_shard_id(&genesis.shard_id);
     let (start_hash, state_hash, processed_results) = runtime

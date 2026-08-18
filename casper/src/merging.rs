@@ -438,7 +438,7 @@ impl BlockIndex {
         let block = get_block_unsafe(block_store, &block_hash).await?;
         let sender = block.sender.as_bytes().to_vec();
         let mergeable_chs = runtime
-            .load_mergeable_channels(&block.post_state_hash, &sender, block.seq_num)
+            .load_mergeable_channels(&block.post_state_hash, &sender, i64::from(block.seq_num))
             .await?;
 
         let index = BlockIndex::apply(

@@ -34,9 +34,9 @@ pub fn message_from_block_metadata(
     seen.insert(block.block_hash);
     Some(Message {
         id: block.block_hash,
-        height: block.block_num,
+        height: i64::from(block.block_num),
         sender: block.sender,
-        sender_seq: block.seq_num,
+        sender_seq: i64::from(block.seq_num),
         bonds_map: block.bonds_map.clone(),
         parents: block.justifications.clone(),
         fringe: block.fringe.clone(),
@@ -242,6 +242,7 @@ mod tests {
         SignedDeployDataCodec,
     };
     use rchain_models::block::state_hash::StateHash;
+    use rchain_shared::refined::BlockHeight;
     use rchain_shared::store::{InMemoryKeyValueStore, KeyValueStore};
     use rchain_shared::typed_store::{BytesCodec, KeyValueTypedStoreCodec};
 
@@ -262,9 +263,9 @@ mod tests {
     fn meta(hash: BlockHash, parents: &[BlockHash], block_num: i64) -> BlockMetadata {
         BlockMetadata {
             block_hash: hash,
-            block_num,
+            block_num: BlockHeight::try_from(block_num).unwrap(),
             sender: Validator::new([0u8; 65]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             justifications: parents.iter().copied().collect(),
             bonds_map: BTreeMap::new(),
             validated: true,
@@ -280,9 +281,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: hash,
-            block_number: 0,
+            block_number: 0.try_into().unwrap(),
             sender: Validator::new([0u8; 65]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             pre_state_hash: vec![],
             post_state_hash: vec![],
             justifications: vec![],

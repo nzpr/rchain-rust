@@ -175,11 +175,11 @@ where
 
     let max_height = justifications
         .iter()
-        .map(|m| m.block_num)
+        .map(|m| i64::from(m.block_num))
         .max()
         .unwrap_or(-1);
     let max_seq_nums: BTreeMap<Validator, i64> =
-        justifications.iter().map(|m| (m.sender, m.seq_num)).collect();
+        justifications.iter().map(|m| (m.sender, i64::from(m.seq_num))).collect();
     let new_fringe = new_fringe_hashes.unwrap_or(prev_fringe_hashes);
 
     // Merge the conflict scope (non-finalized blocks above the fringe).

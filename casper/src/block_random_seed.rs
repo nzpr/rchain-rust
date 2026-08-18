@@ -62,7 +62,7 @@ impl BlockRandomSeed {
         } else {
             BlockRandomSeed::new(
                 block.shard_id.clone(),
-                block.block_number,
+                i64::from(block.block_number),
                 PublicKey::new(block.sender.as_bytes().to_vec()),
                 Blake2b256Hash::from_byte_array(&block.pre_state_hash),
             )

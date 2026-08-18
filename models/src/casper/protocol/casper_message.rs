@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 
 use prost::Message as _;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 use rchain_shared::serialize::Serialize;
 
 use crate::block::state_hash::StateHash;
@@ -485,9 +486,9 @@ pub struct BlockMessage {
     pub version: i32,
     pub shard_id: String,
     pub block_hash: BlockHash,
-    pub block_number: i64,
+    pub block_number: BlockHeight,
     pub sender: Validator,
-    pub seq_num: i64,
+    pub seq_num: SeqNum,
     pub pre_state_hash: Vec<u8>,
     pub post_state_hash: Vec<u8>,
     pub justifications: Vec<BlockHash>,
@@ -510,9 +511,11 @@ impl BlockMessage {
             version: bm.version,
             shard_id: bm.shard_id.clone(),
             block_hash: BlockHash::from_slice(&bm.block_hash),
-            block_number: bm.block_number,
+            block_number: BlockHeight::try_from(bm.block_number)
+                .map_err(|_| crate::errors::ModelsError::Malformed("negative block number"))?,
             sender: Validator::from_slice(&bm.sender),
-            seq_num: bm.seq_num,
+            seq_num: SeqNum::try_from(bm.seq_num)
+                .map_err(|_| crate::errors::ModelsError::Malformed("negative sequence number"))?,
             pre_state_hash: bm.pre_state_hash.clone(),
             post_state_hash: bm.post_state_hash.clone(),
             justifications: bm
@@ -558,9 +561,9 @@ impl BlockMessage {
             version: self.version,
             shard_id: self.shard_id.clone(),
             block_hash: self.block_hash.as_bytes().to_vec(),
-            block_number: self.block_number,
+            block_number: i64::from(self.block_number),
             sender: self.sender.as_bytes().to_vec(),
-            seq_num: self.seq_num,
+            seq_num: i64::from(self.seq_num),
             pre_state_hash: self.pre_state_hash.clone(),
             post_state_hash: self.post_state_hash.clone(),
             justifications: justifications
@@ -1029,9 +1032,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: block_hash(0),
-            block_number: 0,
+            block_number: 0.try_into().unwrap(),
             sender: validator(1),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
             pre_state_hash: vec![0u8; 32],
             post_state_hash: vec![0u8; 32],
             justifications: Vec::new(),

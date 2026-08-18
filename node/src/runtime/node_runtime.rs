@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use prost::Message;
 
-use rchain_block_storage::block_store;
+use rchain_block_storage::approved_store::{self, ApprovedStore};
+use rchain_block_storage::block_store::{self, BlockStore};
 use rchain_block_storage::dag::codecs::{
     Blake2b256HashCodec, BlockHashCodec, BlockMetadataCodec, FringeDataCodec,
     SignedDeployDataCodec,
@@ -18,12 +19,18 @@ use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus};
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::block_metadata_store::BlockMetadataStore;
+use rchain_casper::blocks::block_retriever::BlockRetriever;
 use rchain_casper::dag::BlockDagKeyValueStorage;
+use rchain_casper::protocol::comm_util::{CommUtil, ConnectionsCell};
 use rchain_casper::reporting::noop;
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::storage::rnode_key_value_store_manager;
 use rchain_casper::validator_identity::ValidatorIdentity;
-use rchain_comm::peer_node::NodeIdentifier;
+use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
+use rchain_comm::rp::rp_conf::{ClearConnectionsConf, RPConf};
+use rchain_comm::transport::grpc_transport_client::GrpcTransportClient;
+use rchain_comm::transport::transport_layer::TransportLayer;
+use rchain_comm::who_am_i;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::ast::Par;
 use rchain_models::block_hash::BlockHash;
@@ -38,6 +45,7 @@ use rchain_rholang::storage::RhoMatch;
 use rchain_rspace::factory::create_history_repository;
 use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::rspace::RSpace;
+use rchain_shared::log::{Log, LogSource};
 use rchain_shared::refined::Port;
 use rchain_shared::store_manager::database;
 use rchain_shared::typed_store::{BytesCodec, Codec, KeyValueTypedStore};
@@ -73,6 +81,95 @@ impl Codec<BlockEventInfo> for BlockEventInfoCodec {
             .map_err(|e| e.to_string())?;
         crate::api::grpc::tonic::block_event_info_from_wire(&wire)
     }
+}
+
+/// The assembled comm/discovery state (port of the `NodeRuntime` transport/comm-state setup; the
+/// Kademlia discovery service is deferred).
+pub struct CommState {
+    pub transport: Arc<dyn TransportLayer>,
+    pub connections: ConnectionsCell,
+    pub rp_conf: RPConf,
+    pub comm_util: Arc<CommUtil>,
+    pub block_retriever: Arc<BlockRetriever>,
+    pub local_peer: PeerNode,
+}
+
+/// Create the comm/discovery state (port of `NodeRuntime.main`'s transport + comm-state setup).
+pub async fn create_comm_state(
+    conf: &NodeConf,
+    id: &NodeIdentifier,
+    log: Arc<dyn Log>,
+) -> Result<CommState, String> {
+    let source = LogSource::new("coop.rchain.node.runtime.NodeRuntime");
+
+    // Fetch the local peer node (blocking external-IP/UPnP discovery at startup).
+    let protocol_port = Port::try_from(conf.protocol_server.port).map_err(|e| e.to_string())?;
+    let discovery_port = Port::try_from(conf.peers_discovery.port).map_err(|e| e.to_string())?;
+    let mut log_buffer = Vec::new();
+    let local_peer = who_am_i::fetch_local_peer_node(
+        conf.protocol_server.host.clone(),
+        protocol_port,
+        discovery_port,
+        conf.protocol_server.no_upnp,
+        id.clone(),
+        &mut |msg| log_buffer.push(msg),
+    );
+    for msg in log_buffer {
+        log.info(source, &msg);
+    }
+
+    // Transport client (mutual TLS).
+    let cert = std::fs::read_to_string(&conf.tls.certificate_path).map_err(|e| e.to_string())?;
+    let key = std::fs::read_to_string(&conf.tls.key_path).map_err(|e| e.to_string())?;
+    let transport: Arc<dyn TransportLayer> = Arc::new(GrpcTransportClient::new(
+        conf.protocol_client.network_id.clone(),
+        &cert,
+        &key,
+        usize::try_from(conf.protocol_client.grpc_max_recv_message_size)
+            .map_err(|e| e.to_string())?,
+        usize::try_from(conf.protocol_client.grpc_stream_chunk_size)
+            .map_err(|e| e.to_string())?,
+        100,
+    )?);
+
+    // Comm state (connections cell + RPConf).
+    let connections: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    let bootstrap = if conf.standalone {
+        None
+    } else {
+        Some(conf.protocol_client.bootstrap.clone())
+    };
+    let rp_conf = RPConf {
+        local: local_peer.clone(),
+        network_id: conf.protocol_client.network_id.clone(),
+        bootstrap,
+        default_timeout: conf.protocol_client.network_timeout,
+        max_num_of_connections: usize::try_from(conf.protocol_client.batch_max_connections)
+            .map_err(|e| e.to_string())?,
+        clear_connections: ClearConnectionsConf {
+            num_of_connections_pinged: usize::try_from(
+                conf.peers_discovery.heartbeat_batch_size,
+            )
+            .map_err(|e| e.to_string())?,
+        },
+    };
+
+    let comm_util = Arc::new(CommUtil::new(
+        transport.clone(),
+        rp_conf.clone(),
+        connections.clone(),
+        log.clone(),
+    ));
+    let block_retriever = Arc::new(BlockRetriever::new(comm_util.clone(), log.clone()));
+
+    Ok(CommState {
+        transport,
+        connections,
+        rp_conf,
+        comm_util,
+        block_retriever,
+        local_peer,
+    })
 }
 
 /// The assembled node program (port of the `setupNodeProgram` result).
@@ -127,13 +224,23 @@ impl NodeProgram {
     }
 }
 
+/// The store/runtime handles extracted from [`setup`], so the block-processing streams can be wired
+/// in a separate step.
+pub struct SetupParts {
+    pub block_store: BlockStore,
+    pub dag: Arc<dyn BlockDagStorage>,
+    pub runtime_manager: Arc<RuntimeManager>,
+    pub approved_store: ApprovedStore,
+}
+
 /// Assemble the node program (port of `Setup.setupNodeProgram`, minus the comm/discovery/proposer/
 /// block-stream pieces).
-pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, String> {
+pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram, SetupParts), String> {
     let store_manager = rnode_key_value_store_manager(&conf.storage.data_dir);
 
     // Block store + DAG storage.
     let block_store = block_store::create(&store_manager).await;
+    let approved_store = approved_store::create(&store_manager).await;
     let block_metadata_kv: Arc<dyn KeyValueTypedStore<BlockHash, BlockMetadata>> = Arc::new(
         database(
             &store_manager,
@@ -256,9 +363,9 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, 
     });
 
     let block_api: Arc<dyn rchain_casper::api::block_api::BlockApi> = Arc::new(BlockApiImpl::new(
-        block_dag_storage,
+        block_dag_storage.clone(),
         block_store.clone(),
-        runtime_manager,
+        runtime_manager.clone(),
         validator_opt.clone(),
         network_id,
         shard_id,
@@ -301,20 +408,29 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<NodeProgram, 
     ));
     let admin_web_api: Arc<dyn AdminWebApi> = Arc::new(AdminWebApiImpl::new(block_api));
 
-    Ok(NodeProgram {
-        grpc_services,
-        web_api,
-        admin_web_api,
-        block_report_api,
-        reporter: Arc::new(NewPrometheusReporter::new(
-            crate::diagnostics::scrape_data_builder::Configuration::default(),
-        )),
-        host: conf.api_server.host.clone(),
-        port_http: Port::try_from(conf.api_server.port_http).map_err(|e| e.to_string())?,
-        port_admin_http: Port::try_from(conf.api_server.port_admin_http).map_err(|e| e.to_string())?,
-        port_grpc_internal: Port::try_from(conf.api_server.port_grpc_internal)
-            .map_err(|e| e.to_string())?,
-    })
+    Ok((
+        NodeProgram {
+            grpc_services,
+            web_api,
+            admin_web_api,
+            block_report_api,
+            reporter: Arc::new(NewPrometheusReporter::new(
+                crate::diagnostics::scrape_data_builder::Configuration::default(),
+            )),
+            host: conf.api_server.host.clone(),
+            port_http: Port::try_from(conf.api_server.port_http).map_err(|e| e.to_string())?,
+            port_admin_http: Port::try_from(conf.api_server.port_admin_http)
+                .map_err(|e| e.to_string())?,
+            port_grpc_internal: Port::try_from(conf.api_server.port_grpc_internal)
+                .map_err(|e| e.to_string())?,
+        },
+        SetupParts {
+            block_store,
+            dag: block_dag_storage,
+            runtime_manager,
+            approved_store,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -349,7 +465,7 @@ mod tests {
 
         let id = NodeIdentifier::new(vec![1u8]);
 
-        let program = setup(&conf, &id).await.expect("setup should assemble");
+        let (program, _parts) = setup(&conf, &id).await.expect("setup should assemble");
         assert_eq!(program.host, "127.0.0.1");
         assert_eq!(
             u16::from(program.port_http),

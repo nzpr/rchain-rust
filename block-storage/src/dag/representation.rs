@@ -8,6 +8,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::fringe_data::FringeData;
 use rchain_models::validator::Validator;
 use rchain_shared::base16;
+use rchain_shared::refined::BlockHeight;
 
 use crate::errors::StorageError;
 
@@ -19,7 +20,7 @@ use super::message_state::DagMessageState;
 pub struct DagRepresentation {
     pub dag_set: BTreeSet<BlockHash>,
     pub child_map: BTreeMap<BlockHash, BTreeSet<BlockHash>>,
-    pub height_map: BTreeMap<i64, BTreeSet<BlockHash>>,
+    pub height_map: BTreeMap<BlockHeight, BTreeSet<BlockHash>>,
     pub dag_message_state: DagMessageState<BlockHash, Validator>,
     pub fringe_states: BTreeMap<BTreeSet<BlockHash>, FringeData>,
 }
@@ -38,7 +39,11 @@ impl DagRepresentation {
     }
 
     pub fn latest_block_number(&self) -> i64 {
-        self.height_map.keys().last().map(|h| h + 1).unwrap_or(0)
+        self.height_map
+            .keys()
+            .last()
+            .map(|h| i64::from(*h + 1))
+            .unwrap_or(0)
     }
 
     pub fn last_finalized_block_hash(&self) -> Option<BlockHash> {
@@ -84,7 +89,7 @@ impl DagRepresentation {
             Some(
                 self.height_map
                     .iter()
-                    .filter(|(h, _)| **h >= start_number && **h <= end_number)
+                    .filter(|(h, _)| i64::from(**h) >= start_number && i64::from(**h) <= end_number)
                     .map(|(_, v)| v.iter().copied().collect())
                     .collect(),
             )

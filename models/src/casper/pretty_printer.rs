@@ -81,11 +81,11 @@ fn build_string_block(b: &BlockMessage, short: bool) -> String {
     let hash = build_string_bytes(b.block_hash.as_bytes());
     let sender = build_string_bytes(b.sender.as_bytes());
     if short {
-        format!("#{} {} by {}", b.block_number, hash, sender)
+        format!("#{} {} by {}", i64::from(b.block_number), hash, sender)
     } else {
         format!(
             "#{} {} sender: {}, state: {}, shard: {}, justifications: {}",
-            b.block_number,
+            i64::from(b.block_number),
             hash,
             sender,
             build_string_bytes(&b.post_state_hash),
@@ -117,9 +117,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: BlockHash::from_slice(&[0xab; 32]),
-            block_number: 42,
+            block_number: 42.try_into().unwrap(),
             sender: Validator::from_slice(&[0xcd; 65]),
-            seq_num: 1,
+            seq_num: 1.try_into().unwrap(),
             pre_state_hash: vec![0x11; 32],
             post_state_hash: vec![0x22; 32],
             justifications: vec![BlockHash::from_slice(&[0x33; 32])],

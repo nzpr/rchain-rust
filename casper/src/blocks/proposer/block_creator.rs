@@ -10,6 +10,7 @@ use rchain_models::casper::protocol::casper_message::{
     ProcessedDeploy, ProcessedSystemDeploy, RholangState, SignedDeployData,
 };
 use rchain_models::validator::Validator;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 use rchain_rholang::system_processes::BlockData;
 
 use crate::block_random_seed::BlockRandomSeed;
@@ -59,8 +60,8 @@ impl BlockCreator {
             .iter()
             .map(|m| m.block_num)
             .max()
-            .unwrap_or(-1)
-            + 1;
+            .map(|m| m + 1)
+            .unwrap_or_else(|| BlockHeight::try_from(0).unwrap());
         let creators_pk = self.id.public_key.clone();
         let creators_validator = Validator::from_slice(creators_pk.bytes());
         let seq_num = pre_state
@@ -68,11 +69,11 @@ impl BlockCreator {
             .iter()
             .find(|m| m.sender == creators_validator)
             .map(|m| m.seq_num + 1)
-            .unwrap_or(0);
+            .unwrap_or_else(|| SeqNum::try_from(0).unwrap());
         let block_data = BlockData {
-            block_number: block_num,
+            block_number: i64::from(block_num),
             sender: creators_pk.clone(),
-            seq_num,
+            seq_num: i64::from(seq_num),
         };
         let should_propose = !deploys.is_empty() || !to_slash.is_empty() || change_epoch;
         let finalization = pre_state.fringe_rejected_deploys.clone();
@@ -80,7 +81,7 @@ impl BlockCreator {
         let post_state: Option<StateTransitionResult> = if should_propose {
             let rand = BlockRandomSeed::random_generator_from(
                 &self.shard_id,
-                block_num,
+                i64::from(block_num),
                 creators_pk.clone(),
                 pre_state_hash,
             );

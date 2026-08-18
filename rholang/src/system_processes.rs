@@ -120,18 +120,18 @@ pub struct BlockData {
 impl BlockData {
     pub fn empty() -> Self {
         BlockData {
-            block_number: 0,
+            block_number: 0.try_into().unwrap(),
             sender: PublicKey::new(vec![0]),
-            seq_num: 0,
+            seq_num: 0.try_into().unwrap(),
         }
     }
 
     /// Build the per-block data from a block message (port of `BlockData.fromBlock`).
     pub fn from_block(block: &BlockMessage) -> Self {
         BlockData {
-            block_number: block.block_number,
+            block_number: i64::from(block.block_number),
             sender: PublicKey::new(block.sender.as_bytes().to_vec()),
-            seq_num: block.seq_num,
+            seq_num: i64::from(block.seq_num),
         }
     }
 }

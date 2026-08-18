@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use prost::Message as _;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 
 use crate::block::state_hash::StateHash;
 use crate::block_hash::BlockHash;
@@ -21,9 +22,9 @@ use crate::validator::Validator;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockMetadata {
     pub block_hash: BlockHash,
-    pub block_num: i64,
+    pub block_num: BlockHeight,
     pub sender: Validator,
-    pub seq_num: i64,
+    pub seq_num: SeqNum,
     pub justifications: BTreeSet<BlockHash>,
     pub bonds_map: BTreeMap<Validator, i64>,
     pub validated: bool,
@@ -41,12 +42,14 @@ impl Hash for BlockMetadata {
 }
 
 impl BlockMetadata {
-    pub fn from_proto(b: &BlockMetadataProto) -> Self {
-        BlockMetadata {
+    pub fn from_proto(b: &BlockMetadataProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(BlockMetadata {
             block_hash: BlockHash::from_slice(&b.block_hash),
-            block_num: b.block_num,
+            block_num: BlockHeight::try_from(b.block_num)
+                .map_err(|_| crate::errors::ModelsError::Malformed("negative block number"))?,
             sender: Validator::from_slice(&b.sender),
-            seq_num: b.seq_num,
+            seq_num: SeqNum::try_from(b.seq_num)
+                .map_err(|_| crate::errors::ModelsError::Malformed("negative sequence number"))?,
             justifications: b.justifications.iter().map(|j| BlockHash::from_slice(j)).collect(),
             bonds_map: b
                 .bonds
@@ -69,15 +72,15 @@ impl BlockMetadata {
             } else {
                 Some(Blake2b256Hash::from_byte_array(&b.member_of_fringe))
             },
-        }
+        })
     }
 
     pub fn to_proto(&self) -> BlockMetadataProto {
         BlockMetadataProto {
             block_hash: self.block_hash.as_bytes().to_vec(),
-            block_num: self.block_num,
+            block_num: i64::from(self.block_num),
             sender: self.sender.as_bytes().to_vec(),
-            seq_num: self.seq_num,
+            seq_num: i64::from(self.seq_num),
             justifications: self
                 .justifications
                 .iter()
@@ -109,7 +112,7 @@ impl BlockMetadata {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
         let proto = BlockMetadataProto::decode(bytes).map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
-        Ok(BlockMetadata::from_proto(&proto))
+        BlockMetadata::from_proto(&proto)
     }
 
     /// Build metadata from a block message (port of `BlockMetadata.fromBlock`).
@@ -145,9 +148,9 @@ mod tests {
     fn law18_block_metadata_round_trips() {
         let meta = BlockMetadata {
             block_hash: block_hash(1),
-            block_num: 3,
+            block_num: 3.try_into().unwrap(),
             sender: validator(2),
-            seq_num: 1,
+            seq_num: 1.try_into().unwrap(),
             justifications: [block_hash(2), block_hash(1)].into_iter().collect(),
             bonds_map: BTreeMap::from([(validator(2), 100)]),
             validated: true,
@@ -166,9 +169,9 @@ mod tests {
             version: 1,
             shard_id: "root".to_string(),
             block_hash: block_hash(1),
-            block_number: 4,
+            block_number: 4.try_into().unwrap(),
             sender: validator(2),
-            seq_num: 3,
+            seq_num: 3.try_into().unwrap(),
             pre_state_hash: vec![],
             post_state_hash: vec![],
             justifications: vec![block_hash(2)],
@@ -182,9 +185,9 @@ mod tests {
         };
         let meta = BlockMetadata::from_block(&block);
         assert_eq!(meta.block_hash, block_hash(1));
-        assert_eq!(meta.block_num, 4);
+        assert_eq!(meta.block_num, 4.try_into().unwrap());
         assert_eq!(meta.sender, validator(2));
-        assert_eq!(meta.seq_num, 3);
+        assert_eq!(meta.seq_num, 3.try_into().unwrap());
         assert_eq!(meta.justifications, [block_hash(2)].into_iter().collect());
         assert_eq!(meta.bonds_map, BTreeMap::from([(validator(2), 100)]));
         assert!(!meta.validated);

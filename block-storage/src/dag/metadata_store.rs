@@ -10,13 +10,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
+use rchain_shared::refined::BlockHeight;
 
 /// The in-memory DAG state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DagState {
     pub dag_set: BTreeSet<BlockHash>,
     pub child_map: BTreeMap<BlockHash, BTreeSet<BlockHash>>,
-    pub height_map: BTreeMap<i64, BTreeSet<BlockHash>>,
+    pub height_map: BTreeMap<BlockHeight, BTreeSet<BlockHash>>,
 }
 
 impl DagState {
@@ -34,7 +35,7 @@ impl DagState {
 pub struct BlockInfo {
     pub hash: BlockHash,
     pub parents: BTreeSet<BlockHash>,
-    pub block_num: i64,
+    pub block_num: BlockHeight,
     pub validation_failed: bool,
 }
 
@@ -77,10 +78,13 @@ pub fn validate_dag_state(state: &DagState) {
     let m = &state.height_map;
     let (min, max) = match (m.keys().next(), m.keys().next_back()) {
         (Some(first), Some(last)) => (*first, *last + 1),
-        _ => (0, 0),
+        _ => (
+            BlockHeight::try_from(0).unwrap(),
+            BlockHeight::try_from(0).unwrap(),
+        ),
     };
     assert!(
-        max - min == m.len() as i64,
+        max - min == i64::try_from(m.len()).unwrap_or(i64::MAX),
         "DAG store height map has numbers not in sequence."
     );
 }
@@ -109,7 +113,7 @@ mod tests {
         BlockInfo {
             hash,
             parents: parents.iter().copied().collect(),
-            block_num,
+            block_num: BlockHeight::try_from(block_num).unwrap(),
             validation_failed: false,
         }
     }
