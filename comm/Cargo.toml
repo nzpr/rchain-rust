@@ -13,6 +13,7 @@ http = "1"
 hyper-util = "0.1"
 prost = "0.13"
 rand = "0.8"
+roxmltree = "0.20"
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"] }
 rchain-crypto = { path = "../crypto" }
 rchain-models = { path = "../models" }

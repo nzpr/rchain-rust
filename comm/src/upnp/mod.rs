@@ -1,11 +1,12 @@
 //! UPnP port forwarding (port of `comm/UPnP.scala`).
 //!
-//! The weupnp-based gateway discovery (SSDP + SOAP) is deferred: [`discover`] returns no devices,
-//! and [`GatewayDevice`] abstracts the weupnp `GatewayDevice` API surface. The port-forwarding
-//! orchestration, port-mapping formatting, and IPv4 private-address classification are ported.
+//! The port-forwarding orchestration, port-mapping formatting, and IPv4 private-address
+//! classification are ported here; the weupnp SSDP/SOAP gateway discovery lives in [`gateway`].
 //!
 //! The cats-effect `Log[F]` is simplified to a single `FnMut(String)` callback (log level is folded
 //! into the message), matching the `WhoAmI` port.
+
+pub mod gateway;
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -76,10 +77,9 @@ pub struct UPnPDevices {
     pub valid_gateway: Option<Arc<dyn GatewayDevice>>,
 }
 
-/// Discover gateway devices (port of `UPnP.discover`). Deferred: the weupnp SSDP/SOAP protocol is
-/// not ported, so this returns no devices.
+/// Discover gateway devices (port of `UPnP.discover`).
 pub fn discover() -> UPnPDevices {
-    UPnPDevices::default()
+    gateway::discover()
 }
 
 /// Open `ports` via UPnP (port of `UPnP.assurePortForwarding`), returning the gateway external IP.
