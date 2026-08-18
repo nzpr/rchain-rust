@@ -30,21 +30,27 @@ pub type RhoHotStoreTrieAction =
 pub type RhoHistoryReader = dyn HistoryReader<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
 
 /// Extract the number + random state from a number-channel datum (port of `getNumberWithRnd`).
-pub fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> (i64, Blake2b512Random) {
-    assert_eq!(
-        par_with_rnd.pars.len(),
-        1,
-        "Number channel should contain single Int term."
-    );
-    let num = RhoNumber::unapply(&par_with_rnd.pars[0])
-        .expect("Number channel should contain single Int term.");
-    (num, par_with_rnd.random_state.clone())
+pub fn get_number_with_rnd(
+    par_with_rnd: &ListParWithRandom,
+) -> Result<(i64, Blake2b512Random), String> {
+    let num = match par_with_rnd.pars.as_slice() {
+        [p] => RhoNumber::unapply(p)
+            .ok_or_else(|| "Number channel should contain single Int term.".to_string())?,
+        _ => {
+            return Err(format!(
+                "Number channel should contain single Int term, found {} pars.",
+                par_with_rnd.pars.len()
+            ))
+        }
+    };
+    Ok((num, par_with_rnd.random_state.clone()))
 }
 
 /// Decode the random state from a raw number-channel datum (port of `decodeRnd`).
-pub fn decode_rnd(raw: &[u8]) -> Blake2b512Random {
-    let datum: Datum<ListParWithRandom> = decode_datum(raw).expect("decode number-channel datum");
-    datum.a.random_state
+pub fn decode_rnd(raw: &[u8]) -> Result<Blake2b512Random, String> {
+    let datum: Datum<ListParWithRandom> =
+        decode_datum(raw).map_err(|e| format!("decode number-channel datum: {e}"))?;
+    Ok(datum.a.random_state)
 }
 
 /// Encode a merged number-channel datum (port of `createDatumEncoded`).
@@ -81,21 +87,33 @@ pub async fn calculate_number_channel_merge(
         .get_data(channel_hash)
         .await
         .map_err(|e| e.to_string())?;
-    assert!(
-        data.len() <= 1,
-        "To calculate difference on a number channel, single value is expected."
-    );
-    let init_num = data.first().map(|d| get_number_with_rnd(&d.a).0).unwrap_or(0);
+    if data.len() > 1 {
+        return Err(
+            "To calculate difference on a number channel, single value is expected.".to_string(),
+        );
+    }
+    let init_num = match data.first() {
+        Some(d) => get_number_with_rnd(&d.a)?.0,
+        None => 0,
+    };
 
     let new_val = init_num + diff;
 
     let unique_added: BTreeSet<&Vec<u8>> = changes.added.iter().collect();
     let new_rnd = if unique_added.len() == 1 {
-        decode_rnd(&changes.added[0])
+        decode_rnd(
+            changes
+                .added
+                .first()
+                .ok_or_else(|| "Number channel merge has no added changes.".to_string())?,
+        )?
     } else {
         // Multiple branches: merge the distinct, sorted random generators.
-        let mut randoms: Vec<Blake2b512Random> =
-            changes.added.iter().map(|raw| decode_rnd(raw)).collect();
+        let mut randoms: Vec<Blake2b512Random> = changes
+            .added
+            .iter()
+            .map(|raw| decode_rnd(raw))
+            .collect::<Result<_, String>>()?;
         let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
         randoms.retain(|r| seen.insert(r.to_bytes()));
         randoms.sort_by_key(|r| r.to_bytes());
@@ -121,14 +139,15 @@ pub async fn read_mergeable_values(
     let mut out = BTreeMap::new();
     for ch in channel_hashes {
         let data = binary.get_data(*ch).await.map_err(|e| e.to_string())?;
-        assert!(
-            data.len() <= 1,
-            "To calculate difference on a number channel, single value is expected."
-        );
-        let num = data
-            .first()
-            .map(|d| get_number_with_rnd(&d.decoded.a).0)
-            .unwrap_or(0);
+        if data.len() > 1 {
+            return Err(
+                "To calculate difference on a number channel, single value is expected.".to_string(),
+            );
+        }
+        let num = match data.first() {
+            Some(d) => get_number_with_rnd(&d.decoded.a)?.0,
+            None => 0,
+        };
         out.insert(*ch, num);
     }
     Ok(out)

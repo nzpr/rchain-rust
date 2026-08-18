@@ -136,7 +136,10 @@ impl RuntimeManager {
         let mut init_values: BTreeMap<Blake2b256Hash, i64> = BTreeMap::new();
         for k in &keys {
             let data = history_reader.get_data(*k).await.map_err(|e| e.to_string())?;
-            let num = data.first().map(|d| get_number_with_rnd(&d.a).0).unwrap_or(0);
+            let num = match data.first() {
+                Some(d) => get_number_with_rnd(&d.a)?.0,
+                None => 0,
+            };
             init_values.insert(*k, num);
         }
         Ok(calculate_num_channel_diff(channels_data, &init_values))

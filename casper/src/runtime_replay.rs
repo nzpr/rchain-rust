@@ -356,10 +356,13 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         let consumed = self.consume_system_result(deploy).await?;
         match consumed {
             Some((_, data)) => match data.as_slice() {
-                [single] if single.pars.len() == 1 => {
-                    let result = process_bool_result(&single.pars[0]);
-                    Ok((result, eval_result))
-                }
+                [single] => match single.pars.as_slice() {
+                    [p] => {
+                        let result = process_bool_result(p);
+                        Ok((result, eval_result))
+                    }
+                    _ => Err("Unexpected system-deploy result".to_string()),
+                },
                 _ => Err("Unexpected system-deploy result".to_string()),
             },
             None => Err("Unable to consume results of system deploy".to_string()),
@@ -451,7 +454,10 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
                 "Number channel must have singleton value.",
             ));
         }
-        let num = get_number_with_rnd(&data[0].a);
+        let datum = data
+            .first()
+            .ok_or_else(|| ReplayFailure::internal_error("Number channel must have singleton value."))?;
+        let num = get_number_with_rnd(&datum.a).map_err(ReplayFailure::internal_error)?;
         let ch_hash = hash_channel(chan);
         Ok(Some((ch_hash, num)))
     }
@@ -580,14 +586,15 @@ impl ReplayRuntime for ReportingRuntime {
 }
 
 /// Extract the numeric value from a number-channel datum (port of `getNumberWithRnd`).
-fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> i64 {
-    assert_eq!(
-        par_with_rnd.pars.len(),
-        1,
-        "Number channel should contain single Int term."
-    );
-    RhoNumber::unapply(&par_with_rnd.pars[0])
-        .expect("Number channel should contain single Int term.")
+fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> Result<i64, String> {
+    match par_with_rnd.pars.as_slice() {
+        [p] => RhoNumber::unapply(p)
+            .ok_or_else(|| "Number channel should contain single Int term.".to_string()),
+        _ => Err(format!(
+            "Number channel should contain single Int term, found {} pars.",
+            par_with_rnd.pars.len()
+        )),
+    }
 }
 
 /// The phlo refunded after a deploy (port of `ProcessedDeploy.refundAmount`).

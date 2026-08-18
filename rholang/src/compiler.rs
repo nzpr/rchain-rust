@@ -200,8 +200,12 @@ impl<T: Clone> FreeMap<T> {
         bindings.iter().fold(self.clone(), |m, b| m.put(b))
     }
 
-    /// Merge another free map, shifting its levels by `next_level`; returns the shadowed names.
-    pub fn merge(&self, free_map: &FreeMap<T>) -> (FreeMap<T>, Vec<(String, SourcePosition)>) {
+    /// Merge another free map, shifting its levels by `next_level`; returns the shadowed names as
+    /// `(name, first_use, second_use)` so the caller does not need a second (fallible) lookup.
+    pub fn merge(
+        &self,
+        free_map: &FreeMap<T>,
+    ) -> (FreeMap<T>, Vec<(String, SourcePosition, SourcePosition)>) {
         let mut acc = self.level_bindings.clone();
         let mut shadowed = Vec::new();
         for (name, FreeContext { level, typ, source_position }) in &free_map.level_bindings {
@@ -213,8 +217,12 @@ impl<T: Clone> FreeMap<T> {
                     source_position: source_position.clone(),
                 },
             );
-            if self.level_bindings.contains_key(name) {
-                shadowed.push((name.clone(), source_position.clone()));
+            if let Some(first) = self.level_bindings.get(name) {
+                shadowed.push((
+                    name.clone(),
+                    first.source_position.clone(),
+                    source_position.clone(),
+                ));
             }
         }
         let mut wildcards = self.wildcards.clone();

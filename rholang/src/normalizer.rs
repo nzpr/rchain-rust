@@ -1188,11 +1188,11 @@ fn normalize_input(
     let mut receive_binds_free_map = FreeMap::<VarSort>::empty();
     for fm in receive_bind_free_maps {
         let (merged, shadowed) = receive_binds_free_map.merge(&fm);
-        if let Some((var, sp)) = shadowed.first() {
+        if let Some((var, first_use, second_use)) = shadowed.first() {
             return Err(RholangError::UnexpectedReuseOfNameContextFree {
                 var_name: var.clone(),
-                first_use: receive_binds_free_map.get(var).unwrap().source_position,
-                second_use: sp.clone(),
+                first_use: first_use.clone(),
+                second_use: second_use.clone(),
             });
         }
         receive_binds_free_map = merged;
