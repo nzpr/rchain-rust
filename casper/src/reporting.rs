@@ -179,7 +179,14 @@ async fn replay_deploys(
     let mut deploy_results = Vec::new();
     for (i, term) in block.state.deploys.iter().enumerate() {
         let r = ops
-            .replay_deploy_e(term, rand.split_byte(i as u8), with_cost_accounting)
+            .replay_deploy_e(
+                term,
+                rand.split_byte(
+                    u8::try_from(i)
+                        .map_err(|_| "deploy count exceeds 255".to_string())?,
+                ),
+                with_cost_accounting,
+            )
             .await;
         let events = match r {
             Ok(_) => runtime.get_report(),
@@ -195,7 +202,13 @@ async fn replay_deploys(
     let mut system_results = Vec::new();
     for (i, sd) in block.state.system_deploys.iter().enumerate() {
         let r = ops
-            .replay_block_system_deploy(sd, rand.split_byte((terms_len + i) as u8))
+            .replay_block_system_deploy(
+                sd,
+                rand.split_byte(
+                    u8::try_from(terms_len + i)
+                        .map_err(|_| "deploy count exceeds 255".to_string())?,
+                ),
+            )
             .await;
         let events = match r {
             Ok(_) => runtime.get_report(),

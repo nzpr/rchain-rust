@@ -216,7 +216,9 @@ impl RuntimeManager {
         for (i, d) in terms.iter().enumerate() {
             // The user-deploy split index (1) matches `processDeployWithMergeableData`, so the
             // genesis play random agrees with the replay (`RuntimeReplayOps`).
-            let r = rand.split_byte(i as u8).split_byte(1);
+            let r = rand
+                .split_byte(u8::try_from(i).map_err(|e| e.to_string())?)
+                .split_byte(1);
             let (processed, eval_result) = self.process_deploy(d, &r).await?;
             results.push(UserDeployRuntimeResult {
                 deploy: processed,
@@ -293,7 +295,7 @@ impl RuntimeManager {
         self.runtime.reset(*start_hash).await.map_err(|e| e)?;
         let mut results = Vec::new();
         for (i, d) in terms.iter().enumerate() {
-            let r = rand.split_byte(i as u8);
+            let r = rand.split_byte(u8::try_from(i).map_err(|e| e.to_string())?);
             results.push(self.play_deploy_with_cost_accounting(d, &r).await?);
         }
         let checkpoint = self.runtime.create_checkpoint().await.map_err(|e| e)?;

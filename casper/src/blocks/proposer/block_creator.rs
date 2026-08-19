@@ -91,10 +91,14 @@ impl BlockCreator {
             let mut sorted_to_slash: Vec<&Validator> = to_slash.iter().collect();
             sorted_to_slash.sort();
             for (i, v) in sorted_to_slash.into_iter().enumerate() {
-                let seed = rand.split_byte((deploys.len() + i) as u8);
+                let seed = rand.split_byte(
+                    u8::try_from(deploys.len() + i).map_err(|e| e.to_string())?,
+                );
                 system_deploys.push(SystemDeploy::slash(v, seed));
             }
-            let close_seed = rand.split_byte((deploys.len() + to_slash.len()) as u8);
+            let close_seed = rand.split_byte(
+                u8::try_from(deploys.len() + to_slash.len()).map_err(|e| e.to_string())?,
+            );
             system_deploys.push(SystemDeploy::close_block(close_seed));
 
             // Pooled deploys filtered to the selected ids.

@@ -7,12 +7,13 @@
 use rchain_crypto::public_key::PublicKey;
 use rchain_rholang::util::rev_address::RevAddress;
 use rchain_shared::base16;
+use rchain_shared::refined::NonNegI64;
 
 /// A genesis validator (port of `contracts.Validator`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Validator {
     pub pk: PublicKey,
-    pub stake: i64,
+    pub stake: NonNegI64,
 }
 
 /// A genesis REV vault (port of `contracts.Vault`).
@@ -45,7 +46,7 @@ impl ProofOfStake {
             .iter()
             .map(|v| {
                 let pk = base16::encode(v.pk.bytes());
-                format!(" \"{}\".hexToBytes() : {}", pk, v.stake)
+                format!(" \"{}\".hexToBytes() : {}", pk, i64::from(v.stake))
             })
             .collect();
         format!("{{{}}}", entries.join(", "))
@@ -116,7 +117,7 @@ mod tests {
     fn validator(byte: u8, stake: i64) -> Validator {
         Validator {
             pk: PublicKey::new(vec![byte; 65]),
-            stake,
+            stake: NonNegI64::try_from(stake).unwrap(),
         }
     }
 

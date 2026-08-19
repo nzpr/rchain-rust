@@ -1223,9 +1223,9 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             let r = if terms.len() == 1 {
                 rand.clone()
             } else if terms.len() > 256 {
-                rand.split_short(i as u16)
+                rand.split_short(u16::try_from(i).map_err(|e| RholangError::ReduceError(e.to_string()))?)
             } else {
-                rand.split_byte(i as u8)
+                rand.split_byte(u8::try_from(i).map_err(|e| RholangError::ReduceError(e.to_string()))?)
             };
             Box::pin(self.eval_term(term, env, &r, cost)).await?;
         }

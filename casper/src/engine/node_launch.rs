@@ -67,7 +67,7 @@ pub async fn create_genesis_block(
     let vaults = vault_parser::parse(Path::new(vaults_path))?;
 
     // Initial validators.
-    let bonds = bonds_parser::parse_or_generate(Path::new(bonds_path), autogen_shard_size);
+    let bonds = bonds_parser::parse_or_generate(Path::new(bonds_path), autogen_shard_size)?;
     let validators: Vec<Validator> = bonds
         .into_iter()
         .map(|(pk, stake)| Validator { pk, stake })

@@ -127,13 +127,26 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         let mut mergeable: Vec<NumberChannelsDiff> = Vec::new();
         for (i, term) in terms.iter().enumerate() {
             mergeable.push(
-                self.replay_deploy_e(term, rand.split_byte(i as u8), with_cost_accounting)
+                self.replay_deploy_e(
+                    term,
+                    rand.split_byte(
+                        u8::try_from(i)
+                            .map_err(|_| ReplayFailure::internal_error("deploy count exceeds 255".to_string()))?,
+                    ),
+                    with_cost_accounting,
+                )
                     .await?,
             );
         }
         for (i, sd) in system_deploys.iter().enumerate() {
             mergeable.push(
-                self.replay_block_system_deploy(sd, rand.split_byte((terms.len() + i) as u8))
+                self.replay_block_system_deploy(
+                    sd,
+                    rand.split_byte(
+                        u8::try_from(terms.len() + i)
+                            .map_err(|_| ReplayFailure::internal_error("deploy count exceeds 255".to_string()))?,
+                    ),
+                )
                     .await?,
             );
         }

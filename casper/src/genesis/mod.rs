@@ -34,17 +34,11 @@ pub struct Genesis {
 }
 
 /// Build the bonds map (validator pubkey → stake) from the PoS validators (port of `buildBondsMap`).
-fn build_bonds_map(
-    proof_of_stake: &ProofOfStake,
-) -> Result<BTreeMap<ModelsValidator, NonNegI64>, String> {
+fn build_bonds_map(proof_of_stake: &ProofOfStake) -> BTreeMap<ModelsValidator, NonNegI64> {
     proof_of_stake
         .validators
         .iter()
-        .map(|v| {
-            let stake = NonNegI64::try_from(v.stake)
-                .map_err(|_| "negative genesis validator stake".to_string())?;
-            Ok((ModelsValidator::from_slice(v.pk.bytes()), stake))
-        })
+        .map(|v| (ModelsValidator::from_slice(v.pk.bytes()), v.stake))
         .collect()
 }
 
@@ -73,7 +67,7 @@ fn create_block_with_processed_deploys(
         pre_state_hash,
         post_state_hash,
         Vec::new(),
-        build_bonds_map(&genesis.proof_of_stake)?,
+        build_bonds_map(&genesis.proof_of_stake),
         BTreeSet::new(),
         state,
     ))
@@ -170,11 +164,11 @@ mod tests {
             validators: vec![
                 Validator {
                     pk: PublicKey::new(vec![1; 65]),
-                    stake: 10,
+                    stake: 10.try_into().unwrap(),
                 },
                 Validator {
                     pk: PublicKey::new(vec![2; 65]),
-                    stake: 20,
+                    stake: 20.try_into().unwrap(),
                 },
             ],
             epoch_length: 0,
@@ -188,7 +182,7 @@ mod tests {
 
     #[test]
     fn build_bonds_map_extracts_stakes() {
-        let bonds = build_bonds_map(&pos()).unwrap();
+        let bonds = build_bonds_map(&pos());
         assert_eq!(bonds.len(), 2);
         assert_eq!(i64::from(bonds[&ModelsValidator::from_slice(&[1; 65])]), 10);
         assert_eq!(i64::from(bonds[&ModelsValidator::from_slice(&[2; 65])]), 20);

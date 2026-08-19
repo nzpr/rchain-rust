@@ -180,7 +180,7 @@ pub fn generate_rev_account_from_wallet_and_bond(
             .get(&pos_addr)
             .cloned()
             .unwrap_or_else(|| pos_vault.clone());
-        account_map.insert(pos_addr.clone(), current.receive_rev(*bond_amount));
+        account_map.insert(pos_addr.clone(), current.receive_rev(i64::from(*bond_amount)));
     }
     Ok(account_map)
 }
