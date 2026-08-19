@@ -5,6 +5,7 @@
 
 use rchain_models::ast::{AlwaysEqual, Par, Receive, ReceiveBind, Send};
 use rchain_models::par_ops::{par_concat, prepend_receive, prepend_send};
+use rchain_models::types::FreeCount;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_rspace::internal::{Datum, WaitingContinuation};
 
@@ -84,7 +85,7 @@ fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], chan
                 patterns: pattern.patterns.iter().map(|p| p.clone().quote()).collect(),
                 source: Box::new(channel.clone().quote()),
                 remainder: pattern.remainder.clone().map(Box::new),
-                free_count: pattern.free_count,
+                free_count: FreeCount::from_nonneg(pattern.free_count),
             })
             .collect();
         let (body, bind_count) = match &wk.continuation {

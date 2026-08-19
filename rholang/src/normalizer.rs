@@ -13,6 +13,7 @@ use rchain_models::ast::{
     AlwaysEqual, Bundle, Connective, ConnectiveBody, EList, ETuple, Expr, Match, MatchCase, New,
     NameSort, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
 };
+use rchain_models::types::FreeCount;
 use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
     prepend_new, prepend_receive, prepend_send, single_bundle, single_connective,
@@ -704,7 +705,7 @@ fn normalize_match(
             MatchCase {
                 pattern: Box::new(pattern_result.par.clone().quote()),
                 source: Box::new(case_body_result.par.clone()),
-                free_count: bound_count,
+                free_count: FreeCount::from_nonneg(bound_count),
             },
         );
         locally_free = union_free(&locally_free, &pattern_result.par.locally_free.0);
@@ -805,7 +806,7 @@ fn normalize_contr(
             patterns: formal_pars.into_iter().map(|p| p.quote()).collect(),
             source: Box::new(name_result.par.clone().quote()),
             remainder: remainder_var.map(Box::new),
-            free_count: bound_count,
+            free_count: FreeCount::from_nonneg(bound_count),
         }],
         body: Box::new(body_result.par.clone()),
         persistent: true,
@@ -963,12 +964,12 @@ fn normalize_if(
             MatchCase {
                 pattern: Box::new(from_expr(Expr::GBool(true)).quote()),
                 source: Box::new(true_result.par.clone()),
-                free_count: 0,
+                free_count: FreeCount::ZERO,
             },
             MatchCase {
                 pattern: Box::new(from_expr(Expr::GBool(false)).quote()),
                 source: Box::new(false_result.par.clone()),
-                free_count: 0,
+                free_count: FreeCount::ZERO,
             },
         ],
         locally_free: AlwaysEqual(union_free(
@@ -1174,7 +1175,7 @@ fn normalize_input(
             patterns: pattern_pars.into_iter().map(|p| p.quote()).collect(),
             source: Box::new(source_pars[binds.len()].clone().quote()),
             remainder: opt_var.map(Box::new),
-            free_count,
+            free_count: FreeCount::from_nonneg(free_count),
         };
         binds.push((rb, pattern_free));
     }
@@ -1285,7 +1286,7 @@ fn normalize_let(
         cases: vec![MatchCase {
             pattern: Box::new(pattern_par.par.clone().quote()),
             source: Box::new(continuation.par.clone()),
-            free_count: pattern_bound_count,
+            free_count: FreeCount::from_nonneg(pattern_bound_count),
         }],
         locally_free: AlwaysEqual(union_free(
             &union_free(&value_par.par.locally_free.0, &pattern_par.par.locally_free.0),

@@ -1323,7 +1323,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 BindPattern {
                     patterns: subst_patterns.into_iter().map(|p| p.eval()).collect(),
                     remainder: rb.remainder.as_deref().cloned(),
-                    free_count: rb.free_count,
+                    free_count: i32::from(rb.free_count),
                 },
                 q,
             ));
@@ -1443,7 +1443,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             let pattern = substitute_par(&case.pattern, 1, env)?;
             if let Some(free_map) = spatial_match_result(target, &pattern.eval())? {
                 let mut new_env = env.clone();
-                for e in 0..case.free_count {
+                for e in 0..i32::from(case.free_count) {
                     new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
                 }
                 return self.eval(&case.source, &new_env, rand, cost).await;

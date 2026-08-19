@@ -263,7 +263,7 @@ pub fn substitute_match_no_sort(
         .cases
         .iter()
         .map(|case| {
-            let par = substitute_par_no_sort(&case.source, depth, &env.shift(case.free_count))?;
+            let par = substitute_par_no_sort(&case.source, depth, &env.shift(i32::from(case.free_count)))?;
             let sub_case = substitute_par_no_sort(&case.pattern, depth + 1, env)?;
             Ok(MatchCase {
                 pattern: Box::new(sub_case),

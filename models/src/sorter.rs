@@ -12,6 +12,7 @@ use std::cmp::Ordering;
 use num_bigint::BigInt;
 
 use crate::ast::*;
+use crate::types::FreeCount;
 
 // --- Score constants (mirroring `ScoreTree.Score`) ---------------------------------------------
 
@@ -366,7 +367,7 @@ fn sort_match_case(case: &MatchCase) -> ScoredTerm<MatchCase> {
         score: Tree::Node(vec![
             sorted_pattern.score,
             sorted_body.score,
-            leaf_i64(case.free_count as i64),
+            leaf_i64(i64::from(i32::from(case.free_count))),
         ]),
     }
 }
@@ -1235,7 +1236,7 @@ mod tests {
         let match_case = |p: i64, s: i64| MatchCase {
             pattern: Box::new(g_int(p).quote()),
             source: Box::new(g_int(s)),
-            free_count: 0,
+            free_count: FreeCount::ZERO,
         };
         let par_match: Par = Par {
             matches: vec![

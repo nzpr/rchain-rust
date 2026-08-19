@@ -5,6 +5,8 @@
 //! name-vs-process classification, the `Closed` well-formedness refinement (Law 6), and the
 //! de Bruijn context judgment (`varSort`). It is a hardening of the port — no behavior change.
 
+use serde::{Deserialize, Serialize};
+
 use crate::ast::{
     Bundle, Connective, Expr, GUnforgeable, Match, MatchCase, New, Par, Receive, ReceiveBind, Send,
     Sort, Var,
@@ -365,8 +367,16 @@ impl From<WellScoped> for Par {
 /// The number of free variables a pattern binds (Law 5, `BindsAtMostOnce`): a non-negative count,
 /// carried by the `free_count` fields of `ReceiveBind`/`MatchCase`. The normalizer computes it as the
 /// number of *distinct* free variables in the pattern, so each is bound at most once.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "i32", into = "i32")]
 pub struct FreeCount(i32);
+
+impl TryFrom<i32> for FreeCount {
+    type Error = String;
+    fn try_from(n: i32) -> Result<Self, Self::Error> {
+        FreeCount::new(n).ok_or_else(|| format!("negative free-count: {n}"))
+    }
+}
 
 impl FreeCount {
     /// The empty-pattern count.

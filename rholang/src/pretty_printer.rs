@@ -180,7 +180,7 @@ impl PrettyPrinter {
             if i != r.binds.len() - 1 {
                 binds_string.push_str("  & ");
             }
-            total_free += bind.free_count;
+            total_free += i32::from(bind.free_count);
         }
 
         let body_printer = self.with(|c| c.bound_shift += total_free);
@@ -440,7 +440,7 @@ impl PrettyPrinter {
         });
         let pattern = pattern_printer.build_string(&case.pattern);
         let source = self
-            .with(|c| c.bound_shift += case.free_count)
+            .with(|c| c.bound_shift += i32::from(case.free_count))
             .build_par(&case.source, indent + 1);
         format!(
             "{pattern} => {{\n{}{source}\n{}}}",

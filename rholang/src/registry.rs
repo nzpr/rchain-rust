@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use rchain_models::ast::{AlwaysEqual, Expr, New, Par, Receive, ReceiveBind, Send, Var};
 use rchain_models::par_ops::from_expr;
+use rchain_models::types::FreeCount;
 
 use crate::system_processes::FixedChannels;
 
@@ -95,7 +96,7 @@ fn bootstrap(channel: &Par) -> New {
                     patterns: vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0)))).quote()],
                     source: Box::new(channel.clone().quote()),
                     remainder: None,
-                    free_count: 1,
+                    free_count: FreeCount::from_nonneg(1),
                 }],
                 body: Box::new(Par {
                     sends: vec![Send {

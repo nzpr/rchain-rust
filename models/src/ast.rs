@@ -11,6 +11,8 @@ use std::marker::PhantomData;
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 
+use crate::types::FreeCount;
+
 /// serde helpers encoding byte vectors as lowercase hex (the Scala `encodeByteString`/
 /// `decodeByteString` via `Base16`).
 pub(crate) mod hex_serde {
@@ -212,7 +214,7 @@ pub struct ReceiveBind {
     pub patterns: Vec<Name>,
     pub source: Box<Name>,
     pub remainder: Option<Box<Var>>,
-    pub free_count: i32,
+    pub free_count: FreeCount,
 }
 
 /// A receive: `for (binds) { body }`.
@@ -242,7 +244,7 @@ pub struct New {
 pub struct MatchCase {
     pub pattern: Box<Name>,
     pub source: Box<Par>,
-    pub free_count: i32,
+    pub free_count: FreeCount,
 }
 
 /// A `match target { cases }`.

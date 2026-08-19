@@ -15,6 +15,7 @@ use rchain_shared::serialize::Serialize;
 use crate::ast as a;
 use crate::errors::ModelsError;
 use crate::proto::rholang as p;
+use crate::types::FreeCount;
 use crate::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
 
 // --- TypeMapper encodings -----------------------------------------------------------------------
@@ -425,7 +426,7 @@ pub fn receive_bind_to_proto(rb: &a::ReceiveBind) -> p::ReceiveBind {
         patterns: rb.patterns.iter().map(|p| par_to_proto(p)).collect(),
         source: Some(par_to_proto(rb.source.as_ref())),
         remainder: rb.remainder.as_deref().map(var_to_proto),
-        free_count: rb.free_count,
+        free_count: i32::from(rb.free_count),
     }
 }
 pub fn receive_bind_from_proto(p: &p::ReceiveBind) -> Result<a::ReceiveBind, ModelsError> {Ok(
@@ -433,7 +434,7 @@ pub fn receive_bind_from_proto(p: &p::ReceiveBind) -> Result<a::ReceiveBind, Mod
         patterns: p.patterns.iter().map(|p| par_from_proto(p)).collect::<Result<Vec<_>, ModelsError>>()?,
         source: Box::new(par_from_proto::<a::NameSort>(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
         remainder: p.remainder.as_ref().map(var_from_proto).map(Box::new),
-        free_count: p.free_count,
+        free_count: FreeCount::try_from(p.free_count).map_err(ModelsError::Decode)?,
     }
 )}
 
@@ -485,14 +486,14 @@ pub fn match_case_to_proto(mc: &a::MatchCase) -> p::MatchCase {
     p::MatchCase {
         pattern: Some(par_to_proto(mc.pattern.as_ref())),
         source: Some(par_to_proto(mc.source.as_ref())),
-        free_count: mc.free_count,
+        free_count: i32::from(mc.free_count),
     }
 }
 pub fn match_case_from_proto(p: &p::MatchCase) -> Result<a::MatchCase, ModelsError> {Ok(
     a::MatchCase {
         pattern: Box::new(par_from_proto::<a::NameSort>(p.pattern.as_ref().ok_or(ModelsError::Malformed("pattern"))?)?),
         source: Box::new(par_from_proto(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
-        free_count: p.free_count,
+        free_count: FreeCount::try_from(p.free_count).map_err(ModelsError::Decode)?,
     }
 )}
 
