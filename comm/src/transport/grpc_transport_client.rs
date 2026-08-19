@@ -100,7 +100,9 @@ impl TransportLayer for GrpcTransportClient {
     async fn send(&self, peer: &PeerNode, msg: Protocol) -> CommErr<()> {
         let channel = self.get_channel(peer).await?;
         let mut client = TransportLayerClient::new(channel);
-        grpc_transport::send(&mut client, peer, msg).await
+        tokio::time::timeout(DEFAULT_SEND_TIMEOUT, grpc_transport::send(&mut client, peer, msg))
+            .await
+            .map_err(|_| CommError::TimeOut)?
     }
 
     async fn broadcast(&self, peers: &[PeerNode], msg: Protocol) -> Vec<CommErr<()>> {

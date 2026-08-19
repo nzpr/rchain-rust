@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rchain_shared::refined::BlockHeight;
+
 use super::finalizer::Message;
 
 fn msg_at<M, S>(msg_map: &BTreeMap<M, Message<M, S>>, id: &M) -> Option<Message<M, S>>
@@ -35,16 +37,18 @@ where
     upper_seen.difference(&lower_seen).cloned().collect()
 }
 
-fn fringe_height<M, S>(msg_map: &BTreeMap<M, Message<M, S>>, j: &Message<M, S>) -> i64
+/// The max height of a justification's fringe members, or `None` when the fringe is empty (`None`
+/// sorts below any `Some` height, preserving the previous `-1` sentinel ordering).
+fn fringe_height<M, S>(msg_map: &BTreeMap<M, Message<M, S>>, j: &Message<M, S>) -> Option<BlockHeight>
 where
     M: Ord + Clone,
     S: Clone,
 {
     j.fringe
         .iter()
-        .filter_map(|id| msg_at(msg_map, id)).map(|m| m.height)
+        .filter_map(|id| msg_at(msg_map, id))
+        .map(|m| m.height)
         .max()
-        .unwrap_or(-1)
 }
 
 /// Latest fringe seen from justifications (may be empty).
@@ -107,13 +111,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rchain_shared::refined::SeqNum;
 
     fn msg(id: i32, fringe: &[i32], seen: &[i32]) -> Message<i32, i32> {
         Message {
             id,
-            height: 0,
+            height: BlockHeight::zero(),
             sender: 0,
-            sender_seq: 0,
+            sender_seq: SeqNum::zero(),
             bonds_map: BTreeMap::new(),
             parents: BTreeSet::new(),
             fringe: fringe.iter().copied().collect(),

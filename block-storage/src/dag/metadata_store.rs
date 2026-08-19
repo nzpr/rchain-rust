@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
-use rchain_shared::refined::BlockHeight;
+use rchain_shared::refined::{BlockHeight, NonNegI64};
 
 /// The in-memory DAG state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +77,7 @@ pub fn add_block_to_dag_state(block: &BlockInfo, state: &DagState) -> DagState {
 pub fn validate_dag_state(state: &DagState) {
     let m = &state.height_map;
     let (min, max) = match (m.keys().next(), m.keys().next_back()) {
-        (Some(first), Some(last)) => (*first, *last + 1),
+        (Some(first), Some(last)) => (*first, *last + NonNegI64::one()),
         _ => (BlockHeight::zero(), BlockHeight::zero()),
     };
     assert!(

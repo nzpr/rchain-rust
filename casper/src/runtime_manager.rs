@@ -187,7 +187,10 @@ impl RuntimeManager {
         let processed = ProcessedDeploy {
             deploy: deploy.clone(),
             cost: PCost {
-                cost: u64::try_from(eval_result.cost.value).unwrap_or(0),
+                // `PCost.cost` is a protobuf `uint64`; a negative (over-charged) cost is an
+                // accounting anomaly. Reject it rather than silently clamping to 0.
+                cost: u64::try_from(eval_result.cost.value)
+                    .map_err(|_| format!("deploy cost is negative: {}", eval_result.cost.value))?,
             },
             deploy_log,
             is_failed: !succeeded,

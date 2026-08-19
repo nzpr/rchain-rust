@@ -211,6 +211,7 @@ pub struct NodeProgram {
     port_http: Port,
     port_admin_http: Port,
     port_grpc_internal: Port,
+    grpc_max_recv_message_size: usize,
     protocol_server: Option<ProtocolServer>,
     status_provider: Option<StatusProvider>,
 }
@@ -228,6 +229,7 @@ impl NodeProgram {
             port_http,
             port_admin_http,
             port_grpc_internal,
+            grpc_max_recv_message_size,
             protocol_server,
             status_provider,
         } = self;
@@ -236,7 +238,7 @@ impl NodeProgram {
             .parse::<std::net::SocketAddr>()
             .map_err(|e| e.to_string())?;
 
-        let grpc = tokio::spawn(grpc_services.serve(grpc_addr));
+        let grpc = tokio::spawn(grpc_services.serve(grpc_addr, grpc_max_recv_message_size));
 
         let http = tokio::spawn({
             let host = host.clone();
@@ -881,6 +883,8 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
             port_admin_http: Port::try_from(conf.api_server.port_admin_http)
                 .map_err(|e| e.to_string())?,
             port_grpc_internal: Port::try_from(conf.api_server.port_grpc_internal)
+                .map_err(|e| e.to_string())?,
+            grpc_max_recv_message_size: usize::try_from(conf.api_server.grpc_max_recv_message_size)
                 .map_err(|e| e.to_string())?,
             protocol_server: None,
             status_provider: None,

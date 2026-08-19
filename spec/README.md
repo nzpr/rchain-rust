@@ -19,8 +19,8 @@ cd spec
 lake build        # compiles the formalization
 ```
 
-Phase 0 is dependency-free (no Mathlib) so it builds offline and fast. Mathlib is added in Phase 1
-when proofs need `Multiset`/`Finset`/`Order`.
+The build requires **Mathlib** (pinned to `v4.12.0` in `lakefile.toml`); the `.lean` files already
+import `Mathlib.Data.*`/`Mathlib.Order.*` for `Multiset`/`Finset`/`Order`.
 
 ## Layout
 

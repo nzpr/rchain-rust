@@ -265,6 +265,17 @@ round-trip tests are excluded). The typed fix is either a proven-total refinemen
 > `getUnsafe` helpers in `sdk/src/primitive.rs` (`MapOps::get_unsafe` / `TryOps::get_unsafe`), which
 > are the explicit Scala `getUnsafe` escape hatch (panic by design, not silent partiality). The
 > storage-layer fallibility (`KeyValueStore`/`KeyValueTypedStore` → `Result`) is part of this pass.
+>
+> **Machine gate.** `tools/audit-type-system.sh` is the authoritative, re-runnable gate: it strips
+> `#[cfg(test)]` blocks (brace-depth aware), then fails on production `.unwrap()`/`.expect(`/`panic!`/
+> `unreachable!`/`todo!`/`unimplemented!` (whitelisting `sdk/src/primitive.rs` `getUnsafe` and the
+> Scala-oracle `TODO` stubs in `node/src/dag/implementation.rs` + `regex/src/regex_pattern.rs`),
+> `unsafe {`, and silent defaulting of a fallible numeric conversion (`try_into()…unwrap[_or]`,
+> `try_from(…)…unwrap_or`, `parse(…)…unwrap_or`). Its `cast`/`get` classes are candidate finders.
+> The gate is green (`panic`/`unsafe`/`silent` clean). The full adversarial-audit findings — the
+> fixed type-system violations, the *faithful* casts (Scala `Int`/`Long`/`Byte` fixed-width ports
+> that must **not** be "fixed"), the ρ-calculus mirroring notes, the red-team register, and the
+> Scala-deviation register — are recorded in [`AUDIT.md`](AUDIT.md).
 
 ---
 

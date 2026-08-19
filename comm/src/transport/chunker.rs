@@ -39,7 +39,9 @@ pub fn chunk_it(
     };
 
     let buffer = 2 * 1024;
-    let chunk_size = max_message_size - buffer;
+    let chunk_size = max_message_size
+        .checked_sub(buffer)
+        .ok_or_else(|| format!("max_message_size {max_message_size} is too small (must exceed {buffer})"))?;
     let mut chunks = vec![header];
     for data in content.chunks(chunk_size) {
         chunks.push(Chunk {

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
 use rchain_sdk::consensus::is_super_majority;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 
 use super::message_map;
 
@@ -14,12 +15,17 @@ use super::message_map;
 ///
 /// `hashCode` is overridden to `id.hashCode()` in the Scala (identity for set/map membership);
 /// the Rust `Hash` impl mirrors that. `Eq`/`Ord` remain full structural comparison.
+///
+/// `height`/`sender_seq` carry their non-negativity structurally (`BlockHeight`/`SeqNum`). The
+/// `bonds_map` value is a *stake* amount (non-negative by the PoS invariant); it remains `i64`
+/// here because stake is a distinct domain quantity from a block height — see the type-erasure
+/// catalogue for the outstanding `Bond`/`NonNegI64` refinement.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Message<M, S> {
     pub id: M,
-    pub height: i64,
+    pub height: BlockHeight,
     pub sender: S,
-    pub sender_seq: i64,
+    pub sender_seq: SeqNum,
     pub bonds_map: BTreeMap<S, i64>,
     pub parents: BTreeSet<M>,
     pub fringe: BTreeSet<M>,
@@ -204,9 +210,9 @@ mod tests {
     fn msg(id: i32, sender: i32, sender_seq: i64, parents: &[i32], seen: &[i32]) -> Message<i32, i32> {
         Message {
             id,
-            height: 0,
+            height: BlockHeight::zero(),
             sender,
-            sender_seq,
+            sender_seq: SeqNum::try_from(sender_seq).unwrap(),
             bonds_map: BTreeMap::new(),
             parents: parents.iter().copied().collect(),
             fringe: BTreeSet::new(),

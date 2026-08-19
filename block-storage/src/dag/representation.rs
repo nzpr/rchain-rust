@@ -8,7 +8,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::fringe_data::FringeData;
 use rchain_models::validator::Validator;
 use rchain_shared::base16;
-use rchain_shared::refined::BlockHeight;
+use rchain_shared::refined::{BlockHeight, NonNegI64};
 
 use crate::errors::StorageError;
 
@@ -42,7 +42,7 @@ impl DagRepresentation {
         self.height_map
             .keys()
             .last()
-            .map(|h| i64::from(*h + 1))
+            .map(|h| i64::from(*h + NonNegI64::one()))
             .unwrap_or(0)
     }
 

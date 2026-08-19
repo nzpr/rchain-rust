@@ -14,7 +14,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_models::validator::Validator;
-use rchain_shared::refined::BlockHeight;
+use rchain_shared::refined::{BlockHeight, NonNegI64};
 use rchain_sdk::consensus::is_super_majority;
 
 use super::block_creator::BlockCreator;
@@ -182,7 +182,7 @@ impl Proposer {
                         .latest_msgs
                         .iter()
                         .find(|m| m.sender == sender)
-                        .map(|m| m.sender_seq)
+                        .map(|m| i64::from(m.sender_seq))
                         .unwrap_or(-1)
                 })
             })
@@ -328,7 +328,7 @@ where
         .iter()
         .map(|m| m.block_num)
         .max()
-        .map(|m| m + 1)
+        .map(|m| m + NonNegI64::one())
         .unwrap_or_else(BlockHeight::zero);
     let parent_hashes: Vec<BlockHash> =
         pre_state.justifications.iter().map(|m| m.block_hash).collect();

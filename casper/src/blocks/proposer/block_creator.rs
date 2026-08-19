@@ -10,7 +10,7 @@ use rchain_models::casper::protocol::casper_message::{
     ProcessedDeploy, ProcessedSystemDeploy, RholangState, SignedDeployData,
 };
 use rchain_models::validator::Validator;
-use rchain_shared::refined::{BlockHeight, SeqNum};
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 use rchain_rholang::system_processes::BlockData;
 
 use crate::block_random_seed::BlockRandomSeed;
@@ -60,7 +60,7 @@ impl BlockCreator {
             .iter()
             .map(|m| m.block_num)
             .max()
-            .map(|m| m + 1)
+            .map(|m| m + NonNegI64::one())
             .unwrap_or_else(BlockHeight::zero);
         let creators_pk = self.id.public_key.clone();
         let creators_validator = Validator::from_slice(creators_pk.bytes());
@@ -68,7 +68,7 @@ impl BlockCreator {
             .justifications
             .iter()
             .find(|m| m.sender == creators_validator)
-            .map(|m| m.seq_num + 1)
+            .map(|m| m.seq_num + NonNegI64::one())
             .unwrap_or_else(SeqNum::zero);
         let block_data = BlockData {
             block_number: i64::from(block_num),

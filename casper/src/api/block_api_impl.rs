@@ -469,11 +469,11 @@ impl BlockApi for BlockApiImpl {
             .dag_message_state
             .msg_map
             .values()
-            .filter(|m| m.height >= lowest_height)
+            .filter(|m| i64::from(m.height) >= lowest_height)
             .map(|m| ValidatorBlock {
                 id: to_hash_str(m.id.as_bytes()),
                 sender: to_hash_str(m.sender.as_bytes()),
-                height: m.height,
+                height: i64::from(m.height),
                 justifications: m.parents.iter().map(|h| to_hash_str(h.as_bytes())).collect(),
                 fringe: m.fringe.iter().map(|h| to_hash_str(h.as_bytes())).collect(),
             })

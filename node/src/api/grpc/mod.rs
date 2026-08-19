@@ -44,16 +44,18 @@ impl GrpcServices {
         }
     }
 
-    /// Serve the three gRPC services on `addr` (the tonic transport binding).
-    pub async fn serve(self, addr: std::net::SocketAddr) -> Result<(), String> {
+    /// Serve the three gRPC services on `addr` (the tonic transport binding). `max_message_size`
+    /// bounds each inbound message (the `grpc-max-recv-message-size` config, applied to all three
+    /// services so an oversized deploy/repl request is rejected before decoding).
+    pub async fn serve(self, addr: std::net::SocketAddr, max_message_size: usize) -> Result<(), String> {
         use rchain_models::proto::casper::deploy_service_server::DeployServiceServer;
         use rchain_models::proto::casper::propose_service_server::ProposeServiceServer;
         use rchain_models::proto::repl::repl_server::ReplServer;
 
         ::tonic::transport::Server::builder()
-            .add_service(DeployServiceServer::new(self.deploy))
-            .add_service(ProposeServiceServer::new(self.propose))
-            .add_service(ReplServer::new(self.repl))
+            .add_service(DeployServiceServer::new(self.deploy).max_decoding_message_size(max_message_size))
+            .add_service(ProposeServiceServer::new(self.propose).max_decoding_message_size(max_message_size))
+            .add_service(ReplServer::new(self.repl).max_decoding_message_size(max_message_size))
             .serve(addr)
             .await
             .map_err(|e| e.to_string())

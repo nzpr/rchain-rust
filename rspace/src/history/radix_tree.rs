@@ -29,12 +29,14 @@ pub enum Item {
     },
 }
 
-/// A node is a fixed 256-slot array of items (port of `RadixTree.Node`).
-pub type Node = Vec<Item>;
+/// A node is a fixed 256-slot array of items (port of `RadixTree.Node`). The "exactly 256 slots"
+/// invariant is carried structurally by the array type, so a short/corrupt node cannot be produced
+/// by [`decode`] (which is total on the validated [`SerializedNode`] refinement).
+pub type Node = [Item; NUM_ITEMS];
 
 /// An empty node (port of `RadixTree.emptyNode`).
 pub fn empty_node() -> Node {
-    (0..NUM_ITEMS).map(|_| Item::Empty).collect()
+    std::array::from_fn(|_| Item::Empty)
 }
 
 /// The hash of the empty node, i.e. the empty root (port of `RadixTree.emptyRootHash`).

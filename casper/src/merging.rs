@@ -750,9 +750,9 @@ mod tests {
         let hash = |b: u8| BlockHash::new([b; 32]);
         Message {
             id: hash(id),
-            height: 0,
+            height: rchain_shared::refined::BlockHeight::zero(),
             sender: Validator::new([id; 65]),
-            sender_seq: 0,
+            sender_seq: rchain_shared::refined::SeqNum::zero(),
             bonds_map: BTreeMap::new(),
             parents: parents.iter().map(|&b| hash(b)).collect(),
             fringe: BTreeSet::new(),

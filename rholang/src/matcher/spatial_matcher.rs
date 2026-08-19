@@ -668,6 +668,9 @@ fn list_match<T: MatchableTerm>(
         all_patterns.push(MbmPattern::Term(p.clone()));
     }
 
+    // An internal `RholangError` (e.g. a Law-5 `BugFoundError`) must not be silently swallowed as
+    // "no match": record it and propagate it when the bipartite search finds no matching.
+    let match_error: std::cell::RefCell<Option<RholangError>> = std::cell::RefCell::new(None);
     let match_fn = |pattern: &MbmPattern<T>, t: &T| -> Option<FreeMap> {
         match pattern {
             MbmPattern::Term(p) => {
@@ -678,7 +681,13 @@ fn list_match<T: MatchableTerm>(
                         None
                     }
                 } else {
-                    spatial_match_fn(t, p, &FreeMap::new()).ok()?.into_iter().next()
+                    match spatial_match_fn(t, p, &FreeMap::new()) {
+                        Ok(results) => results.into_iter().next(),
+                        Err(e) => {
+                            *match_error.borrow_mut() = Some(e);
+                            None
+                        }
+                    }
                 }
             }
             MbmPattern::Remainder => {
@@ -693,7 +702,12 @@ fn list_match<T: MatchableTerm>(
 
     let matches = match find_matches(&all_patterns, targets, &match_fn) {
         Some(m) => m,
-        None => return Ok(Vec::new()),
+        None => {
+            if let Some(e) = match_error.borrow().clone() {
+                return Err(e);
+            }
+            return Ok(Vec::new());
+        }
     };
 
     let free_maps: Vec<FreeMap> = matches.iter().map(|(_, _, r)| r.clone()).collect();

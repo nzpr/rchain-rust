@@ -5,6 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::Hash;
 
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
+
 use super::finalizer::{Finalizer, Message};
 use super::message_map;
 use crate::errors::StorageError;
@@ -33,9 +35,9 @@ where
     pub fn create_message(
         &self,
         id: M,
-        height: i64,
+        height: BlockHeight,
         sender: S,
-        sender_seq: i64,
+        sender_seq: SeqNum,
         fin_bonds_map: BTreeMap<S, i64>,
         justifications: &BTreeSet<Message<M, S>>,
     ) -> Message<M, S> {
@@ -78,10 +80,15 @@ where
             .filter(|m| m.sender == msg.sender)
             .cloned()
             .collect();
-        let max_seq = latest.iter().map(|m| m.sender_seq).max().unwrap_or(-1);
+        let replace = latest
+            .iter()
+            .map(|m| m.sender_seq)
+            .max()
+            .map(|max_seq| msg.sender_seq > max_seq)
+            .unwrap_or(true);
 
         let mut new_latest_msgs = self.latest_msgs.clone();
-        if msg.sender_seq > max_seq {
+        if replace {
             new_latest_msgs.retain(|m| m.sender != msg.sender);
             new_latest_msgs.insert(msg.clone());
         }
@@ -99,7 +106,7 @@ where
         gen_msg_id: F,
     ) -> Result<(Self, Message<M, S>), StorageError>
     where
-        F: FnOnce(&S, i64) -> M,
+        F: FnOnce(&S, BlockHeight) -> M,
     {
         let max_height = self
             .latest_msgs
@@ -107,14 +114,14 @@ where
             .map(|m| m.height)
             .max()
             .ok_or(StorageError::EmptyLatestMessages)?;
-        let new_height = max_height + 1;
+        let new_height = max_height + NonNegI64::one();
         let seq_num = self
             .latest_msgs
             .iter()
             .find(|m| m.sender == *creator)
             .map(|m| m.sender_seq)
-            .unwrap_or(0);
-        let new_seq_num = seq_num + 1;
+            .unwrap_or_else(SeqNum::zero);
+        let new_seq_num = seq_num + NonNegI64::one();
         let justifications = self.latest_msgs.clone();
         let bonds_map = self
             .latest_msgs
@@ -149,9 +156,9 @@ mod tests {
     fn msg(id: i32, sender: i32, sender_seq: i64) -> Message<i32, i32> {
         Message {
             id,
-            height: 0,
+            height: BlockHeight::zero(),
             sender,
-            sender_seq,
+            sender_seq: SeqNum::try_from(sender_seq).unwrap(),
             bonds_map: BTreeMap::new(),
             parents: BTreeSet::new(),
             fringe: BTreeSet::new(),
@@ -196,7 +203,14 @@ mod tests {
         let state: DagMessageState<i32, i32> = DagMessageState::empty();
         let genesis = msg(0, 0, 0);
         let justifications: BTreeSet<_> = [genesis].into_iter().collect();
-        let new_msg = state.create_message(1, 1, 1, 1, BTreeMap::new(), &justifications);
+        let new_msg = state.create_message(
+            1,
+            BlockHeight::try_from(1).unwrap(),
+            1,
+            SeqNum::try_from(1).unwrap(),
+            BTreeMap::new(),
+            &justifications,
+        );
         assert_eq!(new_msg.seen, [0, 1].into_iter().collect());
         assert_eq!(new_msg.parents, [0].into_iter().collect());
     }

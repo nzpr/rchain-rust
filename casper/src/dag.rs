@@ -34,9 +34,9 @@ pub fn message_from_block_metadata(
     seen.insert(block.block_hash);
     Some(Message {
         id: block.block_hash,
-        height: i64::from(block.block_num),
+        height: block.block_num,
         sender: block.sender,
-        sender_seq: i64::from(block.seq_num),
+        sender_seq: block.seq_num,
         bonds_map: block.bonds_map.clone(),
         parents: block.justifications.clone(),
         fringe: block.fringe.clone(),

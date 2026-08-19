@@ -179,10 +179,11 @@ Bottom-up order: `sdk` (and `regex`, in parallel) → `shared` → `crypto` + `g
 
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
-- **Rewrite — in progress**: the leaf modules (`sdk`, `shared`, `crypto`, `graphz`, `models`,
-  `block-storage`, `rspace`, `comm`) are ported at the workspace root; `rholang` is in progress.
-  The proofs-first *pause* has been lifted in practice — `rspace`/`rholang` are being ported against
-  the verified spec rather than waiting on Laws 1–11.
-- **Formalization — proofs-first**: Laws 1–11 (rholang + rspace) are being proven machine-checkably —
-  Coq for the ρ-calculus PL metatheory (Laws 2–6), Lean 4 for order/algebra (Laws 1, 7–11) — before
-  `rspace`/`rholang` are ported.
+- **Rewrite — complete**: all twelve crates (`sdk`, `shared`, `crypto`, `graphz`, `models`,
+  `block-storage`, `rspace`, `rholang`, `casper`, `comm`, `regex`, `node`) are ported at the
+  workspace root. The proofs-first *pause* was lifted in practice; the port was written against the
+  verified spec rather than waiting on Laws 1–11.
+- **Formalization — residual**: Law 1's idempotence/commutativity is proven, conditional on the 69
+  comparator-law `axiom`s in `Rchain/Sort.lean` (the remaining "total order" obligation). Laws 2–19
+  are stated as Phase 1–5 obligations (see `spec/INVENTORY.md`); the type-system fundamentals F1–F6
+  are proven in `Rchain/Ty.lean`. The adversarial audit findings are in `spec/AUDIT.md`.

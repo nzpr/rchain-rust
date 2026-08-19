@@ -19,10 +19,12 @@ Install Coq if needed: `opam install coq` (or `apt install coq`).
 
 ## Status
 
-Phase 0 skeleton: `Syntax.v` defines `Ground`/`Var`/`Proc`; `Sort.v` defines the score-tree total
-order and the canonicalization `sort`. The atomic fixed-point lemmas (`sort_nil`, `sort_ground`,
-`sort_var`) are proven; the deep Law-1 theorems (`sort_idempotent`, `sort_par_comm`) are **admitted**
-(Phase 1 proof obligations), mirroring the `sorry`-admitted theorems in [`../Rchain/Sort.lean`](../Rchain/Sort.lean).
+Phase 0 skeleton: `Syntax.v` defines `Ground`/`Var`/`Proc`; `Sort.v` declares the score-tree total
+order and the canonicalization `sort` as **axioms** (`cmpPar`, `sortPar`, `sortPar_idempotent`,
+`sortPar_comm`) — it currently has **no proven lemmas**. This mirrors the 69 residual comparator-law
+`axiom`s in [`../Rchain/Sort.lean`](../Rchain/Sort.lean) (the Lean track also uses `axiom`, not
+`sorry`). The Law-1 theorems (`sort_idempotent`, `sort_par_comm`) are the Phase-1 proof obligations
+for both tracks.
 
 ## Mapping to the Scala source of truth
 

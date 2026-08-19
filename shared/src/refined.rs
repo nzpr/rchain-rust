@@ -64,6 +64,13 @@ macro_rules! non_neg_signed {
 non_neg_signed!(NonNegI64, i64);
 non_neg_signed!(NonNegI32, i32);
 
+impl NonNegI64 {
+    /// The value one (total: `1` is non-negative).
+    pub const fn one() -> Self {
+        NonNegI64(1)
+    }
+}
+
 /// A block height (non-negative). Used for `block_number`/`block_num`/`height` across the DAG and
 /// consensus layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,10 +106,11 @@ impl std::fmt::Display for BlockHeight {
     }
 }
 
-impl std::ops::Add<i64> for BlockHeight {
+impl std::ops::Add<NonNegI64> for BlockHeight {
     type Output = BlockHeight;
-    fn add(self, rhs: i64) -> BlockHeight {
-        BlockHeight(self.0 + rhs) // non-negative by construction (heights only increment)
+    fn add(self, rhs: NonNegI64) -> BlockHeight {
+        // Sum of two non-negative values stays non-negative (the invariant is preserved).
+        BlockHeight(self.0 + i64::from(rhs))
     }
 }
 
@@ -154,10 +162,11 @@ impl std::fmt::Display for SeqNum {
     }
 }
 
-impl std::ops::Add<i64> for SeqNum {
+impl std::ops::Add<NonNegI64> for SeqNum {
     type Output = SeqNum;
-    fn add(self, rhs: i64) -> SeqNum {
-        SeqNum(self.0 + rhs) // non-negative by construction (sequence numbers only increment)
+    fn add(self, rhs: NonNegI64) -> SeqNum {
+        // Sum of two non-negative values stays non-negative (the invariant is preserved).
+        SeqNum(self.0 + i64::from(rhs))
     }
 }
 
@@ -305,6 +314,16 @@ mod tests {
         let s: SeqNum = 9.try_into().unwrap();
         assert_eq!(i64::from(s), 9);
         assert!(SeqNum::try_from(-1).is_err());
+    }
+
+    #[test]
+    fn arithmetic_preserves_non_negativity() {
+        let h = BlockHeight::zero();
+        assert_eq!(i64::from(h + NonNegI64::one()), 1);
+        let s = SeqNum::zero();
+        assert_eq!(i64::from(s + NonNegI64::one()), 1);
+        // A negative delta cannot be constructed, so the invariant cannot be broken by `Add`.
+        assert!(NonNegI64::try_from(-1).is_err());
     }
 
     #[test]

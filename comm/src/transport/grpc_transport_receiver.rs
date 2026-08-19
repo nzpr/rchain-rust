@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use rchain_models::comm::protocol::transport_layer_server;
 use rchain_models::comm::protocol::{
-    tl_response, Ack, Chunk, InternalServerError, Protocol, TlRequest, TlResponse,
+    chunk, tl_response, Ack, Chunk, InternalServerError, Protocol, TlRequest, TlResponse,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
@@ -92,6 +92,11 @@ fn stream_error_message(error: &StreamError) -> String {
     }
 }
 
+/// Bound on concurrent inbound-message dispatches (the Scala per-peer `LimitedBufferObservable`
+/// bounded-queue analog). A flood that cannot acquire a slot is rejected with `ResourceExhausted`
+/// rather than spawning an unbounded number of tasks.
+const MAX_CONCURRENT_DISPATCH: usize = 1024;
+
 /// The inbound gRPC `TransportLayer` service (port of the `RoutingGrpcMonix.TransportLayer` impl).
 pub struct GrpcTransportReceiver {
     local: PeerNode,
@@ -99,6 +104,7 @@ pub struct GrpcTransportReceiver {
     max_stream_message_size: i64,
     dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
     handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
+    dispatch_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[async_trait]
@@ -127,8 +133,13 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
             }
         }
 
+        let permit = match self.dispatch_slots.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => return Err(Status::resource_exhausted("dispatch queue full")),
+        };
         let dispatch = self.dispatch.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let _ = (dispatch)(protocol).await;
         });
         Ok(Response::new(ack(&self.local, &self.network_id)))
@@ -140,7 +151,18 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
     ) -> Result<Response<TlResponse>, Status> {
         let mut incoming = request.into_inner();
         let mut chunks = Vec::new();
+        // Enforce the size cap *while* draining, so a peer cannot stream an unbounded number of
+        // chunks before the circuit breaker runs in `stream_handler::collect`.
+        let mut received: i64 = 0;
         while let Some(chunk) = incoming.message().await? {
+            if let Some(chunk::Content::Data(d)) = &chunk.content {
+                received += d.content_data.len() as i64;
+                if received > self.max_stream_message_size {
+                    return Ok(Response::new(internal_server_error(&stream_error_message(
+                        &StreamError::MaxSizeReached,
+                    ))));
+                }
+            }
             chunks.push(chunk);
         }
 
@@ -214,6 +236,7 @@ pub async fn serve(
         max_stream_message_size,
         dispatch,
         handle_streamed,
+        dispatch_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DISPATCH)),
     };
 
     tonic::transport::Server::builder()
