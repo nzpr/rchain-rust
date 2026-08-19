@@ -71,9 +71,9 @@ impl BlockCreator {
             .map(|m| m.seq_num + NonNegI64::one())
             .unwrap_or_else(SeqNum::zero);
         let block_data = BlockData {
-            block_number: i64::from(block_num),
+            block_number: block_num,
             sender: creators_pk.clone(),
-            seq_num: i64::from(seq_num),
+            seq_num,
         };
         let should_propose = !deploys.is_empty() || !to_slash.is_empty() || change_epoch;
         let finalization = pre_state.fringe_rejected_deploys.clone();

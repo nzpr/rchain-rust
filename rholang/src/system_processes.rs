@@ -12,6 +12,7 @@ use rchain_crypto::signatures::ed25519::Ed25519;
 use rchain_crypto::signatures::secp256k1::Secp256k1;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
+use rchain_shared::refined::{BlockHeight, SeqNum};
 use rchain_models::rholang::RhoType::{
     RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
 };
@@ -112,26 +113,26 @@ impl BodyRefs {
 /// Per-block data exposed to the `rho:block:data` contract (port of `SystemProcesses.BlockData`).
 #[derive(Clone, Debug)]
 pub struct BlockData {
-    pub block_number: i64,
+    pub block_number: BlockHeight,
     pub sender: PublicKey,
-    pub seq_num: i64,
+    pub seq_num: SeqNum,
 }
 
 impl BlockData {
     pub fn empty() -> Self {
         BlockData {
-            block_number: 0,
+            block_number: BlockHeight::zero(),
             sender: PublicKey::new(vec![0]),
-            seq_num: 0,
+            seq_num: SeqNum::zero(),
         }
     }
 
     /// Build the per-block data from a block message (port of `BlockData.fromBlock`).
     pub fn from_block(block: &BlockMessage) -> Self {
         BlockData {
-            block_number: i64::from(block.block_number),
+            block_number: block.block_number,
             sender: PublicKey::new(block.sender.as_bytes().to_vec()),
-            seq_num: i64::from(block.seq_num),
+            seq_num: block.seq_num,
         }
     }
 }
@@ -456,7 +457,7 @@ impl SystemProcesses {
                     [ack] => {
                         let (block_number, sender_bytes) = {
                             let data = bd.lock().unwrap_or_else(|p| p.into_inner());
-                            (data.block_number, data.sender.bytes().to_vec())
+                            (i64::from(data.block_number), data.sender.bytes().to_vec())
                         };
                         let reply = vec![
                             RhoNumber::apply(block_number),

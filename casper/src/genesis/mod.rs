@@ -126,9 +126,9 @@ pub async fn create_genesis_block(
         &genesis.shard_id,
     )?;
     let block_data = BlockData {
-        block_number: genesis.block_number,
+        block_number: BlockHeight::try_from(genesis.block_number).map_err(|e| e.to_string())?,
         sender: genesis.sender.clone(),
-        seq_num: 0,
+        seq_num: SeqNum::zero(),
     };
     let rand = BlockRandomSeed::random_generator_from_shard_id(&genesis.shard_id);
     let (start_hash, state_hash, processed_results) = runtime
