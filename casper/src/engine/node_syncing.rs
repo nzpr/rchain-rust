@@ -174,7 +174,7 @@ impl<I: RSpaceImporter> NodeSyncing<I> {
             self.request_approved_state(fringe).await?;
             self.approved_store
                 .put(&[(FINALIZED_FRINGE_KEY, fringe.clone())])
-                .await;
+                .await?;
             self.log
                 .info(self.log_source, "LFS state is successfully restored.");
         }

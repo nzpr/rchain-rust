@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 
 /// A byte-oriented key-value store.
 pub trait KeyValueStore {
-    fn get(&self, keys: &[Vec<u8>]) -> Vec<Option<Vec<u8>>>;
-    fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>);
+    fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String>;
+    fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String>;
     /// Delete the given keys, returning the number of keys that were actually present.
-    fn delete(&mut self, keys: &[Vec<u8>]) -> usize;
-    fn entries(&self) -> Vec<(Vec<u8>, Vec<u8>)>;
+    fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String>;
+    fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String>;
 }
 
 /// In-memory implementation (port of `InMemoryKeyValueStore`, using a `BTreeMap` for determinism).
@@ -33,22 +33,23 @@ impl InMemoryKeyValueStore {
 }
 
 impl KeyValueStore for InMemoryKeyValueStore {
-    fn get(&self, keys: &[Vec<u8>]) -> Vec<Option<Vec<u8>>> {
-        keys.iter().map(|k| self.map.get(k).cloned()).collect()
+    fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        Ok(keys.iter().map(|k| self.map.get(k).cloned()).collect())
     }
 
-    fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) {
+    fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
         for (k, v) in pairs {
             self.map.insert(k, v);
         }
+        Ok(())
     }
 
-    fn delete(&mut self, keys: &[Vec<u8>]) -> usize {
-        keys.iter().filter(|k| self.map.remove(*k).is_some()).count()
+    fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String> {
+        Ok(keys.iter().filter(|k| self.map.remove(*k).is_some()).count())
     }
 
-    fn entries(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        self.map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        Ok(self.map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
     }
 }
 
@@ -57,18 +58,20 @@ impl KeyValueStore for InMemoryKeyValueStore {
 pub struct NoOpKeyValueStore;
 
 impl KeyValueStore for NoOpKeyValueStore {
-    fn get(&self, _keys: &[Vec<u8>]) -> Vec<Option<Vec<u8>>> {
-        Vec::new()
+    fn get(&self, _keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        Ok(Vec::new())
     }
 
-    fn put(&mut self, _pairs: Vec<(Vec<u8>, Vec<u8>)>) {}
-
-    fn delete(&mut self, _keys: &[Vec<u8>]) -> usize {
-        0
+    fn put(&mut self, _pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+        Ok(())
     }
 
-    fn entries(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        Vec::new()
+    fn delete(&mut self, _keys: &[Vec<u8>]) -> Result<usize, String> {
+        Ok(0)
+    }
+
+    fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        Ok(Vec::new())
     }
 }
 
@@ -83,25 +86,25 @@ mod tests {
     #[test]
     fn get_put_delete_round_trip() {
         let mut store = InMemoryKeyValueStore::default();
-        store.put(vec![(k("a"), vec![1]), (k("b"), vec![2])]);
-        assert_eq!(store.get(&[k("a"), k("b"), k("c")]), vec![Some(vec![1]), Some(vec![2]), None]);
-        assert_eq!(store.delete(&[k("a"), k("c")]), 1);
-        assert_eq!(store.get(&[k("a"), k("b")]), vec![None, Some(vec![2])]);
+        store.put(vec![(k("a"), vec![1]), (k("b"), vec![2])]).unwrap();
+        assert_eq!(store.get(&[k("a"), k("b"), k("c")]).unwrap(), vec![Some(vec![1]), Some(vec![2]), None]);
+        assert_eq!(store.delete(&[k("a"), k("c")]).unwrap(), 1);
+        assert_eq!(store.get(&[k("a"), k("b")]).unwrap(), vec![None, Some(vec![2])]);
     }
 
     #[test]
     fn entries_returns_all_pairs() {
         let mut store = InMemoryKeyValueStore::default();
-        store.put(vec![(k("b"), vec![2]), (k("a"), vec![1])]);
-        assert_eq!(store.entries(), vec![(k("a"), vec![1]), (k("b"), vec![2])]);
+        store.put(vec![(k("b"), vec![2]), (k("a"), vec![1])]).unwrap();
+        assert_eq!(store.entries().unwrap(), vec![(k("a"), vec![1]), (k("b"), vec![2])]);
     }
 
     #[test]
     fn no_op_store_is_empty() {
         let mut store = NoOpKeyValueStore;
-        store.put(vec![(k("a"), vec![1])]);
-        assert_eq!(store.get(&[k("a")]), Vec::<Option<Vec<u8>>>::new());
-        assert_eq!(store.delete(&[k("a")]), 0);
-        assert!(store.entries().is_empty());
+        store.put(vec![(k("a"), vec![1])]).unwrap();
+        assert_eq!(store.get(&[k("a")]).unwrap(), Vec::<Option<Vec<u8>>>::new());
+        assert_eq!(store.delete(&[k("a")]).unwrap(), 0);
+        assert!(store.entries().unwrap().is_empty());
     }
 }

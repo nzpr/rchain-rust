@@ -80,13 +80,12 @@ async fn save_block(
     let already_saved = block_store
         .contains(&[block.block_hash])
         .await
+        .unwrap_or_default()
         .first()
         .copied()
         .unwrap_or(false);
     if !already_saved {
-        block_store
-            .put(&[(block.block_hash, block.clone())])
-            .await;
+        let _ = block_store.put(&[(block.block_hash, block.clone())]).await;
     }
     let mut guard = st.lock().await;
     *guard = guard.done(&block.block_hash);
@@ -128,7 +127,7 @@ async fn request_next(
     };
 
     let hashes_vec: Vec<BlockHash> = hashes.iter().copied().collect();
-    let contains = block_store.contains(&hashes_vec).await;
+    let contains = block_store.contains(&hashes_vec).await.unwrap_or_default();
     let mut existing = Vec::new();
     let mut missing = Vec::new();
     for (h, c) in hashes_vec.into_iter().zip(contains) {

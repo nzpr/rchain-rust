@@ -606,7 +606,7 @@ mod effectful_tests {
         ));
         let pairs: Vec<(BlockHash, BlockMessage)> =
             blocks.into_iter().map(|b| (b.block_hash, b)).collect();
-        store.put(&pairs).await;
+        store.put(&pairs).await.unwrap();
         store
     }
 

@@ -99,7 +99,7 @@ impl BlockReportApi {
                 let ev = self.replay_block(block).await?;
                 self.report_store
                     .put(&[(block.block_hash, ev.clone())])
-                    .await;
+                    .await?;
                 Ok(ev)
             }
         }

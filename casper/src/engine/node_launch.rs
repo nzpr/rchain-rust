@@ -169,8 +169,8 @@ async fn create_store_broadcast_genesis(
         state_hash: StateHash::from_slice(&genesis_block.pre_state_hash),
     };
 
-    put_block(block_store, genesis_block.clone()).await;
-    put_approved_block(approved_store, genesis_fringe.clone()).await;
+    put_block(block_store, genesis_block.clone()).await?;
+    put_approved_block(approved_store, genesis_fringe.clone()).await?;
     insert_genesis(dag, genesis_block).await?;
     comm_util
         .stream_to_peers(&FinalizedFringeSerde.mk_packet(&genesis_fringe), None)

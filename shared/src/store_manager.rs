@@ -118,7 +118,7 @@ mod tests {
         )
         .await
         .unwrap();
-        db.put(&[("k".to_string(), "v".to_string())]).await;
+        db.put(&[("k".to_string(), "v".to_string())]).await.unwrap();
         assert_eq!(db.get(&["k".to_string()]).await.unwrap(), vec![Some("v".to_string())]);
     }
 }

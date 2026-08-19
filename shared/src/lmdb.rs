@@ -29,55 +29,70 @@ impl LmdbKeyValueStore {
 }
 
 impl KeyValueStore for LmdbKeyValueStore {
-    fn get(&self, keys: &[Vec<u8>]) -> Vec<Option<Vec<u8>>> {
-        let txn = self.env.begin_ro_txn().expect("LMDB read transaction");
-        let result = keys
-            .iter()
-            .map(|k| match txn.get(self.db, k) {
-                Ok(v) => Some(v.to_vec()),
-                Err(LmdbError::NotFound) => None,
-                Err(e) => panic!("LMDB get failed: {e}"),
-            })
-            .collect();
-        txn.commit().expect("LMDB commit");
-        result
+    fn get(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        let txn = self
+            .env
+            .begin_ro_txn()
+            .map_err(|e| format!("LMDB read transaction: {e}"))?;
+        let mut result = Vec::with_capacity(keys.len());
+        for k in keys {
+            match txn.get(self.db, k) {
+                Ok(v) => result.push(Some(v.to_vec())),
+                Err(LmdbError::NotFound) => result.push(None),
+                Err(e) => return Err(format!("LMDB get failed: {e}")),
+            }
+        }
+        txn.commit().map_err(|e| format!("LMDB commit: {e}"))?;
+        Ok(result)
     }
 
-    fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) {
-        let mut txn = self.env.begin_rw_txn().expect("LMDB write transaction");
+    fn put(&mut self, pairs: Vec<(Vec<u8>, Vec<u8>)>) -> Result<(), String> {
+        let mut txn = self
+            .env
+            .begin_rw_txn()
+            .map_err(|e| format!("LMDB write transaction: {e}"))?;
         for (k, v) in &pairs {
             txn.put(self.db, k, v, WriteFlags::empty())
-                .expect("LMDB put");
+                .map_err(|e| format!("LMDB put: {e}"))?;
         }
-        txn.commit().expect("LMDB commit");
+        txn.commit().map_err(|e| format!("LMDB commit: {e}"))?;
+        Ok(())
     }
 
-    fn delete(&mut self, keys: &[Vec<u8>]) -> usize {
-        let mut txn = self.env.begin_rw_txn().expect("LMDB write transaction");
+    fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String> {
+        let mut txn = self
+            .env
+            .begin_rw_txn()
+            .map_err(|e| format!("LMDB write transaction: {e}"))?;
         let mut removed = 0;
         for k in keys {
             match txn.del(self.db, k, None) {
                 Ok(()) => removed += 1,
                 Err(LmdbError::NotFound) => {}
-                Err(e) => panic!("LMDB delete failed: {e}"),
+                Err(e) => return Err(format!("LMDB delete failed: {e}")),
             }
         }
-        txn.commit().expect("LMDB commit");
-        removed
+        txn.commit().map_err(|e| format!("LMDB commit: {e}"))?;
+        Ok(removed)
     }
 
-    fn entries(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let txn = self.env.begin_ro_txn().expect("LMDB read transaction");
+    fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+        let txn = self
+            .env
+            .begin_ro_txn()
+            .map_err(|e| format!("LMDB read transaction: {e}"))?;
         let mut out = Vec::new();
         {
-            let mut cursor = txn.open_ro_cursor(self.db).expect("LMDB cursor");
+            let mut cursor = txn
+                .open_ro_cursor(self.db)
+                .map_err(|e| format!("LMDB cursor: {e}"))?;
             for item in cursor.iter() {
-                let (k, v) = item.expect("LMDB iterate");
+                let (k, v) = item.map_err(|e| format!("LMDB iterate: {e}"))?;
                 out.push((k.to_vec(), v.to_vec()));
             }
         }
-        txn.commit().expect("LMDB commit");
-        out
+        txn.commit().map_err(|e| format!("LMDB commit: {e}"))?;
+        Ok(out)
     }
 }
 
@@ -255,18 +270,19 @@ mod tests {
             kv.put(vec![
                 (b"k1".to_vec(), b"v1".to_vec()),
                 (b"k2".to_vec(), b"v2".to_vec()),
-            ]);
+            ])
+            .unwrap();
         }
         {
             let kv = store.lock().await;
-            assert_eq!(kv.get(&[b"k1".to_vec()]), vec![Some(b"v1".to_vec())]);
-            assert_eq!(kv.get(&[b"missing".to_vec()]), vec![None]);
-            assert_eq!(kv.entries().len(), 2);
+            assert_eq!(kv.get(&[b"k1".to_vec()]).unwrap(), vec![Some(b"v1".to_vec())]);
+            assert_eq!(kv.get(&[b"missing".to_vec()]).unwrap(), vec![None]);
+            assert_eq!(kv.entries().unwrap().len(), 2);
         }
         {
             let mut kv = store.lock().await;
-            assert_eq!(kv.delete(&[b"k1".to_vec()]), 1);
-            assert_eq!(kv.entries().len(), 1);
+            assert_eq!(kv.delete(&[b"k1".to_vec()]).unwrap(), 1);
+            assert_eq!(kv.entries().unwrap().len(), 1);
         }
 
         manager.shutdown().await;
@@ -295,30 +311,30 @@ mod tests {
         let store_b = manager.store("b").await.unwrap();
         {
             let mut kv = store_a.lock().await;
-            kv.put(vec![(b"k".to_vec(), b"va".to_vec())]);
+            kv.put(vec![(b"k".to_vec(), b"va".to_vec())]).unwrap();
         }
         {
             let mut kv = store_b.lock().await;
-            kv.put(vec![(b"k".to_vec(), b"vb".to_vec())]);
+            kv.put(vec![(b"k".to_vec(), b"vb".to_vec())]).unwrap();
         }
         {
             let kv = store_a.lock().await;
-            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"va".to_vec())]);
+            assert_eq!(kv.get(&[b"k".to_vec()]).unwrap(), vec![Some(b"va".to_vec())]);
         }
         {
             let kv = store_b.lock().await;
-            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"vb".to_vec())]);
+            assert_eq!(kv.get(&[b"k".to_vec()]).unwrap(), vec![Some(b"vb".to_vec())]);
         }
 
         // The name override is used as the database name.
         let store_c = manager.store("c").await.unwrap();
         {
             let mut kv = store_c.lock().await;
-            kv.put(vec![(b"k".to_vec(), b"vc".to_vec())]);
+            kv.put(vec![(b"k".to_vec(), b"vc".to_vec())]).unwrap();
         }
         {
             let kv = store_c.lock().await;
-            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"vc".to_vec())]);
+            assert_eq!(kv.get(&[b"k".to_vec()]).unwrap(), vec![Some(b"vc".to_vec())]);
         }
 
         manager.shutdown().await;

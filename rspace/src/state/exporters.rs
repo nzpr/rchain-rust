@@ -87,6 +87,7 @@ pub fn write_to_disk<E: RSpaceExporter>(
             let hs: &dyn KeyValueStore = &*history_store;
             let get_from_history = |k: &Blake2b256Hash| -> Option<Vec<u8>> {
                 hs.get(&[k.to_byte_array().to_vec()])
+                    .unwrap_or_default()
                     .into_iter()
                     .next()
                     .flatten()
@@ -108,14 +109,14 @@ pub fn write_to_disk<E: RSpaceExporter>(
             .iter()
             .map(|(k, v)| (k.to_byte_array().to_vec(), v.clone()))
             .collect();
-        history_store.put(history_pairs);
+        history_store.put(history_pairs)?;
 
         let data_pairs: Vec<(Vec<u8>, Vec<u8>)> = data
             .items
             .iter()
             .map(|(k, v)| (k.to_byte_array().to_vec(), v.clone()))
             .collect();
-        data_store.put(data_pairs);
+        data_store.put(data_pairs)?;
 
         let received = history.items.len();
         if received < chunk_size {

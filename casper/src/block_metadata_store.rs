@@ -45,7 +45,7 @@ impl BlockMetadataStore {
             *state = add_block_to_dag_state(&info, &state);
             validate_dag_state(&state);
         }
-        self.store.put(&[(block.block_hash, block)]).await;
+        self.store.put(&[(block.block_hash, block)]).await?;
         Ok(())
     }
 

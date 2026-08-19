@@ -84,7 +84,13 @@ pub async fn handle_block_request(
     br: &BlockRequest,
 ) {
     let hash = BlockHash::from_slice(&br.hash);
-    let has_block = block_store.contains(&[hash]).await.first().copied().unwrap_or(false);
+    let has_block = block_store
+        .contains(&[hash])
+        .await
+        .unwrap_or_default()
+        .first()
+        .copied()
+        .unwrap_or(false);
     if has_block {
         if let Some(block) = block_store.get(&[hash]).await.unwrap_or_default().into_iter().flatten().next() {
             transport_layer_syntax::stream_to_peer(
@@ -233,7 +239,14 @@ impl NodeRunning {
         match msg {
             CasperMessage::BlockHashMessage(bhm) => {
                 let hash = bhm.block_hash;
-                let ignore = self.block_store.contains(&[hash]).await[0];
+                let ignore = self
+                    .block_store
+                    .contains(&[hash])
+                    .await
+                    .unwrap_or_default()
+                    .first()
+                    .copied()
+                    .unwrap_or(false);
                 handle_block_hash_message(
                     &self.block_retriever,
                     self.log.as_ref(),
@@ -256,7 +269,14 @@ impl NodeRunning {
                         );
                     }
                 }
-                let known = self.block_store.contains(&[b.block_hash]).await[0];
+                let known = self
+                    .block_store
+                    .contains(&[b.block_hash])
+                    .await
+                    .unwrap_or_default()
+                    .first()
+                    .copied()
+                    .unwrap_or(false);
                 if known {
                     self.log.debug(
                         self.log_source,
@@ -300,7 +320,14 @@ impl NodeRunning {
             }
             CasperMessage::HasBlock(hb) => {
                 let hash = BlockHash::from_slice(&hb.hash);
-                let known = self.block_store.contains(&[hash]).await[0];
+                let known = self
+                    .block_store
+                    .contains(&[hash])
+                    .await
+                    .unwrap_or_default()
+                    .first()
+                    .copied()
+                    .unwrap_or(false);
                 if known {
                     if not_validated(&self.block_store, self.dag.as_ref(), &hash).await {
                         if let Some(block) =
@@ -441,7 +468,7 @@ mod tests {
         ));
         let pairs: Vec<(BlockHash, BlockMessage)> =
             blocks.into_iter().map(|b| (b.block_hash, b)).collect();
-        store.put(&pairs).await;
+        store.put(&pairs).await.unwrap();
         store
     }
 

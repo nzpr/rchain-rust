@@ -139,7 +139,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
                 .iter()
                 .map(|h| (h.clone(), block.block_hash))
                 .collect();
-            self.deploy_index.put(&pairs).await;
+            self.deploy_index.put(&pairs).await?;
         }
 
         // Compute fringe diff and store fringe data.
@@ -179,7 +179,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         };
         self.fringe_data_store
             .put(&[(fringe_hash, fringe_data.clone())])
-            .await;
+            .await?;
 
         // Mark the newly-finalized blocks' metadata with their member fringe.
         for h in &fringe_diff {
@@ -220,7 +220,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     }
 
     async fn add_deploy(&self, deploy: SignedDeployData) -> Result<(), String> {
-        self.deploy_store.put(&[(deploy.sig.clone(), deploy)]).await;
+        self.deploy_store.put(&[(deploy.sig.clone(), deploy)]).await?;
         Ok(())
     }
 
@@ -229,7 +229,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     }
 
     async fn contains_deploy_in_pool(&self, deploy_id: &DeployId) -> Result<bool, String> {
-        let vals = self.deploy_store.contains(&[deploy_id.clone()]).await;
+        let vals = self.deploy_store.contains(&[deploy_id.clone()]).await?;
         Ok(vals.into_iter().next().unwrap_or(false))
     }
 }

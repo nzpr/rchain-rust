@@ -349,8 +349,8 @@ impl PathRegex {
     }
 
     /// Parse a path string into tokens (port of `PathRegex.parse`).
-    pub fn parse(input: &str, options: &PathRegexOptions) -> Vec<PathToken> {
-        let rx = rx_path_regex();
+    pub fn parse(input: &str, options: &PathRegexOptions) -> Result<Vec<PathToken>, String> {
+        let rx = rx_path_regex()?;
         let mut state = ParseState {
             sub_str: input.to_string(),
             raw_path_part: String::new(),
@@ -452,13 +452,13 @@ impl PathRegex {
         }
 
         state.tokens.reverse();
-        state.tokens
+        Ok(state.tokens)
     }
 
     /// Compile a path string to a template (port of `PathRegex.apply`).
-    pub fn apply(input: &str, options: PathRegexOptions) -> PathRegex {
-        let tokens = Self::parse(input, &options);
-        PathRegex { tokens, options }
+    pub fn apply(input: &str, options: PathRegexOptions) -> Result<PathRegex, String> {
+        let tokens = Self::parse(input, &options)?;
+        Ok(PathRegex { tokens, options })
     }
 }
 
@@ -507,13 +507,14 @@ struct ParseState {
 const RX_PATH_PATTERN: &str =
     r"(\\.)|(?:\:([a-zA-Z0-9_]+)(?:\(((?:\\.|[^\\()])+)\))?|\(((?:\\.|[^\\()])+)\))([+*?])?";
 
-fn rx_path_regex() -> &'static fancy_regex::Regex {
-    static RX: OnceLock<fancy_regex::Regex> = OnceLock::new();
-    // The pattern is a compile-time constant (ported from the working Scala regex) and always
-    // compiles; the `expect` is a static-validity assertion, not a runtime error path.
+fn rx_path_regex() -> Result<&'static fancy_regex::Regex, String> {
+    static RX: OnceLock<Result<fancy_regex::Regex, String>> = OnceLock::new();
     RX.get_or_init(|| {
-        fancy_regex::Regex::new(RX_PATH_PATTERN).expect("rxPath is a static constant and compiles")
+        fancy_regex::Regex::new(RX_PATH_PATTERN)
+            .map_err(|e| format!("rxPath is a static constant and compiles: {e}"))
     })
+    .as_ref()
+    .map_err(|e| e.clone())
 }
 
 #[cfg(test)]
@@ -556,7 +557,7 @@ mod tests {
     }
 
     fn apply(path: &str, options: PathRegexOptions) -> PathRegex {
-        PathRegex::apply(path, options)
+        PathRegex::apply(path, options).unwrap()
     }
 
     #[test]

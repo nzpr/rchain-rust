@@ -223,7 +223,13 @@ pub async fn not_validated(
     dag: &dyn BlockDagStorage,
     hash: &BlockHash,
 ) -> bool {
-    let in_store = block_store.contains(&[*hash]).await.first().copied().unwrap_or(false);
+    let in_store = block_store
+        .contains(&[*hash])
+        .await
+        .unwrap_or_default()
+        .first()
+        .copied()
+        .unwrap_or(false);
     if !in_store {
         return false;
     }
@@ -349,11 +355,12 @@ async fn incoming_blocks(
         let block_stored = block_store
             .contains(&[block.block_hash])
             .await
+            .unwrap_or_default()
             .first()
             .copied()
             .unwrap_or(false);
         if !block_stored {
-            block_store.put(&[(block.block_hash, block.clone())]).await;
+            let _ = block_store.put(&[(block.block_hash, block.clone())]).await;
         }
 
         let mut parents = Vec::new();
@@ -361,6 +368,7 @@ async fn incoming_blocks(
             let not_stored = !block_store
                 .contains(&[*hash])
                 .await
+                .unwrap_or_default()
                 .first()
                 .copied()
                 .unwrap_or(false);

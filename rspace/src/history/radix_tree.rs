@@ -227,7 +227,7 @@ impl RadixTreeImpl {
             .map(|(k, v)| (*k, v.clone()))
             .collect();
         let keys: Vec<Blake2b256Hash> = kv_pairs.iter().map(|(k, _)| *k).collect();
-        let present = self.store.contains(&keys).await;
+        let present = self.store.contains(&keys).await?;
         let absent: Vec<(Blake2b256Hash, Vec<u8>)> = kv_pairs
             .iter()
             .zip(present.iter())
@@ -251,7 +251,7 @@ impl RadixTreeImpl {
                 return Err(format!("collision in KVDB (key = {})", k.to_hex()));
             }
         }
-        self.store.put(&absent).await;
+        self.store.put(&absent).await?;
         Ok(())
     }
 

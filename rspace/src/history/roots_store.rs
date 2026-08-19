@@ -23,13 +23,14 @@ impl RootsStore {
             .lock()
             .await
             .get(&[key.to_vec()])
+            .unwrap_or_default()
             .into_iter()
             .next()
             .flatten()
     }
 
     async fn put(&self, key: Vec<u8>, value: Vec<u8>) {
-        self.store.lock().await.put(vec![(key, value)]);
+        let _ = self.store.lock().await.put(vec![(key, value)]);
     }
 
     /// The current root, if set (port of `currentRoot`).

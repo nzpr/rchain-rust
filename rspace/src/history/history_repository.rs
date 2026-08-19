@@ -206,14 +206,14 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         // Write cold leaves (put-if-absent).
         if !cold_actions.is_empty() {
             let keys: Vec<Blake2b256Hash> = cold_actions.iter().map(|(k, _)| *k).collect();
-            let present = self.leaf_store.contains(&keys).await;
+            let present = self.leaf_store.contains(&keys).await?;
             let absent: Vec<(Blake2b256Hash, PersistedData)> = cold_actions
                 .iter()
                 .zip(present.iter())
                 .filter(|(_, &p)| !p)
                 .map(|((k, v), _)| (*k, v.clone()))
                 .collect();
-            self.leaf_store.put(&absent).await;
+            self.leaf_store.put(&absent).await?;
         }
 
         // Apply radix-history actions and commit the new root.

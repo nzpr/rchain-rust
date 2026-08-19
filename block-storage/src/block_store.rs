@@ -91,7 +91,7 @@ mod tests {
         let kvm = InMemoryStoreManager::default();
         let store = create(&kvm).await.unwrap();
         let b = block();
-        store.put(&[(b.block_hash, b.clone())]).await;
+        store.put(&[(b.block_hash, b.clone())]).await.unwrap();
         assert_eq!(store.get(&[b.block_hash]).await.unwrap(), vec![Some(b)]);
     }
 }

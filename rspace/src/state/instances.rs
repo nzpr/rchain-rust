@@ -20,7 +20,7 @@ fn get_items<Value>(
     from_buffer: &dyn Fn(&[u8]) -> Value,
 ) -> Vec<(Blake2b256Hash, Value)> {
     let key_bytes: Vec<Vec<u8>> = keys.iter().map(hash_bytes).collect();
-    let loaded = store.get(&key_bytes);
+    let loaded = store.get(&key_bytes).unwrap_or_default();
     keys.iter()
         .zip(loaded)
         .filter_map(|(h, v)| v.map(|b| (*h, from_buffer(&b))))
@@ -60,6 +60,7 @@ impl TrieExporter<Blake2b256Hash> for RSpaceExporterStore {
         let get_node = |h: &Blake2b256Hash| -> Option<Vec<u8>> {
             history_store
                 .get(&[hash_bytes(h)])
+                .unwrap_or_default()
                 .into_iter()
                 .next()
                 .flatten()
@@ -88,6 +89,7 @@ impl RSpaceExporter for RSpaceExporterStore {
     fn get_root(&self) -> Option<Blake2b256Hash> {
         self.roots_store
             .get(&[CURRENT_ROOT.to_vec()])
+            .unwrap_or_default()
             .into_iter()
             .next()
             .flatten()
@@ -126,7 +128,7 @@ impl TrieImporter<Blake2b256Hash> for RSpaceImporterStore {
             .iter()
             .map(|(h, v)| (hash_bytes(h), to_buffer(v)))
             .collect();
-        self.history_store.put(pairs);
+        let _ = self.history_store.put(pairs);
     }
 
     fn set_data_items<Value>(
@@ -138,13 +140,13 @@ impl TrieImporter<Blake2b256Hash> for RSpaceImporterStore {
             .iter()
             .map(|(h, v)| (hash_bytes(h), to_buffer(v)))
             .collect();
-        self.value_store.put(pairs);
+        let _ = self.value_store.put(pairs);
     }
 
     fn set_root(&mut self, key: Blake2b256Hash) {
         let bytes = hash_bytes(&key);
-        self.roots_store.put(vec![(bytes.clone(), ROOT_TAG.to_vec())]);
-        self.roots_store.put(vec![(CURRENT_ROOT.to_vec(), bytes)]);
+        let _ = self.roots_store.put(vec![(bytes.clone(), ROOT_TAG.to_vec())]);
+        let _ = self.roots_store.put(vec![(CURRENT_ROOT.to_vec(), bytes)]);
     }
 }
 
@@ -152,6 +154,7 @@ impl RSpaceImporter for RSpaceImporterStore {
     fn get_history_item(&self, hash: Blake2b256Hash) -> Option<Vec<u8>> {
         self.history_store
             .get(&[hash_bytes(&hash)])
+            .unwrap_or_default()
             .into_iter()
             .next()
             .flatten()
@@ -202,7 +205,9 @@ mod tests {
     fn exporter_reads_root_and_items() {
         let mut roots = InMemoryKeyValueStore::default();
         let root = Blake2b256Hash::from_bytes([0x11; 32]);
-        roots.put(vec![(CURRENT_ROOT.to_vec(), root.to_byte_array().to_vec())]);
+        roots
+            .put(vec![(CURRENT_ROOT.to_vec(), root.to_byte_array().to_vec())])
+            .unwrap();
 
         let exporter = RSpaceExporterStore::new(store(), store(), Box::new(roots));
         assert_eq!(exporter.get_root(), Some(root));
@@ -226,6 +231,7 @@ mod tests {
         let roots = &*importer.roots_store;
         let current = roots
             .get(&[CURRENT_ROOT.to_vec()])
+            .unwrap()
             .into_iter()
             .next()
             .flatten()

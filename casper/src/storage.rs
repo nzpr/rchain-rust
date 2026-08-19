@@ -110,11 +110,11 @@ mod tests {
         let store = manager.store("deploy-pool").await.unwrap();
         {
             let mut kv = store.lock().await;
-            kv.put(vec![(b"k".to_vec(), b"v".to_vec())]);
+            kv.put(vec![(b"k".to_vec(), b"v".to_vec())]).unwrap();
         }
         {
             let kv = store.lock().await;
-            assert_eq!(kv.get(&[b"k".to_vec()]), vec![Some(b"v".to_vec())]);
+            assert_eq!(kv.get(&[b"k".to_vec()]).unwrap(), vec![Some(b"v".to_vec())]);
         }
         manager.shutdown().await;
         drop(manager);

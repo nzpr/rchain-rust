@@ -45,9 +45,9 @@ pub async fn get_block_unsafe(
 }
 
 /// Put a block into the store (port of `BlockStoreSyntax.put`).
-pub async fn put_block(store: &BlockStore, block: BlockMessage) {
+pub async fn put_block(store: &BlockStore, block: BlockMessage) -> Result<(), String> {
     let hash = block.block_hash;
-    store.put(&[(hash, block)]).await;
+    store.put(&[(hash, block)]).await
 }
 
 /// Get the approved block (port of `ApprovedStoreSyntax.getApprovedBlock`).
@@ -57,8 +57,8 @@ pub async fn get_approved_block(store: &ApprovedStore) -> Result<Option<Finalize
 }
 
 /// Put the approved block (port of `ApprovedStoreSyntax.putApprovedBlock`).
-pub async fn put_approved_block(store: &ApprovedStore, block: FinalizedFringe) {
-    store.put(&[(FINALIZED_FRINGE_KEY, block)]).await;
+pub async fn put_approved_block(store: &ApprovedStore, block: FinalizedFringe) -> Result<(), String> {
+    store.put(&[(FINALIZED_FRINGE_KEY, block)]).await
 }
 
 /// Look up block metadata, raising an inconsistency error if absent (port of

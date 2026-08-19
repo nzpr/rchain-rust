@@ -627,7 +627,7 @@ pub async fn setup_node_program(
                 let comm_util = comm_util.clone();
                 let block = block.clone();
                 Box::pin(async move {
-                    put_block(&block_store, block.clone()).await;
+                    let _ = put_block(&block_store, block.clone()).await;
                     comm_util
                         .send_block_hash(&block.block_hash, block.sender.as_bytes())
                         .await;

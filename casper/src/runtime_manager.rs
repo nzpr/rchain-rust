@@ -117,7 +117,7 @@ impl RuntimeManager {
             })
             .collect();
         let key = encode_mergeable_key(&post_state_hash, creator, seq_num);
-        self.mergeable_store.put(&[(key, deploy_channels)]).await;
+        self.mergeable_store.put(&[(key, deploy_channels)]).await?;
         Ok(())
     }
 
