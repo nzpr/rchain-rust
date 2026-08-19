@@ -207,6 +207,195 @@ impl Closed {
     }
 }
 
+// --- Well-scopedness (the variable half of the judgment) ---------------------------------
+
+fn well_scoped_var(ctx: &Ctx, v: &Var) -> bool {
+    match v {
+        Var::BoundVar(l) => *l >= 0 && (*l as usize) < ctx.len(),
+        Var::FreeVar(_) | Var::Wildcard | Var::Empty => true,
+    }
+}
+
+fn well_scoped_par<S: Sort>(ctx: &Ctx, p: &Par<S>) -> bool {
+    p.sends.iter().all(|s| well_scoped_send(ctx, s))
+        && p.receives.iter().all(|r| well_scoped_receive(ctx, r))
+        && p.news.iter().all(|n| well_scoped_new(ctx, n))
+        && p.exprs.iter().all(|e| well_scoped_expr(ctx, e))
+        && p.matches.iter().all(|m| well_scoped_match(ctx, m))
+        && p.bundles.iter().all(|b| well_scoped_par(ctx, &b.body))
+        && p.connectives.iter().all(|c| well_scoped_connective(ctx, c))
+}
+
+fn well_scoped_send(ctx: &Ctx, s: &Send) -> bool {
+    well_scoped_par(ctx, &s.chan) && s.data.iter().all(|d| well_scoped_par(ctx, d))
+}
+
+fn well_scoped_receive_bind(ctx: &Ctx, rb: &ReceiveBind) -> bool {
+    rb.patterns.iter().all(|p| well_scoped_par(ctx, p))
+        && well_scoped_par(ctx, &rb.source)
+        && rb.remainder
+            .as_ref()
+            .map(|v| well_scoped_var(ctx, v))
+            .unwrap_or(true)
+}
+
+fn well_scoped_receive(ctx: &Ctx, r: &Receive) -> bool {
+    r.binds.iter().all(|b| well_scoped_receive_bind(ctx, b)) && well_scoped_par(ctx, &r.body)
+}
+
+fn well_scoped_new(ctx: &Ctx, n: &New) -> bool {
+    well_scoped_par(ctx, &n.p)
+}
+
+fn well_scoped_match_case(ctx: &Ctx, mc: &MatchCase) -> bool {
+    well_scoped_par(ctx, &mc.pattern) && well_scoped_par(ctx, &mc.source)
+}
+
+fn well_scoped_match(ctx: &Ctx, m: &Match) -> bool {
+    well_scoped_par(ctx, &m.target) && m.cases.iter().all(|c| well_scoped_match_case(ctx, c))
+}
+
+fn well_scoped_expr(ctx: &Ctx, e: &Expr) -> bool {
+    match e {
+        Expr::GBool(_)
+        | Expr::GInt(_)
+        | Expr::GBigInt(_)
+        | Expr::GString(_)
+        | Expr::GUri(_)
+        | Expr::GByteArray(_) => true,
+        Expr::EVar(v) => well_scoped_var(ctx, v),
+        Expr::ENot(p) | Expr::ENeg(p) => well_scoped_par(ctx, p),
+        Expr::EMult(p, q)
+        | Expr::EDiv(p, q)
+        | Expr::EMod(p, q)
+        | Expr::EPlus(p, q)
+        | Expr::EMinus(p, q)
+        | Expr::ELt(p, q)
+        | Expr::ELte(p, q)
+        | Expr::EGt(p, q)
+        | Expr::EGte(p, q)
+        | Expr::EEq(p, q)
+        | Expr::ENeq(p, q)
+        | Expr::EAnd(p, q)
+        | Expr::EOr(p, q)
+        | Expr::EShortAnd(p, q)
+        | Expr::EShortOr(p, q)
+        | Expr::EMatches(p, q)
+        | Expr::EPercentPercent(p, q)
+        | Expr::EPlusPlus(p, q)
+        | Expr::EMinusMinus(p, q) => well_scoped_par(ctx, p) && well_scoped_par(ctx, q),
+        Expr::EList(el) => el.ps.iter().all(|p| well_scoped_par(ctx, p)),
+        Expr::ETuple(et) => et.ps.iter().all(|p| well_scoped_par(ctx, p)),
+        Expr::ESet(set) => set.ps.iter().all(|p| well_scoped_par(ctx, p)),
+        Expr::EMap(map) => map
+            .kvs
+            .iter()
+            .all(|(k, v)| well_scoped_par(ctx, k) && well_scoped_par(ctx, v)),
+        Expr::EMethod(em) => {
+            well_scoped_par(ctx, &em.target) && em.arguments.iter().all(|p| well_scoped_par(ctx, p))
+        }
+    }
+}
+
+fn well_scoped_connective(ctx: &Ctx, c: &Connective) -> bool {
+    match c {
+        Connective::ConnAnd(cb) | Connective::ConnOr(cb) => {
+            cb.ps.iter().all(|p| well_scoped_par(ctx, p))
+        }
+        Connective::ConnNot(p) => well_scoped_par(ctx, p),
+        Connective::VarRef(_)
+        | Connective::ConnBool(_)
+        | Connective::ConnInt(_)
+        | Connective::ConnBigInt(_)
+        | Connective::ConnString(_)
+        | Connective::ConnUri(_)
+        | Connective::ConnByteArray(_)
+        | Connective::Empty => true,
+    }
+}
+
+/// `well_scoped Γ t` — every bound level of `t` is within `Γ` (the variable half of the typing
+/// judgment). A `BoundVar(l)` is in scope iff `0 ≤ l < Γ.len()`; free/wildcard/empty variables carry
+/// no local scope requirement.
+pub fn well_scoped(ctx: &Ctx, p: &Par) -> bool {
+    well_scoped_par(ctx, p)
+}
+
+/// A well-scoped process under a de Bruijn context `Γ` — the variable half of the typing judgment
+/// (`WellScoped Γ t`). Constructed only via [`WellScoped::new`], which is a declared partiality
+/// boundary: it returns `None` for a term with an out-of-scope bound level.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WellScoped {
+    ctx: Ctx,
+    par: Par,
+}
+
+impl WellScoped {
+    /// Validate that `par` is well-scoped under `ctx`. `None` is the declared boundary for an
+    /// out-of-scope bound variable.
+    pub fn new(ctx: Ctx, par: Par) -> Option<WellScoped> {
+        if well_scoped(&ctx, &par) {
+            Some(WellScoped { ctx, par })
+        } else {
+            None
+        }
+    }
+
+    /// The context the term is scoped under.
+    pub fn ctx(&self) -> &Ctx {
+        &self.ctx
+    }
+
+    /// Borrow the underlying (well-scoped) process.
+    pub fn as_par(&self) -> &Par {
+        &self.par
+    }
+}
+
+/// One-way boundary discharge: a well-scoped process re-enters the general `Par` (the proof is
+/// dropped at the boundary).
+impl From<WellScoped> for Par {
+    fn from(w: WellScoped) -> Par {
+        w.par
+    }
+}
+
+// --- BindsAtMostOnce (Law 5): the free-variable count of a pattern ----------------------
+
+/// The number of free variables a pattern binds (Law 5, `BindsAtMostOnce`): a non-negative count,
+/// carried by the `free_count` fields of `ReceiveBind`/`MatchCase`. The normalizer computes it as the
+/// number of *distinct* free variables in the pattern, so each is bound at most once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FreeCount(i32);
+
+impl FreeCount {
+    /// The empty-pattern count.
+    pub const ZERO: FreeCount = FreeCount(0);
+
+    /// Validated construction — the declared partiality boundary for a negative count.
+    pub fn new(n: i32) -> Option<FreeCount> {
+        if n >= 0 {
+            Some(FreeCount(n))
+        } else {
+            None
+        }
+    }
+
+    /// Total construction from a count already known non-negative (e.g. `FreeMap::count_no_wildcards`).
+    pub fn from_nonneg(n: i32) -> FreeCount {
+        debug_assert!(n >= 0, "free-count must be non-negative");
+        FreeCount(n)
+    }
+}
+
+/// One-way boundary discharge: the raw count (`i32`) is used at the range/arithmetic boundaries
+/// (e.g. `0..free_count`, the wire codec).
+impl From<FreeCount> for i32 {
+    fn from(f: FreeCount) -> i32 {
+        f.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +472,55 @@ mod tests {
     fn par_merge_preserves_closedness() {
         assert!(is_closed(&g_int(1).par_merge(&g_int(2))));
         assert!(!is_closed(&free_var(0).par_merge(&g_int(2))));
+    }
+
+    fn bound_var(l: i32) -> Par {
+        Par {
+            exprs: vec![Expr::EVar(Box::new(Var::BoundVar(l)))],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn well_scoped_bound_level_within_ctx() {
+        let ctx = vec![PSort::Name, PSort::Proc];
+        assert!(well_scoped(&ctx, &bound_var(0)));
+        assert!(well_scoped(&ctx, &bound_var(1)));
+        assert!(!well_scoped(&ctx, &bound_var(2)));
+        assert!(!well_scoped(&ctx, &bound_var(-1)));
+    }
+
+    #[test]
+    fn well_scoped_free_and_wildcard_are_always_in_scope() {
+        let ctx: Ctx = vec![];
+        assert!(well_scoped(&ctx, &free_var(0)));
+        assert!(well_scoped(&ctx, &Par::default()));
+    }
+
+    #[test]
+    fn well_scoped_newtype_validates() {
+        let ctx = vec![PSort::Proc];
+        assert!(WellScoped::new(ctx.clone(), bound_var(0)).is_some());
+        assert!(WellScoped::new(ctx.clone(), bound_var(1)).is_none());
+    }
+
+    #[test]
+    fn well_scoped_discharges_to_par() {
+        let ctx = vec![PSort::Proc];
+        let ws = WellScoped::new(ctx, bound_var(0)).unwrap();
+        let p: Par = ws.into();
+        assert_eq!(p, bound_var(0));
+    }
+
+    #[test]
+    fn free_count_rejects_negative() {
+        assert!(FreeCount::new(-1).is_none());
+        assert!(FreeCount::new(0).is_some());
+        assert_eq!(i32::from(FreeCount::new(3).unwrap()), 3);
+    }
+
+    #[test]
+    fn free_count_from_nonneg() {
+        assert_eq!(i32::from(FreeCount::from_nonneg(5)), 5);
     }
 }
