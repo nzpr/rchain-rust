@@ -168,3 +168,40 @@ Every place the Rust port deliberately departs from the Scala oracle, with the r
 - `tools/audit-type-system.sh` — zero hard production violations (`panic`/`unsafe`/`silent`).
 - New tests: `arithmetic_preserves_non_negativity` (`refined.rs`); existing radix-tree / message-state
   tests cover the array-node and `BlockHeight`/`SeqNum` refactors.
+
+---
+
+## 8. ρ-pure remediation (post prime-directive change)
+
+Under the new oracle (the ρ-calculus spec, not Scala), the following were **fixed**:
+
+- **Consensus super-majority** — `sdk/src/consensus.rs` f64 → exact integer `3·stake > 2·total`
+  (Law 14 precision loss for stakes ≥ 2⁵³).
+- **Stake → `NonNegI64`** — `Message`/`BlockMetadata`/`BlockMessage`/`compute_bonds`/
+  `fringe_bonds_map`/`unsigned_block_proto`/`bonds_parser`/`contracts.Validator.stake`; negative
+  stake rejected at the proto/genesis/bonds-file boundary.
+- **`split_byte` seed** — `i as u8`/`(len+i) as u8`/`i as u16` → checked `u8::try_from`/`u16::try_from`
+  (replay/proposer/reduce), so an oversized deploy list errors rather than wrapping the seed.
+- **`BlockData` height/seq** — `BlockHeight`/`SeqNum` carried through; discharge only at the
+  `rho:block:data` contract boundary.
+- **Raw-byte escapes** — `PublicKey` field closed (private), `KeySegment` `TryFrom<Vec<u8>>` (≤127),
+  `NodeIdentifier::from_hex` rejects odd-length/non-hex, `base16::try_decode` added and used at the
+  `is_finalized` API boundary.
+- **Signed-byte ordering** — `cmp_signed_byte` helper in `crypto::util::sorting` (shared with the sorter).
+
+**Assessed (not fixed — unreachable / boundary / over-engineering):**
+
+- **Length prefixes** (`radix_tree` `& 0x7F`, `certificate_helper` DER, `merging`/`block_random_seed`
+  varints+`uint16`, `state/mod`, `scodec`): the lengths are bounded by the wire format (`KeySegment`
+  ≤127), the protocol (32-byte hash / 65-byte key), or gas. The `& 0x7F` mask is the 7-bit
+  flag+length wire format, not a bug.
+- **Config/diagnostics casts** (`as_nanos() as i64`, `(n*mult) as i64`, f64→i64): faithful to Scala
+  `Long` nanoseconds/bytes; the truncation needs > 292-year durations or > 2⁶³-byte sizes.
+- **API heights** (`block_api_impl` `i32`/`i64` query params, `latest_block_number() -> i64`): the
+  `i32` query depth and the potentially-negative lower bound are legitimate API types; `m.height` is
+  already `BlockHeight` with discharge at the DTO.
+- **DTO boundary** (`deploy_service.rs`, `node/src/api/dto.rs`, `web/*`): `String`/`Vec<u8>` at the
+  wire edge is acceptable; validate-on-ingress remains a follow-up (noted, not done).
+- **`rho_expr.rs` `unsafe_decode`**: converting `rho_expr_to_par`/`unforg_to_par` to `Result` is a
+  follow-up (the recursive `.map` would become `try_collect`).
+
