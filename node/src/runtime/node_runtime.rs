@@ -735,6 +735,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
     let history =
         create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
             &store_manager,
+            "rspace",
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -764,11 +765,12 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         mergeable_store,
     ));
 
-    // Eval runtime for the Repl service (a second RSpace over the same history; the separate
-    // eval-* stores are deferred).
+    // Eval runtime for the Repl service — an isolated `eval-*` store set so REPL evaluation never
+    // reads/writes the node's live chain state (port of Scala's `evalStores`).
     let eval_history =
         create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
             &store_manager,
+            "eval",
         )
         .await
         .map_err(|e| e.to_string())?;

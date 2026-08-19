@@ -17,6 +17,7 @@ impl ReplRuntime {
         if TerminalMode::read_mode() {
             console.println_colored(&LOGO.red());
         }
+        console.update_completion(&ReplRuntime::keywords());
         loop {
             let Some(line) = console.read_line() else {
                 return;

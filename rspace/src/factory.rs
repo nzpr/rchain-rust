@@ -20,21 +20,23 @@ use crate::reporting_rspace::ReportingRspace;
 use crate::rspace::RSpace;
 
 /// Create a history repository over the three named stores (port of
-/// `HistoryRepositoryInstances.lmdbRepository`).
+/// `HistoryRepositoryInstances.lmdbRepository`). `prefix` separates store sets — `"rspace"` for the
+/// node's block state, `"eval"` for the REPL's isolated evaluation state.
 pub async fn create_history_repository<C, P, A, K>(
     manager: &dyn KeyValueStoreManager,
+    prefix: &str,
 ) -> Result<Arc<HistoryRepository<C, P, A, K>>, String> {
     let history_store = database(
         manager,
-        "rspace-history",
+        &format!("{prefix}-history"),
         Arc::new(Blake2b256HashCodec),
         Arc::new(BytesCodec),
     )
     .await?;
-    let roots_store = manager.store("rspace-roots").await?;
+    let roots_store = manager.store(&format!("{prefix}-roots")).await?;
     let cold_store = database(
         manager,
-        "rspace-cold",
+        &format!("{prefix}-cold"),
         Arc::new(Blake2b256HashCodec),
         Arc::new(PersistedDataCodec),
     )
@@ -62,7 +64,7 @@ where
     A: Clone + Serialize<A> + Send + Sync + 'static,
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
-    let history_repo = create_history_repository::<C, P, A, K>(manager).await?;
+    let history_repo = create_history_repository::<C, P, A, K>(manager, "rspace").await?;
     let reader = history_repo.get_history_reader(history_repo.root()).await;
     let hot_store = Arc::new(InMemHotStore::new(reader.base()));
     let (play, _replay) = RSpace::create_with_replay(history_repo, hot_store, matcher);
@@ -80,7 +82,7 @@ where
     A: Clone + Serialize<A> + Send + Sync + 'static,
     K: Clone + Serialize<K> + Send + Sync + 'static,
 {
-    let history_repo = create_history_repository::<C, P, A, K>(manager).await?;
+    let history_repo = create_history_repository::<C, P, A, K>(manager, "rspace").await?;
     let reader = history_repo.get_history_reader(history_repo.root()).await;
     let hot_store = Arc::new(InMemHotStore::new(reader.base()));
     let (_play, replay) = RSpace::create_with_replay(history_repo, hot_store, matcher);

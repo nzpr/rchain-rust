@@ -12,7 +12,7 @@ use rchain_crypto::signatures::signatures_alg::{from_algorithm, SignaturesAlg};
 use rchain_crypto::util::key_util::write_keys;
 
 use crate::configuration::commandline::options::{Commands, Options};
-use crate::effects::{ConsoleIo, GrpcReplClient, StdioConsole};
+use crate::effects::{ConsoleIo, GrpcReplClient, RustylineConsole, StdioConsole};
 use crate::runtime::repl_runtime::ReplRuntime;
 
 /// The internal gRPC port used by the repl/propose clients by default (port of `Options.GrpcInternalPort`).
@@ -41,7 +41,7 @@ pub async fn run_cli(options: &Options) -> Result<(), Vec<String>> {
                 .await
                 .map_err(|e| vec![e])?;
             tokio::task::spawn_blocking(move || {
-                let mut console = StdioConsole;
+                let mut console = RustylineConsole::new();
                 ReplRuntime.repl_program(&mut console, &client);
             })
             .await

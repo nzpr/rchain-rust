@@ -17,6 +17,7 @@ pub async fn build_runtime_pair() -> (RhoRuntime, ReplayRhoRuntime) {
     let history =
         create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
             &manager,
+            "rspace",
         )
         .await
         .expect("history repository");

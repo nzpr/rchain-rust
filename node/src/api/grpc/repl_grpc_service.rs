@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_rholang::normalizer::source_to_adt;
+use rchain_rholang::pretty_printer::PrettyPrinter;
 use rchain_rholang::runtime::RhoRuntime;
 use rchain_rholang::storage_printer::{pretty_print, pretty_print_unmatched_sends};
 
@@ -52,7 +53,10 @@ impl ReplGrpcService {
             Err(e) => ReplResponse {
                 output: format!("Error: {e}"),
             },
-            Ok(_term) => {
+            Ok(term) => {
+                // Port of `printNormalizedTerm`: echo the normalized term on the node console.
+                println!("\nEvaluating:");
+                println!("{}", PrettyPrinter::new().build_string(term.as_par()));
                 let rand = Blake2b512Random::default_random();
                 let eval = self.runtime.evaluate(source, &rand).await;
                 let pretty_storage = if print_unmatched_sends_only {

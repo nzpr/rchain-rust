@@ -12,6 +12,7 @@ futures-util = "0.3"
 hocon = "0.9"
 linked-hash-map = "0.5"
 prost = "0.13"
+rustyline = { version = "14", features = ["derive"] }
 rchain-block-storage = { path = "../block-storage" }
 rchain-casper = { path = "../casper" }
 rchain-comm = { path = "../comm" }
