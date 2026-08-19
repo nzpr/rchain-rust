@@ -70,50 +70,54 @@ impl From<crate::ast::Name> for Par {
 }
 
 // --- Closedness (Law 6): no free variables ------------------------------------------------
+//
+// A term is *closed* when it has no free variables in evaluation position. A `FreeVar` in *pattern*
+// position (the binders of `ReceiveBind.patterns` / `MatchCase.pattern`) is a binder, not a free
+// variable, so the `pattern` flag distinguishes the two positions as the check recurses.
 
-fn closed_var(v: &Var) -> bool {
+fn closed_var(v: &Var, pattern: bool) -> bool {
     match v {
-        Var::FreeVar(_) => false,
+        Var::FreeVar(_) => pattern,
         Var::BoundVar(_) | Var::Wildcard | Var::Empty => true,
     }
 }
 
-fn closed_par<S: Sort>(p: &Par<S>) -> bool {
-    p.sends.iter().all(closed_send)
-        && p.receives.iter().all(closed_receive)
-        && p.news.iter().all(closed_new)
-        && p.exprs.iter().all(closed_expr)
-        && p.matches.iter().all(closed_match)
+fn closed_par<S: Sort>(p: &Par<S>, pattern: bool) -> bool {
+    p.sends.iter().all(|s| closed_send(s, pattern))
+        && p.receives.iter().all(|r| closed_receive(r, pattern))
+        && p.news.iter().all(|n| closed_new(n, pattern))
+        && p.exprs.iter().all(|e| closed_expr(e, pattern))
+        && p.matches.iter().all(|m| closed_match(m, pattern))
         && p.unforgeables.iter().all(closed_unforgeable)
-        && p.bundles.iter().all(closed_bundle)
-        && p.connectives.iter().all(closed_connective)
+        && p.bundles.iter().all(|b| closed_bundle(b, pattern))
+        && p.connectives.iter().all(|c| closed_connective(c, pattern))
 }
 
-fn closed_send(s: &Send) -> bool {
-    closed_par(&s.chan) && s.data.iter().all(closed_par)
+fn closed_send(s: &Send, pattern: bool) -> bool {
+    closed_par(&s.chan, pattern) && s.data.iter().all(|d| closed_par(d, pattern))
 }
 
-fn closed_receive_bind(rb: &ReceiveBind) -> bool {
-    rb.patterns.iter().all(closed_par) && closed_par(&rb.source)
+fn closed_receive_bind(rb: &ReceiveBind, pattern: bool) -> bool {
+    rb.patterns.iter().all(|p| closed_par(p, true)) && closed_par(&rb.source, pattern)
 }
 
-fn closed_receive(r: &Receive) -> bool {
-    r.binds.iter().all(closed_receive_bind) && closed_par(&r.body)
+fn closed_receive(r: &Receive, pattern: bool) -> bool {
+    r.binds.iter().all(|b| closed_receive_bind(b, pattern)) && closed_par(&r.body, pattern)
 }
 
-fn closed_new(n: &New) -> bool {
-    closed_par(&n.p)
+fn closed_new(n: &New, pattern: bool) -> bool {
+    closed_par(&n.p, pattern)
 }
 
-fn closed_match_case(mc: &MatchCase) -> bool {
-    closed_par(&mc.pattern) && closed_par(&mc.source)
+fn closed_match_case(mc: &MatchCase, pattern: bool) -> bool {
+    closed_par(&mc.pattern, true) && closed_par(&mc.source, pattern)
 }
 
-fn closed_match(m: &Match) -> bool {
-    closed_par(&m.target) && m.cases.iter().all(closed_match_case)
+fn closed_match(m: &Match, pattern: bool) -> bool {
+    closed_par(&m.target, pattern) && m.cases.iter().all(|c| closed_match_case(c, pattern))
 }
 
-fn closed_expr(e: &Expr) -> bool {
+fn closed_expr(e: &Expr, pattern: bool) -> bool {
     match e {
         Expr::GBool(_)
         | Expr::GInt(_)
@@ -121,8 +125,8 @@ fn closed_expr(e: &Expr) -> bool {
         | Expr::GString(_)
         | Expr::GUri(_)
         | Expr::GByteArray(_) => true,
-        Expr::EVar(v) => closed_var(v),
-        Expr::ENot(p) | Expr::ENeg(p) => closed_par(p),
+        Expr::EVar(v) => closed_var(v, pattern),
+        Expr::ENot(p) | Expr::ENeg(p) => closed_par(p, pattern),
         Expr::EMult(p, q)
         | Expr::EDiv(p, q)
         | Expr::EMod(p, q)
@@ -141,27 +145,34 @@ fn closed_expr(e: &Expr) -> bool {
         | Expr::EMatches(p, q)
         | Expr::EPercentPercent(p, q)
         | Expr::EPlusPlus(p, q)
-        | Expr::EMinusMinus(p, q) => closed_par(p) && closed_par(q),
-        Expr::EList(el) => el.ps.iter().all(closed_par),
-        Expr::ETuple(et) => et.ps.iter().all(closed_par),
-        Expr::ESet(set) => set.ps.iter().all(closed_par),
-        Expr::EMap(map) => map.kvs.iter().all(|(k, v)| closed_par(k) && closed_par(v)),
-        Expr::EMethod(em) => closed_par(&em.target) && em.arguments.iter().all(closed_par),
+        | Expr::EMinusMinus(p, q) => closed_par(p, pattern) && closed_par(q, pattern),
+        Expr::EList(el) => el.ps.iter().all(|p| closed_par(p, pattern)),
+        Expr::ETuple(et) => et.ps.iter().all(|p| closed_par(p, pattern)),
+        Expr::ESet(set) => set.ps.iter().all(|p| closed_par(p, pattern)),
+        Expr::EMap(map) => map
+            .kvs
+            .iter()
+            .all(|(k, v)| closed_par(k, pattern) && closed_par(v, pattern)),
+        Expr::EMethod(em) => {
+            closed_par(&em.target, pattern) && em.arguments.iter().all(|p| closed_par(p, pattern))
+        }
     }
 }
 
-fn closed_bundle(b: &Bundle) -> bool {
-    closed_par(&b.body)
+fn closed_bundle(b: &Bundle, pattern: bool) -> bool {
+    closed_par(&b.body, pattern)
 }
 
 fn closed_unforgeable(_: &GUnforgeable) -> bool {
     true
 }
 
-fn closed_connective(c: &Connective) -> bool {
+fn closed_connective(c: &Connective, pattern: bool) -> bool {
     match c {
-        Connective::ConnAnd(cb) | Connective::ConnOr(cb) => cb.ps.iter().all(closed_par),
-        Connective::ConnNot(p) => closed_par(p),
+        Connective::ConnAnd(cb) | Connective::ConnOr(cb) => {
+            cb.ps.iter().all(|p| closed_par(p, pattern))
+        }
+        Connective::ConnNot(p) => closed_par(p, pattern),
         Connective::VarRef(_)
         | Connective::ConnBool(_)
         | Connective::ConnInt(_)
@@ -176,7 +187,7 @@ fn closed_connective(c: &Connective) -> bool {
 /// `is_closed p` — the process has no free variables (Law 6). Decidable, and preserved by
 /// composition, `≡`, and canonicalization (mirrors `Ty.lean`'s `closed` / `Closed`).
 pub fn is_closed(p: &Par) -> bool {
-    closed_par(p)
+    closed_par(p, false)
 }
 
 /// A closed process — the well-formedness refinement that makes the interpreter's partiality
@@ -532,5 +543,70 @@ mod tests {
     #[test]
     fn free_count_from_nonneg() {
         assert_eq!(i32::from(FreeCount::from_nonneg(5)), 5);
+    }
+
+    #[test]
+    fn receive_pattern_binder_is_closed() {
+        // `for (x <- ch) { Nil }` has no free variables: the pattern `x` is a binder.
+        let recv = Par {
+            receives: vec![Receive {
+                binds: vec![ReceiveBind {
+                    patterns: vec![Par {
+                        exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
+                        ..Default::default()
+                    }],
+                    source: Box::new(Par::default()),
+                    remainder: None,
+                    free_count: FreeCount::from_nonneg(1),
+                }],
+                body: Box::new(Par::default()),
+                persistent: false,
+                peek: false,
+                bind_count: 1,
+                locally_free: Default::default(),
+                connective_used: false,
+            }],
+            ..Default::default()
+        };
+        assert!(is_closed(&recv));
+    }
+
+    #[test]
+    fn match_pattern_binder_is_closed() {
+        // `match x { y => Nil }` has no free variables: the case pattern `y` is a binder.
+        let m = Par {
+            matches: vec![Match {
+                target: Box::new(g_int(1).quote()),
+                cases: vec![MatchCase {
+                    pattern: Box::new(Par {
+                        exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
+                        ..Default::default()
+                    }
+                    .quote()),
+                    source: Box::new(Par::default()),
+                    free_count: FreeCount::from_nonneg(1),
+                }],
+                locally_free: Default::default(),
+                connective_used: false,
+            }],
+            ..Default::default()
+        };
+        assert!(is_closed(&m));
+    }
+
+    #[test]
+    fn evaluation_free_var_is_still_not_closed() {
+        // A free variable in a send's data (evaluation position) is genuinely free.
+        let send = Par {
+            sends: vec![Send {
+                data: vec![Par {
+                    exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(!is_closed(&send));
     }
 }
