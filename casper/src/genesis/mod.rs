@@ -12,6 +12,7 @@ use rchain_models::casper::protocol::casper_message::{
 };
 use rchain_models::validator::Validator as ModelsValidator;
 use rchain_rholang::system_processes::BlockData;
+use rchain_shared::refined::NonNegI64;
 
 use crate::block_random_seed::BlockRandomSeed;
 use crate::genesis::contracts::{ProofOfStake, Registry, Vault};
@@ -33,11 +34,17 @@ pub struct Genesis {
 }
 
 /// Build the bonds map (validator pubkey → stake) from the PoS validators (port of `buildBondsMap`).
-fn build_bonds_map(proof_of_stake: &ProofOfStake) -> BTreeMap<ModelsValidator, i64> {
+fn build_bonds_map(
+    proof_of_stake: &ProofOfStake,
+) -> Result<BTreeMap<ModelsValidator, NonNegI64>, String> {
     proof_of_stake
         .validators
         .iter()
-        .map(|v| (ModelsValidator::from_slice(v.pk.bytes()), v.stake))
+        .map(|v| {
+            let stake = NonNegI64::try_from(v.stake)
+                .map_err(|_| "negative genesis validator stake".to_string())?;
+            Ok((ModelsValidator::from_slice(v.pk.bytes()), stake))
+        })
         .collect()
 }
 
@@ -66,7 +73,7 @@ fn create_block_with_processed_deploys(
         pre_state_hash,
         post_state_hash,
         Vec::new(),
-        build_bonds_map(&genesis.proof_of_stake),
+        build_bonds_map(&genesis.proof_of_stake)?,
         BTreeSet::new(),
         state,
     ))
@@ -181,9 +188,9 @@ mod tests {
 
     #[test]
     fn build_bonds_map_extracts_stakes() {
-        let bonds = build_bonds_map(&pos());
+        let bonds = build_bonds_map(&pos()).unwrap();
         assert_eq!(bonds.len(), 2);
-        assert_eq!(bonds[&ModelsValidator::from_slice(&[1; 65])], 10);
-        assert_eq!(bonds[&ModelsValidator::from_slice(&[2; 65])], 20);
+        assert_eq!(i64::from(bonds[&ModelsValidator::from_slice(&[1; 65])]), 10);
+        assert_eq!(i64::from(bonds[&ModelsValidator::from_slice(&[2; 65])]), 20);
     }
 }

@@ -1,6 +1,8 @@
 # Type-system specification for the RNodeRust port (ρ-calculus → Calculus of Constructions)
 
-This document specifies the **type discipline** of the Rust port's own code. It is guided by
+The **ρ-calculus core** (the grammar with its two sorts, the structural operations, and the
+refinements) is defined in [`RHO-CALCULUS.md`](RHO-CALCULUS.md); this document is the *type
+discipline* of the Rust port's own code over that core. It is guided by
 machine-checked Lean 4 proofs (in [`Rchain/Rho.lean`](Rchain/Rho.lean) and
 [`Rchain/Ty.lean`](Rchain/Ty.lean)) that embed the ρ-calculus as the base sort of a Calculus of
 Constructions (Lean's CIC) and prove the *fundamentals* below. It is **not** a behavior change and

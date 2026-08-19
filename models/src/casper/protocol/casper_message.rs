@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use prost::Message as _;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
-use rchain_shared::refined::{BlockHeight, SeqNum};
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 use rchain_shared::serialize::Serialize;
 
 use crate::block::state_hash::StateHash;
@@ -492,7 +492,7 @@ pub struct BlockMessage {
     pub pre_state_hash: Vec<u8>,
     pub post_state_hash: Vec<u8>,
     pub justifications: Vec<BlockHash>,
-    pub bonds: BTreeMap<Validator, i64>,
+    pub bonds: BTreeMap<Validator, NonNegI64>,
     pub rejected_deploys: std::collections::BTreeSet<Vec<u8>>,
     pub rejected_blocks: std::collections::BTreeSet<BlockHash>,
     pub rejected_senders: std::collections::BTreeSet<Vec<u8>>,
@@ -526,8 +526,12 @@ impl BlockMessage {
             bonds: bm
                 .bonds
                 .iter()
-                .map(|b| (Validator::from_slice(&b.validator), b.stake))
-                .collect(),
+                .map(|b| {
+                    let stake = NonNegI64::try_from(b.stake)
+                        .map_err(|_| crate::errors::ModelsError::Malformed("negative bond stake"))?;
+                    Ok((Validator::from_slice(&b.validator), stake))
+                })
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
             rejected_deploys: bm.rejected_deploys.iter().cloned().collect(),
             rejected_blocks: bm.rejected_blocks.iter().map(|b| BlockHash::from_slice(b)).collect(),
             rejected_senders: bm.rejected_senders.iter().cloned().collect(),
@@ -546,7 +550,7 @@ impl BlockMessage {
             .iter()
             .map(|(validator, stake)| BondProto {
                 validator: validator.as_bytes().to_vec(),
-                stake: *stake,
+                stake: i64::from(*stake),
             })
             .collect();
         bonds.sort_by(|a, b| a.validator.cmp(&b.validator));
@@ -1066,7 +1070,11 @@ mod tests {
     #[test]
     fn law16_to_proto_sorts_bonds_and_rejections() {
         let mut block = empty_block();
-        block.bonds = BTreeMap::from([(validator(3), 1), (validator(1), 2), (validator(2), 3)]);
+        block.bonds = BTreeMap::from([
+            (validator(3), 1.try_into().unwrap()),
+            (validator(1), 2.try_into().unwrap()),
+            (validator(2), 3.try_into().unwrap()),
+        ]);
         block.rejected_blocks = [block_hash(9), block_hash(1)]
             .into_iter()
             .collect();
@@ -1084,7 +1092,7 @@ mod tests {
     fn block_message_round_trips() {
         let mut block = empty_block();
         block.justifications = vec![block_hash(1), block_hash(2)];
-        block.bonds = BTreeMap::from([(validator(1), 100)]);
+        block.bonds = BTreeMap::from([(validator(1), 100.try_into().unwrap())]);
         block.rejected_blocks = [block_hash(7)].into_iter().collect();
         let bytes = block.to_bytes();
         let decoded = BlockMessage::from_bytes(&bytes).unwrap();

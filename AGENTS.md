@@ -12,6 +12,7 @@ Single sources of truth (do not duplicate these):
 |---|---|
 | Why the rewrite (memory safety + λ → π → ρ → CoC) | [`docs/src/why-rust.md`](docs/src/why-rust.md) |
 | Layer map, module status, rewrite order, remaining work | [`docs/src/architecture.md`](docs/src/architecture.md) |
+| The ρ-calculus core (grammar, sorts, operations, refinements, Rust realization) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
 | The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
 | Machine-checked Lean/Coq definitions & proofs | [`spec/`](spec/) |

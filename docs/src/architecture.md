@@ -104,4 +104,8 @@ Remaining (Phase 4):
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).
+- **Safe-by-construction type system** — the ρ-calculus core
+  ([`spec/RHO-CALCULUS.md`](../../spec/RHO-CALCULUS.md)) is being realized as a sort-indexed `Par<S>`
+  (compile-time Name/Proc) plus the `Closed`/`WellScoped`/`BindsAtMostOnce` refinements, with the
+  ~284-cast / raw-byte remediation (see [`spec/AUDIT.md`](../../spec/AUDIT.md)).
 - **`rspace-bench`** — gated.

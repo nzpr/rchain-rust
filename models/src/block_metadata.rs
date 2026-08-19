@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use prost::Message as _;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
-use rchain_shared::refined::{BlockHeight, SeqNum};
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 
 use crate::block::state_hash::StateHash;
 use crate::block_hash::BlockHash;
@@ -26,7 +26,7 @@ pub struct BlockMetadata {
     pub sender: Validator,
     pub seq_num: SeqNum,
     pub justifications: BTreeSet<BlockHash>,
-    pub bonds_map: BTreeMap<Validator, i64>,
+    pub bonds_map: BTreeMap<Validator, NonNegI64>,
     pub validated: bool,
     pub validation_failed: bool,
     pub fringe: BTreeSet<BlockHash>,
@@ -54,8 +54,12 @@ impl BlockMetadata {
             bonds_map: b
                 .bonds
                 .iter()
-                .map(|bond| (Validator::from_slice(&bond.validator), bond.stake))
-                .collect(),
+                .map(|bond| {
+                    let stake = NonNegI64::try_from(bond.stake)
+                        .map_err(|_| crate::errors::ModelsError::Malformed("negative bond stake"))?;
+                    Ok((Validator::from_slice(&bond.validator), stake))
+                })
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
             validated: b.validated,
             validation_failed: b.validation_failed,
             fringe: b.fringe.iter().map(|f| BlockHash::from_slice(f)).collect(),
@@ -91,7 +95,7 @@ impl BlockMetadata {
                 .iter()
                 .map(|(validator, stake)| BondProto {
                     validator: validator.as_bytes().to_vec(),
-                    stake: *stake,
+                    stake: i64::from(*stake),
                 })
                 .collect(),
             validated: self.validated,
@@ -152,7 +156,7 @@ mod tests {
             sender: validator(2),
             seq_num: 1.try_into().unwrap(),
             justifications: [block_hash(2), block_hash(1)].into_iter().collect(),
-            bonds_map: BTreeMap::from([(validator(2), 100)]),
+            bonds_map: BTreeMap::from([(validator(2), 100.try_into().unwrap())]),
             validated: true,
             validation_failed: false,
             fringe: [block_hash(5)].into_iter().collect(),
@@ -175,7 +179,7 @@ mod tests {
             pre_state_hash: vec![],
             post_state_hash: vec![],
             justifications: vec![block_hash(2)],
-            bonds: BTreeMap::from([(validator(2), 100)]),
+            bonds: BTreeMap::from([(validator(2), 100.try_into().unwrap())]),
             rejected_deploys: Default::default(),
             rejected_blocks: Default::default(),
             rejected_senders: Default::default(),
@@ -189,7 +193,7 @@ mod tests {
         assert_eq!(meta.sender, validator(2));
         assert_eq!(meta.seq_num, 3.try_into().unwrap());
         assert_eq!(meta.justifications, [block_hash(2)].into_iter().collect());
-        assert_eq!(meta.bonds_map, BTreeMap::from([(validator(2), 100)]));
+        assert_eq!(meta.bonds_map, BTreeMap::from([(validator(2), 100.try_into().unwrap())]));
         assert!(!meta.validated);
     }
 }

@@ -38,7 +38,7 @@ where
         height: BlockHeight,
         sender: S,
         sender_seq: SeqNum,
-        fin_bonds_map: BTreeMap<S, i64>,
+        fin_bonds_map: BTreeMap<S, NonNegI64>,
         justifications: &BTreeSet<Message<M, S>>,
     ) -> Message<M, S> {
         let finalizer = Finalizer::new(self.msg_map.clone());

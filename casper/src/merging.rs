@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 
 use rchain_block_storage::block_store::BlockStore;
+use rchain_shared::refined::NonNegI64;
 use rchain_block_storage::dag::finalizer::Message;
 use rchain_block_storage::dag::message_map;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
@@ -91,7 +92,7 @@ pub struct ParentsMergedState {
     pub max_seq_nums: BTreeMap<Validator, i64>,
     pub fringe: BTreeSet<BlockHash>,
     pub fringe_state: Blake2b256Hash,
-    pub fringe_bonds_map: BTreeMap<Validator, i64>,
+    pub fringe_bonds_map: BTreeMap<Validator, NonNegI64>,
     pub fringe_rejected_deploys: BTreeSet<Vec<u8>>,
     pub pre_state_hash: Blake2b256Hash,
     pub rejected_deploys: BTreeSet<Vec<u8>>,

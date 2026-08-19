@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
 use rchain_sdk::consensus::is_super_majority;
-use rchain_shared::refined::{BlockHeight, SeqNum};
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 
 use super::message_map;
 
@@ -16,17 +16,16 @@ use super::message_map;
 /// `hashCode` is overridden to `id.hashCode()` in the Scala (identity for set/map membership);
 /// the Rust `Hash` impl mirrors that. `Eq`/`Ord` remain full structural comparison.
 ///
-/// `height`/`sender_seq` carry their non-negativity structurally (`BlockHeight`/`SeqNum`). The
-/// `bonds_map` value is a *stake* amount (non-negative by the PoS invariant); it remains `i64`
-/// here because stake is a distinct domain quantity from a block height — see the type-erasure
-/// catalogue for the outstanding `Bond`/`NonNegI64` refinement.
+/// `height`/`sender_seq` carry their non-negativity structurally (`BlockHeight`/`SeqNum`), and the
+/// `bonds_map` value is a *stake* amount (non-negative by the PoS invariant), carried as `NonNegI64`
+/// (the `Bond` refinement).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Message<M, S> {
     pub id: M,
     pub height: BlockHeight,
     pub sender: S,
     pub sender_seq: SeqNum,
-    pub bonds_map: BTreeMap<S, i64>,
+    pub bonds_map: BTreeMap<S, NonNegI64>,
     pub parents: BTreeSet<M>,
     pub fringe: BTreeSet<M>,
     /// Cache of seen message ids.
@@ -80,7 +79,7 @@ where
     }
 
     /// Whether the minimum messages are enough for the next-fringe calculation.
-    pub fn check_min_messages(&self, min_msgs: &[Message<M, S>], bonds_map: &BTreeMap<S, i64>) -> bool {
+    pub fn check_min_messages(&self, min_msgs: &[Message<M, S>], bonds_map: &BTreeMap<S, NonNegI64>) -> bool {
         // TODO: epoch changes need more than a sender-count comparison.
         min_msgs.len() == bonds_map.len()
     }
@@ -145,24 +144,24 @@ where
     pub fn calculate_fringe(
         &self,
         next_fringe_support_map: &BTreeMap<S, BTreeMap<S, BTreeSet<S>>>,
-        bonds_map: &BTreeMap<S, i64>,
+        bonds_map: &BTreeMap<S, NonNegI64>,
     ) -> bool {
         let bonded_senders: BTreeSet<S> = bonds_map.keys().cloned().collect();
         let mut full_partition_stake: i64 = 0;
         for (sender, seen_by) in next_fringe_support_map {
             let all_bonded = !seen_by.is_empty() && seen_by.values().all(|v| v == &bonded_senders);
             if all_bonded {
-                full_partition_stake += bonds_map[sender];
+                full_partition_stake += i64::from(bonds_map[sender]);
             }
         }
-        let total_stake: i64 = bonds_map.values().sum();
+        let total_stake: i64 = bonds_map.values().map(|v| i64::from(*v)).sum();
         is_super_majority(full_partition_stake, total_stake)
     }
 
     fn next_fringe(
         &self,
         justifications: &BTreeSet<Message<M, S>>,
-        bonds_map: &BTreeMap<S, i64>,
+        bonds_map: &BTreeMap<S, NonNegI64>,
         prev_fringe: &BTreeSet<Message<M, S>>,
     ) -> Option<BTreeSet<Message<M, S>>> {
         // Minimum (oldest non-finalized) message from each justification sender.
@@ -190,7 +189,7 @@ where
     pub fn calculate_finalization(
         &self,
         justifications: &BTreeSet<Message<M, S>>,
-        bonds_map: &BTreeMap<S, i64>,
+        bonds_map: &BTreeMap<S, NonNegI64>,
     ) -> (BTreeSet<Message<M, S>>, Option<BTreeSet<Message<M, S>>>) {
         let parent_fringe = message_map::latest_fringe(&self.msg_map, justifications);
         let mut current = parent_fringe.clone();
@@ -220,8 +219,11 @@ mod tests {
         }
     }
 
-    fn bonded() -> BTreeMap<i32, i64> {
-        [(0, 1), (1, 1), (2, 1)].into_iter().collect()
+    fn bonded() -> BTreeMap<i32, NonNegI64> {
+        [(0, 1), (1, 1), (2, 1)]
+            .into_iter()
+            .map(|(k, v)| (k, NonNegI64::try_from(v).unwrap()))
+            .collect()
     }
 
     /// A support map in which every sender in `see_full` sees the full bonded partition.

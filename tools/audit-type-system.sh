@@ -17,10 +17,12 @@
 #             `..parse(..).unwrap_or(`. A fallible conversion must not be flattened to 0/Default.
 #
 # Soft reports (exit 0, informational — refined by `cargo clippy` + manual review):
-#   cast    — narrowing / signedness-changing numeric casts (`as i8/i32/u8/u32/..`).
+#   cast    — narrowing / signedness-changing numeric casts (`as i8/i32/i64/u8/u32/..`).
+#   lax     — silent parse/hex escapes: `from_str_radix(..).unwrap_or(..)` and `base16::unsafe_decode`
+#             (a hex decode that skips non-hex and never length-checks).
 #   get     — index access and `.get(..).unwrap()`-style lookups.
 #
-# Usage: tools/audit-type-system.sh [panic|unsafe|silent|cast|get]   (default: all)
+# Usage: tools/audit-type-system.sh [panic|unsafe|silent|cast|lax|get]   (default: all)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CRATES=(sdk shared crypto graphz models block-storage comm rspace rholang casper regex node)
@@ -110,16 +112,17 @@ run_class() {
     panic)   scan panic '\.unwrap\(\)|\.expect\(|panic!|unreachable!|todo!|unimplemented!' panic ;;
     unsafe)  scan unsafe 'unsafe[[:space:]]*\{' '' ;;
     silent)  scan silent 'try_into\(\)\.(unwrap|expect)\(|try_(into\(\)|from\(.*\))\.unwrap_or(\(0\)|_default\(\))|\.parse(::<[^>]+>)?\(\)\.unwrap_or(\(0\)|_default\(\))' '' ;;
-    cast)    scan cast '\bas (i8|i16|i32|u8|u16|u32|u64|usize|isize|f32|f64)\b' '' ;;
+    cast)    scan cast '\bas (i8|i16|i32|i64|u8|u16|u32|u64|usize|isize|f32|f64)\b' '' ;;
+    lax)     scan lax 'from_str_radix\([^)]*\)\.(unwrap_or|unwrap|expect)\(|unsafe_decode\(' '' ;;
     get)     scan get '\.get\([^)]*\)\.(unwrap|expect)\(|\.(next|last|first|pop)\(\)\.(unwrap|expect)\(|\b[a-zA-Z_]+\[[0-9]+\]' '' ;;
     *)
-      echo "unknown class: $cls (expected panic|unsafe|silent|cast|get)" >&2
+      echo "unknown class: $cls (expected panic|unsafe|silent|cast|lax|get)" >&2
       exit 2
       ;;
   esac
 }
 
-classes=("${@:-panic unsafe silent cast get}")
+classes=("${@:-panic unsafe silent cast lax get}")
 for cls in "${classes[@]}"; do
   run_class "$cls"
 done

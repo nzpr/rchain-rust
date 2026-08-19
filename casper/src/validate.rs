@@ -227,7 +227,7 @@ pub async fn neglected_invalid_block(
         .iter()
         .filter(|m| m.validation_failed)
         .map(|m| m.sender)
-        .any(|v| b.bonds.get(&v).map(|&stake| stake > 0).unwrap_or(false));
+        .any(|v| b.bonds.get(&v).map(|&stake| i64::from(stake) > 0).unwrap_or(false));
     if neglected {
         Ok(Err(BlockStatus::NeglectedInvalidBlock))
     } else {
@@ -564,7 +564,7 @@ mod effectful_tests {
         let invalid = hash(1);
         let dag = mock(BTreeMap::from([(invalid, meta(invalid, 0, 1, 0, true))]));
         let mut b = block(2, 1, 0, vec![invalid]);
-        b.bonds.insert(Validator::new([1u8; 65]), 100);
+        b.bonds.insert(Validator::new([1u8; 65]), 100.try_into().unwrap());
         assert_eq!(
             neglected_invalid_block(&dag, &b).await.unwrap(),
             Err(BlockStatus::NeglectedInvalidBlock)

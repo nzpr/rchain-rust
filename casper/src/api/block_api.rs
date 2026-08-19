@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use rchain_block_storage::dag::dag_storage::DeployId;
 use rchain_models::ast::Par;
+use rchain_shared::refined::NonNegI64;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_models::casper::protocol::deploy_service::{
@@ -88,10 +89,10 @@ pub trait BlockApi: Send + Sync {
 }
 
 /// Build a bond info (port of `bondToBondInfo`).
-pub fn bond_to_bond_info(bond: (&Validator, i64)) -> BondInfo {
+pub fn bond_to_bond_info(bond: (&Validator, NonNegI64)) -> BondInfo {
     BondInfo {
         validator: base16::encode(bond.0.as_bytes()),
-        stake: bond.1,
+        stake: i64::from(bond.1),
     }
 }
 
@@ -169,7 +170,7 @@ mod tests {
             pre_state_hash: vec![0xab; 32],
             post_state_hash: vec![0xcd; 32],
             justifications: vec![BlockHash::new([9u8; 32])],
-            bonds: BTreeMap::from([(Validator::new([2u8; 65]), 100)]),
+            bonds: BTreeMap::from([(Validator::new([2u8; 65]), 100.try_into().unwrap())]),
             rejected_deploys: BTreeSet::new(),
             rejected_blocks: BTreeSet::new(),
             rejected_senders: BTreeSet::new(),

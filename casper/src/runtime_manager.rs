@@ -7,6 +7,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::public_key::PublicKey;
 use rchain_models::ast::{Expr, Par, Var};
+use rchain_shared::refined::NonNegI64;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::casper_message::{
     Event, PCost, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData, SystemDeployData,
@@ -482,12 +483,12 @@ impl RuntimeManager {
     }
 
     /// Query the current bonds at `hash` (port of `computeBonds`).
-    pub async fn compute_bonds(&self, hash: &StateHash) -> Result<BTreeMap<Validator, i64>, String> {
+    pub async fn compute_bonds(&self, hash: &StateHash) -> Result<BTreeMap<Validator, NonNegI64>, String> {
         let pars = self.play_exploratory_deploy(BONDS_QUERY_SOURCE, hash).await?;
         if pars.len() != 1 {
             return Err(format!("Incorrect number of results: {}", pars.len()));
         }
-        Ok(to_bond_map(&pars[0]))
+        to_bond_map(&pars[0])
     }
 }
 
@@ -503,18 +504,20 @@ fn to_validator_seq(p: &Par) -> Vec<Validator> {
     out
 }
 
-fn to_bond_map(p: &Par) -> BTreeMap<Validator, i64> {
+fn to_bond_map(p: &Par) -> Result<BTreeMap<Validator, NonNegI64>, String> {
     let mut out = BTreeMap::new();
     if let Some(Expr::EMap(map)) = p.exprs.first() {
         for (k, v) in &map.kvs {
             if let (Some(Expr::GByteArray(vb)), Some(Expr::GInt(bond))) =
                 (k.exprs.first(), v.exprs.first())
             {
-                out.insert(Validator::from_slice(vb), *bond);
+                let stake = NonNegI64::try_from(*bond)
+                    .map_err(|_| format!("negative bond stake: {bond}"))?;
+                out.insert(Validator::from_slice(vb), stake);
             }
         }
     }
-    out
+    Ok(out)
 }
 
 const ACTIVATE_VALIDATOR_QUERY_SOURCE: &str = r#"new return, rl(`rho:registry:lookup`), poSCh in {

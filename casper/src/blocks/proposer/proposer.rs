@@ -344,7 +344,7 @@ where
         .await?;
     let bonded: BTreeSet<Validator> = pre_state_bonds
         .iter()
-        .filter(|(_, b)| **b > 0)
+        .filter(|(_, b)| i64::from(**b) > 0)
         .map(|(v, _)| *v)
         .collect();
     let to_slash: BTreeSet<Validator> = offenders.intersection(&bonded).copied().collect();
@@ -405,9 +405,9 @@ where
     let attestation_stake: i64 = pre_state_bonds
         .iter()
         .filter(|(v, _)| new_senders.contains(v))
-        .map(|(_, s)| s)
+        .map(|(_, s)| i64::from(*s))
         .sum();
-    let pre_state_bonds_stake: i64 = pre_state_bonds.values().sum();
+    let pre_state_bonds_stake: i64 = pre_state_bonds.values().map(|s| i64::from(*s)).sum();
     let waiting_for_supermajority =
         !(new_state_transition || is_super_majority(attestation_stake, pre_state_bonds_stake));
 

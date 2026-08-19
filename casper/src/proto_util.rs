@@ -8,7 +8,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, RholangState};
 use rchain_models::validator::Validator;
-use rchain_shared::refined::{BlockHeight, SeqNum};
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 
 /// The maximum block number among the given metadata, or `-1` if empty (port of
 /// `maxBlockNumberMetadata`).
@@ -71,7 +71,7 @@ pub fn unsigned_block_proto(
     pre_state_hash: Vec<u8>,
     post_state_hash: Vec<u8>,
     justifications: Vec<BlockHash>,
-    bonds: BTreeMap<Validator, i64>,
+    bonds: BTreeMap<Validator, NonNegI64>,
     rejected_deploys: BTreeSet<Vec<u8>>,
     state: RholangState,
 ) -> BlockMessage {

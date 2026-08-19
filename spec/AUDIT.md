@@ -30,9 +30,12 @@ Audit dimensions (in the order applied):
   `unwrap_or_default()` on a fallible numeric conversion (a fallible conversion must not be
   silently flattened to 0/Default).
 
-Its `cast`/`get` classes are candidate finders (soft reports). Baseline: **`panic`/`unsafe`/`silent`
-clean**; `cast` = 219 candidates, `get` = 79; `cargo clippy` casting lints (`--all-targets`) = 263
-`cast_possible_truncation`, 51 `cast_sign_loss`, 26 `cast_precision_loss`, 49 `cast_lossless`.
+Its `cast`/`lax`/`get` classes are candidate finders (soft reports). Baseline (post Phase-0 widen,
+`cast` now includes `as i64`, and a new `lax` class catches `from_str_radix(..).unwrap_or(..)` +
+`base16::unsafe_decode`): **`panic`/`unsafe`/`silent` clean**; `cast` = 284 candidates, `lax` = 21,
+`get` = 79; `cargo clippy` casting lints (`--all-targets`) = 263 `cast_possible_truncation`, 51
+`cast_sign_loss`, 26 `cast_precision_loss`, 49 `cast_lossless`. The remediation targets (all 284 cast
++ 21 lax + raw-byte/newtype bypasses) are the checklist in the ρ-pure remediation plan.
 
 ---
 
@@ -152,6 +155,8 @@ Every place the Rust port deliberately departs from the Scala oracle, with the r
 | transport `send` timeout (`DEFAULT_SEND_TIMEOUT`) | `GrpcTransportClient.DefaultSendTimeout` | the constant existed but was unused |
 | stream size cap enforced while draining | `StreamHandler.collect` | Scala checks the cap during the fold; the port had moved it after full buffering |
 | semaphore-bounded inbound dispatch | per-peer `LimitedBufferObservable` | bounded-queue analog |
+| super-majority as exact integer `3·stake > 2·total` | `sdk/consensus/Stake.scala` `stake.toDouble / totalStake > 2d/3` | Law 14 is "strictly > 2/3"; the f64 form loses precision for stakes ≥ 2⁵³ (recorded in §2 of the ρ-pure remediation) |
+| `bonds_map`/stake carried as `NonNegI64` (reject negative) | `Message.bondsMap`/`BlockMetadata.bondsMap`/`BlockMessage.bonds` are `Long` in Scala | stake is non-negative by the PoS invariant; negative stakes are rejected at the proto/genesis boundary rather than silently carried as signed `i64` |
 
 ---
 
