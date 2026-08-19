@@ -48,7 +48,7 @@ fn create_block_with_processed_deploys(
     pre_state_hash: Vec<u8>,
     post_state_hash: Vec<u8>,
     processed_deploys: Vec<ProcessedDeploy>,
-) -> BlockMessage {
+) -> Result<BlockMessage, String> {
     assert!(
         processed_deploys.iter().all(|d| !d.is_failed),
         "Genesis block contains failed deploys."
@@ -57,19 +57,19 @@ fn create_block_with_processed_deploys(
         deploys: processed_deploys,
         system_deploys: Vec::new(),
     };
-    unsigned_block_proto(
+    Ok(unsigned_block_proto(
         CURRENT,
         genesis.shard_id.clone(),
-        BlockHeight::try_from(genesis.block_number).unwrap(),
+        BlockHeight::try_from(genesis.block_number).map_err(|e| e.to_string())?,
         ModelsValidator::from_slice(genesis.sender.bytes()),
-        SeqNum::try_from(0).unwrap(),
+        SeqNum::zero(),
         pre_state_hash,
         post_state_hash,
         Vec::new(),
         build_bonds_map(&genesis.proof_of_stake),
         BTreeSet::new(),
         state,
-    )
+    ))
 }
 
 /// The ordered list of blessed (standard) genesis deploys (port of `defaultBlessedTerms`).
@@ -78,7 +78,7 @@ pub fn default_blessed_terms(
     registry: &Registry,
     vaults: &[Vault],
     shard_id: &str,
-) -> Vec<SignedDeployData> {
+) -> Result<Vec<SignedDeployData>, String> {
     // Split the initial vault creation into batches of 100 (the last batch is marked so the
     // `RevVault` init channel is not continued).
     let vault_batches: Vec<&[Vault]> = vaults.chunks(100).collect();
@@ -94,22 +94,22 @@ pub fn default_blessed_terms(
                 shard_id,
             )
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
 
     // Order matters: dependencies must be defined before their users.
     let mut terms = vec![
-        StandardDeploys::registry_generator(registry, shard_id),
-        StandardDeploys::list_ops(shard_id),
-        StandardDeploys::either(shard_id),
-        StandardDeploys::non_negative_number(shard_id),
-        StandardDeploys::make_mint(shard_id),
-        StandardDeploys::auth_key(shard_id),
-        StandardDeploys::rev_vault(shard_id),
-        StandardDeploys::multi_sig_rev_vault(shard_id),
+        StandardDeploys::registry_generator(registry, shard_id)?,
+        StandardDeploys::list_ops(shard_id)?,
+        StandardDeploys::either(shard_id)?,
+        StandardDeploys::non_negative_number(shard_id)?,
+        StandardDeploys::make_mint(shard_id)?,
+        StandardDeploys::auth_key(shard_id)?,
+        StandardDeploys::rev_vault(shard_id)?,
+        StandardDeploys::multi_sig_rev_vault(shard_id)?,
     ];
     terms.extend(vault_deploys);
-    terms.push(StandardDeploys::pos_generator(proof_of_stake, shard_id));
-    terms
+    terms.push(StandardDeploys::pos_generator(proof_of_stake, shard_id)?);
+    Ok(terms)
 }
 
 /// Create the signed genesis block (port of `Genesis.createGenesisBlock`).
@@ -123,11 +123,11 @@ pub async fn create_genesis_block(
         &genesis.registry,
         &genesis.vaults,
         &genesis.shard_id,
-    );
+    )?;
     let block_data = BlockData {
         block_number: genesis.block_number,
         sender: genesis.sender.clone(),
-        seq_num: 0.try_into().unwrap(),
+        seq_num: 0,
     };
     let rand = BlockRandomSeed::random_generator_from_shard_id(&genesis.shard_id);
     let (start_hash, state_hash, processed_results) = runtime
@@ -141,7 +141,7 @@ pub async fn create_genesis_block(
         start_hash.to_byte_array().to_vec(),
         state_hash.to_byte_array().to_vec(),
         processed_deploys,
-    );
+    )?;
     let signed_block = validator.sign_block(&unsigned_block).map_err(|e| e.to_string())?;
 
     // Signing must not change the block hash.

@@ -78,10 +78,7 @@ pub fn validate_dag_state(state: &DagState) {
     let m = &state.height_map;
     let (min, max) = match (m.keys().next(), m.keys().next_back()) {
         (Some(first), Some(last)) => (*first, *last + 1),
-        _ => (
-            BlockHeight::try_from(0).unwrap(),
-            BlockHeight::try_from(0).unwrap(),
-        ),
+        _ => (BlockHeight::zero(), BlockHeight::zero()),
     };
     assert!(
         max - min == i64::try_from(m.len()).unwrap_or(i64::MAX),

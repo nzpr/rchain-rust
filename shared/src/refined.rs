@@ -69,6 +69,13 @@ non_neg_signed!(NonNegI32, i32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockHeight(i64);
 
+impl BlockHeight {
+    /// The genesis/empty height (total: `0` is non-negative).
+    pub const fn zero() -> Self {
+        BlockHeight(0)
+    }
+}
+
 impl TryFrom<i64> for BlockHeight {
     type Error = RefineError;
     fn try_from(v: i64) -> Result<Self, Self::Error> {
@@ -116,6 +123,13 @@ impl std::ops::Sub<BlockHeight> for BlockHeight {
 /// A sequence number (non-negative). Used for `seq_num`/`sender_seq`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeqNum(i64);
+
+impl SeqNum {
+    /// The zero sequence number (total: `0` is non-negative).
+    pub const fn zero() -> Self {
+        SeqNum(0)
+    }
+}
 
 impl TryFrom<i64> for SeqNum {
     type Error = RefineError;

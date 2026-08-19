@@ -14,23 +14,27 @@ fn keccak_hash(input: &[u8]) -> Par {
 }
 
 /// The `n`th byte of a `GByteArray` `Par`, as an unsigned `i32` (port of `nthOfPar`).
-pub fn nth_of_par(p: &Par, nth: usize) -> i32 {
+///
+/// Returns `None` when `p` is not a `GByteArray` or `nth` is out of bounds (the Scala `nthOfPar`
+/// throws in that case).
+pub fn nth_of_par(p: &Par, nth: usize) -> Option<i32> {
     match p.exprs.first() {
-        Some(Expr::GByteArray(bs)) if nth < bs.len() => bs[nth] as i32,
-        _ => panic!("Par {p:?} is not valid for nthOfPar method"),
+        Some(Expr::GByteArray(bs)) if nth < bs.len() => Some(bs[nth] as i32),
+        _ => None,
     }
 }
 
 /// Convert the first `length` bytes of a `GByteArray` `Par` into a nybble list (port of
 /// `byteArrayToNybbleList`): each byte becomes `(byte % 16, byte / 16)`.
-pub fn byte_array_to_nybble_list(binary_array: &Par, length: usize) -> Vec<i32> {
+pub fn byte_array_to_nybble_list(binary_array: &Par, length: usize) -> Result<Vec<i32>, String> {
     let mut acc = Vec::with_capacity(length * 2);
     for n in 0..length {
-        let b = nth_of_par(binary_array, n);
+        let b = nth_of_par(binary_array, n)
+            .ok_or_else(|| format!("Par {binary_array:?} is not valid for nthOfPar method"))?;
         acc.push(b % 16);
         acc.push(b / 16);
     }
-    acc
+    Ok(acc)
 }
 
 fn par_string(s: &str) -> Par {
@@ -185,7 +189,7 @@ mod tests {
     fn nybble_list_splits_each_byte() {
         // 0xab = 171 → low 11, high 10.
         let par = RhoByteArray::apply(vec![0xab]);
-        assert_eq!(byte_array_to_nybble_list(&par, 1), vec![11, 10]);
+        assert_eq!(byte_array_to_nybble_list(&par, 1).unwrap(), vec![11, 10]);
     }
 
     #[test]

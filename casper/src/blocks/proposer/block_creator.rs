@@ -61,7 +61,7 @@ impl BlockCreator {
             .map(|m| m.block_num)
             .max()
             .map(|m| m + 1)
-            .unwrap_or_else(|| BlockHeight::try_from(0).unwrap());
+            .unwrap_or_else(BlockHeight::zero);
         let creators_pk = self.id.public_key.clone();
         let creators_validator = Validator::from_slice(creators_pk.bytes());
         let seq_num = pre_state
@@ -69,7 +69,7 @@ impl BlockCreator {
             .iter()
             .find(|m| m.sender == creators_validator)
             .map(|m| m.seq_num + 1)
-            .unwrap_or_else(|| SeqNum::try_from(0).unwrap());
+            .unwrap_or_else(SeqNum::zero);
         let block_data = BlockData {
             block_number: i64::from(block_num),
             sender: creators_pk.clone(),

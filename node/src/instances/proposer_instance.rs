@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 
-use rchain_casper::blocks::proposer::propose_result::ProposeResult;
+use rchain_casper::blocks::proposer::propose_result::{ProposeResult, ProposeStatus};
 use rchain_casper::blocks::proposer::proposer::{Proposer, ProposerResult};
 use rchain_casper::state::ProposerState;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
@@ -49,6 +49,15 @@ pub fn create(
                     state.lock().await.curr_propose_result = Some(r_rx);
                 }
                 let r = proposer.propose(is_async, propose_id_def).await;
+                let r = match r {
+                    Ok(r) => r,
+                    Err(_) => (
+                        ProposeResult {
+                            propose_status: ProposeStatus::BugError,
+                        },
+                        None,
+                    ),
+                };
                 let _ = r_tx.send(r.clone());
                 {
                     let mut s = state.lock().await;

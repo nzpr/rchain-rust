@@ -77,17 +77,17 @@ impl RevAccount {
 }
 
 /// The initial PoS staking vault (port of `initialPosStakingVault`).
-pub fn initial_pos_staking_vault() -> RevAccount {
+pub fn initial_pos_staking_vault() -> Result<RevAccount, String> {
     let secret = base16::unsafe_decode(POS_GENERATOR_PK);
-    let public_bytes =
-        Secp256k1::to_public_bytes(&secret).expect("valid PoS generator secret key");
+    let public_bytes = Secp256k1::to_public_bytes(&secret)
+        .map_err(|e| format!("invalid PoS generator secret key: {e}"))?;
     let address = RevAddress::from_public_key(&PublicKey::new(public_bytes))
-        .expect("valid PoS generator public key");
-    RevAccount {
+        .ok_or_else(|| "invalid PoS generator public key".to_string())?;
+    Ok(RevAccount {
         address,
         amount: 0,
         account_type: AccountType::PosStakingVault,
-    }
+    })
 }
 
 /// The global vault summary (port of `GlobalVaultsInfo`).
@@ -119,35 +119,35 @@ impl TransactionBlockInfo {
 pub fn update_genesis_from_transfer(
     genesis_vault: GlobalVaultsInfo,
     transfers: &[TransactionBlockInfo],
-) -> GlobalVaultsInfo {
+) -> Result<GlobalVaultsInfo, String> {
     let mut result_map = genesis_vault.vault_maps.clone();
     for transfer in transfers {
         if transfer.is_finalized && transfer.is_succeed() {
             let tx: &Transaction = &transfer.transaction.transaction;
-            let from_vault = result_map
-                .get(&tx.from_addr)
-                .cloned()
-                .unwrap_or_else(|| normal_vault(&tx.from_addr));
+            let from_vault = match result_map.get(&tx.from_addr).cloned() {
+                Some(v) => v,
+                None => normal_vault(&tx.from_addr)?,
+            };
             result_map.insert(tx.from_addr.clone(), from_vault.send_rev(tx.amount));
-            let to_vault = result_map
-                .get(&tx.to_addr)
-                .cloned()
-                .unwrap_or_else(|| normal_vault(&tx.to_addr));
+            let to_vault = match result_map.get(&tx.to_addr).cloned() {
+                Some(v) => v,
+                None => normal_vault(&tx.to_addr)?,
+            };
             result_map.insert(tx.to_addr.clone(), to_vault.receive_rev(tx.amount));
         }
     }
-    GlobalVaultsInfo {
+    Ok(GlobalVaultsInfo {
         vault_maps: result_map,
         ..genesis_vault
-    }
+    })
 }
 
-fn normal_vault(addr: &str) -> RevAccount {
-    RevAccount {
-        address: RevAddress::parse(addr).expect("valid REV address"),
+fn normal_vault(addr: &str) -> Result<RevAccount, String> {
+    Ok(RevAccount {
+        address: RevAddress::parse(addr).map_err(|e| format!("invalid REV address: {e}"))?,
         amount: 0,
         account_type: AccountType::NormalVault,
-    }
+    })
 }
 
 /// Build the initial REV account map from a wallets file and a bonds file (port of
@@ -173,7 +173,7 @@ pub fn generate_rev_account_from_wallet_and_bond(
         })
         .collect();
 
-    let pos_vault = initial_pos_staking_vault();
+    let pos_vault = initial_pos_staking_vault()?;
     let pos_addr = pos_vault.address.to_base58();
     for (_, bond_amount) in &bonds {
         let current = account_map
@@ -261,7 +261,7 @@ mod tests {
             block_number: 1,
             is_finalized: true,
         };
-        let updated = update_genesis_from_transfer(genesis, &[transfer]);
+        let updated = update_genesis_from_transfer(genesis, &[transfer]).unwrap();
         assert_eq!(updated.vault_maps[&addr_a.to_base58()].amount, 70);
         assert_eq!(updated.vault_maps[&addr_b.to_base58()].amount, 30);
     }
@@ -277,7 +277,7 @@ mod tests {
 
         let map = generate_rev_account_from_wallet_and_bond(&wallet, &bonds).unwrap();
         assert_eq!(map[&addr.to_base58()].amount, 500);
-        let pos_addr = initial_pos_staking_vault().address.to_base58();
+        let pos_addr = initial_pos_staking_vault().unwrap().address.to_base58();
         assert_eq!(map[&pos_addr].amount, 100);
         assert_eq!(map[&pos_addr].account_type, AccountType::PosStakingVault);
 

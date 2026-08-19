@@ -76,9 +76,9 @@ fn load_template(classpath: &str, content: &str, macros: &[(&str, &str)]) -> Str
     format!("{final_content}\n //Loaded from resource file <<{classpath}>>\n")
 }
 
-fn to_public(private_key_hex: &str) -> PublicKey {
+fn to_public(private_key_hex: &str) -> Result<PublicKey, String> {
     let private_key = PrivateKey::new(base16::unsafe_decode(private_key_hex));
-    Secp256k1.to_public(&private_key).expect("derive public key")
+    Secp256k1.to_public(&private_key).map_err(|e| e.to_string())
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -95,7 +95,7 @@ impl StandardDeploys {
         private_key_hex: &str,
         timestamp: i64,
         shard_id: &str,
-    ) -> SignedDeployData {
+    ) -> Result<SignedDeployData, String> {
         let sk = PrivateKey::new(base16::unsafe_decode(private_key_hex));
         let data = DeployData {
             term,
@@ -105,32 +105,32 @@ impl StandardDeploys {
             valid_after_block_number: 0,
             shard_id: shard_id.to_string(),
         };
-        let signed = Signed::new(data, &Secp256k1, &sk).expect("sign standard deploy");
-        SignedDeployData {
+        let signed = Signed::new(data, &Secp256k1, &sk).map_err(|e| e.to_string())?;
+        Ok(SignedDeployData {
             data: signed.data,
             deployer: signed.pk.bytes().to_vec(),
             sig: signed.sig,
             sig_algorithm: signed.sig_algorithm.name().to_string(),
-        }
+        })
     }
 
     /// The public keys of the standard contracts, in deploy order (port of `systemPublicKeys`).
-    pub fn system_public_keys() -> Vec<PublicKey> {
-        vec![
-            to_public(REGISTRY_PK),
-            to_public(LIST_OPS_PK),
-            to_public(EITHER_PK),
-            to_public(NON_NEGATIVE_NUMBER_PK),
-            to_public(MAKE_MINT_PK),
-            to_public(AUTH_KEY_PK),
-            to_public(REV_VAULT_PK),
-            to_public(MULTI_SIG_REV_VAULT_PK),
-            to_public(POS_GENERATOR_PK),
-            to_public(REV_GENERATOR_PK),
-        ]
+    pub fn system_public_keys() -> Result<Vec<PublicKey>, String> {
+        Ok(vec![
+            to_public(REGISTRY_PK)?,
+            to_public(LIST_OPS_PK)?,
+            to_public(EITHER_PK)?,
+            to_public(NON_NEGATIVE_NUMBER_PK)?,
+            to_public(MAKE_MINT_PK)?,
+            to_public(AUTH_KEY_PK)?,
+            to_public(REV_VAULT_PK)?,
+            to_public(MULTI_SIG_REV_VAULT_PK)?,
+            to_public(POS_GENERATOR_PK)?,
+            to_public(REV_GENERATOR_PK)?,
+        ])
     }
 
-    pub fn registry_generator(registry: &Registry, shard_id: &str) -> SignedDeployData {
+    pub fn registry_generator(registry: &Registry, shard_id: &str) -> Result<SignedDeployData, String> {
         let term = load_template(
             "Registry.rho",
             REGISTRY_RHO,
@@ -139,7 +139,7 @@ impl StandardDeploys {
         Self::to_deploy(term, REGISTRY_PK, REGISTRY_TIMESTAMP, shard_id)
     }
 
-    pub fn list_ops(shard_id: &str) -> SignedDeployData {
+    pub fn list_ops(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("ListOps.rho", LIST_OPS_RHO),
             LIST_OPS_PK,
@@ -148,7 +148,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn either(shard_id: &str) -> SignedDeployData {
+    pub fn either(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("Either.rho", EITHER_RHO),
             EITHER_PK,
@@ -157,7 +157,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn non_negative_number(shard_id: &str) -> SignedDeployData {
+    pub fn non_negative_number(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("NonNegativeNumber.rho", NON_NEGATIVE_NUMBER_RHO),
             NON_NEGATIVE_NUMBER_PK,
@@ -166,7 +166,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn make_mint(shard_id: &str) -> SignedDeployData {
+    pub fn make_mint(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("MakeMint.rho", MAKE_MINT_RHO),
             MAKE_MINT_PK,
@@ -175,7 +175,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn auth_key(shard_id: &str) -> SignedDeployData {
+    pub fn auth_key(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("AuthKey.rho", AUTH_KEY_RHO),
             AUTH_KEY_PK,
@@ -184,7 +184,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn rev_vault(shard_id: &str) -> SignedDeployData {
+    pub fn rev_vault(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("RevVault.rho", REV_VAULT_RHO),
             REV_VAULT_PK,
@@ -193,7 +193,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn multi_sig_rev_vault(shard_id: &str) -> SignedDeployData {
+    pub fn multi_sig_rev_vault(shard_id: &str) -> Result<SignedDeployData, String> {
         Self::to_deploy(
             load_source("MultiSigRevVault.rho", MULTI_SIG_REV_VAULT_RHO),
             MULTI_SIG_REV_VAULT_PK,
@@ -202,7 +202,7 @@ impl StandardDeploys {
         )
     }
 
-    pub fn pos_generator(pos: &ProofOfStake, shard_id: &str) -> SignedDeployData {
+    pub fn pos_generator(pos: &ProofOfStake, shard_id: &str) -> Result<SignedDeployData, String> {
         let minimum_bond = pos.minimum_bond.to_string();
         let maximum_bond = pos.maximum_bond.to_string();
         let initial_bonds = ProofOfStake::initial_bonds(&pos.validators);
@@ -233,7 +233,7 @@ impl StandardDeploys {
         timestamp: i64,
         is_last_batch: bool,
         shard_id: &str,
-    ) -> SignedDeployData {
+    ) -> Result<SignedDeployData, String> {
         let term = rev_generator_code(vaults, is_last_batch);
         Self::to_deploy(term, REV_GENERATOR_PK, timestamp, shard_id)
     }
@@ -259,6 +259,6 @@ mod tests {
 
     #[test]
     fn system_public_keys_has_ten_entries() {
-        assert_eq!(StandardDeploys::system_public_keys().len(), 10);
+        assert_eq!(StandardDeploys::system_public_keys().unwrap().len(), 10);
     }
 }

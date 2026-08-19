@@ -46,7 +46,7 @@ impl GrpcReplClient {
         let content = std::fs::read_to_string(file_name)
             .map_err(|_| format!("File not found: {file_name}"))?;
         self.handle.block_on(async {
-            let mut client = self.inner.lock().expect("repl client lock poisoned");
+            let mut client = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             let response = client
                 .eval(EvalRequest {
                     program: content,
@@ -62,7 +62,7 @@ impl GrpcReplClient {
 impl ReplClient for GrpcReplClient {
     fn run(&self, line: &str) -> Result<String, String> {
         self.handle.block_on(async {
-            let mut client = self.inner.lock().expect("repl client lock poisoned");
+            let mut client = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             let response = client
                 .run(CmdRequest {
                     line: line.to_string(),

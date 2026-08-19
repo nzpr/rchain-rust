@@ -16,16 +16,20 @@ pub fn default_sec() -> PrivateKey {
 }
 
 /// The default public key (port of `defaultPub`).
-pub fn default_pub() -> PublicKey {
+pub fn default_pub() -> Result<PublicKey, String> {
     let sec = default_sec();
-    Secp256k1.to_public(&sec).expect("derive default public key")
+    Secp256k1
+        .to_public(&sec)
+        .map_err(|e| format!("derive default public key: {e}"))
 }
 
 /// The default (private, public) key pair (port of `defaultKeyPair`).
-pub fn default_key_pair() -> (PrivateKey, PublicKey) {
+pub fn default_key_pair() -> Result<(PrivateKey, PublicKey), String> {
     let sec = default_sec();
-    let pub_key = Secp256k1.to_public(&sec).expect("derive default public key");
-    (sec, pub_key)
+    let pub_key = Secp256k1
+        .to_public(&sec)
+        .map_err(|e| format!("derive default public key: {e}"))?;
+    Ok((sec, pub_key))
 }
 
 /// A second default private key (port of `defaultSec2`).
@@ -36,9 +40,11 @@ pub fn default_sec2() -> PrivateKey {
 }
 
 /// A second default public key (port of `defaultPub2`).
-pub fn default_pub2() -> PublicKey {
+pub fn default_pub2() -> Result<PublicKey, String> {
     let sec = default_sec2();
-    Secp256k1.to_public(&sec).expect("derive default public key")
+    Secp256k1
+        .to_public(&sec)
+        .map_err(|e| format!("derive default public key: {e}"))
 }
 
 /// Build a signed deploy from source + parameters (port of `sourceDeploy`).
@@ -50,7 +56,7 @@ pub fn source_deploy(
     sec: &PrivateKey,
     vabn: i64,
     shard_id: &str,
-) -> Signed<DeployData> {
+) -> Result<Signed<DeployData>, String> {
     let data = DeployData {
         term: source.to_string(),
         timestamp,
@@ -59,7 +65,7 @@ pub fn source_deploy(
         valid_after_block_number: vabn,
         shard_id: shard_id.to_string(),
     };
-    Signed::new(data, &Secp256k1, sec).expect("sign deploy")
+    Signed::new(data, &Secp256k1, sec).map_err(|e| format!("sign deploy: {e}"))
 }
 
 /// Build a signed deploy with the current timestamp (port of `sourceDeployNow`).
@@ -69,7 +75,7 @@ pub fn source_deploy_now(
     phlo_limit: i64,
     vabn: i64,
     shard_id: &str,
-) -> Signed<DeployData> {
+) -> Result<Signed<DeployData>, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -84,16 +90,16 @@ mod tests {
 
     #[test]
     fn default_pub_matches_default_sec() {
-        let (sec, pub_key) = default_key_pair();
+        let (sec, pub_key) = default_key_pair().unwrap();
         assert_eq!(Secp256k1.to_public(&sec).unwrap(), pub_key);
     }
 
     #[test]
     fn source_deploy_signs_with_default_key() {
         let sec = default_sec();
-        let deploy = source_deploy("Nil", 0, 90000, 1, &sec, 0, "root");
+        let deploy = source_deploy("Nil", 0, 90000, 1, &sec, 0, "root").unwrap();
         assert_eq!(deploy.data.term, "Nil");
-        assert_eq!(deploy.pk, default_pub());
+        assert_eq!(deploy.pk, default_pub().unwrap());
         // The signature verifies over the serialized deploy data.
         let serialized = <DeployData as Serialize<DeployData>>::encode(&deploy.data);
         let hash = rchain_crypto::signatures::signed::signature_hash("secp256k1", &serialized);

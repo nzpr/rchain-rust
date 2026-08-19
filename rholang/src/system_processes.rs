@@ -120,9 +120,9 @@ pub struct BlockData {
 impl BlockData {
     pub fn empty() -> Self {
         BlockData {
-            block_number: 0.try_into().unwrap(),
+            block_number: 0,
             sender: PublicKey::new(vec![0]),
-            seq_num: 0.try_into().unwrap(),
+            seq_num: 0,
         }
     }
 

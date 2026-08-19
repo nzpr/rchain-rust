@@ -148,7 +148,7 @@ pub async fn run_cli(options: &Options) -> Result<(), Vec<String>> {
                     validator_public_key,
                 } => DeployRuntime::bond_status(&deploy, validator_public_key).await,
                 Commands::Status => DeployRuntime::status(&deploy).await,
-                _ => unreachable!("non-deploy subcommands handled above"),
+                _ => Err(vec!["unexpected subcommand for deploy service".to_string()]),
             }
         }
     }

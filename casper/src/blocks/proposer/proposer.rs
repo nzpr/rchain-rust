@@ -47,7 +47,8 @@ pub enum ProposerResult {
 pub struct Proposer {
     get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync>,
     check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync>,
-    create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync>,
+    create_block:
+        Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<Result<BlockCreatorResult, String>> + Send + Sync>,
     validate_block:
         Arc<dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync>,
     propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
@@ -59,7 +60,9 @@ impl Proposer {
     pub fn new(
         get_latest_seq_number: Arc<dyn Fn(Validator) -> BoxFuture<i64> + Send + Sync>,
         check_active_validator: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync>,
-        create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync>,
+        create_block: Arc<
+            dyn Fn(&ValidatorIdentity) -> BoxFuture<Result<BlockCreatorResult, String>> + Send + Sync,
+        >,
         validate_block: Arc<
             dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
         >,
@@ -76,39 +79,39 @@ impl Proposer {
         }
     }
 
-    async fn do_propose(&self) -> (ProposeResult, Option<BlockMessage>) {
+    async fn do_propose(&self) -> Result<(ProposeResult, Option<BlockMessage>), String> {
         if !(self.check_active_validator)(&self.validator).await {
-            return (
+            return Ok((
                 ProposeResult {
                     propose_status: ProposeStatus::NotBonded,
                 },
                 None,
-            );
+            ));
         }
 
-        match (self.create_block)(&self.validator).await {
-            BlockCreatorResult::NoNewDeploys => (
+        match (self.create_block)(&self.validator).await? {
+            BlockCreatorResult::NoNewDeploys => Ok((
                 ProposeResult {
                     propose_status: ProposeStatus::NoNewDeploys,
                 },
                 None,
-            ),
+            )),
             BlockCreatorResult::Created(block) => match (self.validate_block)(&block).await {
                 Ok(()) => {
                     (self.propose_effect)(&block).await;
-                    (
+                    Ok((
                         ProposeResult {
                             propose_status: ProposeStatus::ProposeSuccess,
                         },
                         Some(block),
-                    )
+                    ))
                 }
-                Err(ValidateError::ValidationFailed(_, status)) => panic!(
+                Err(ValidateError::ValidationFailed(_, status)) => Err(format!(
                     "Validation of self created block failed with reason: {status:?}, cancelling propose."
-                ),
-                Err(ValidateError::Internal(e)) => panic!(
+                )),
+                Err(ValidateError::Internal(e)) => Err(format!(
                     "Validation of self created block failed with internal error: {e}, cancelling propose."
-                ),
+                )),
             },
         }
     }
@@ -117,7 +120,7 @@ impl Proposer {
         &self,
         is_async: bool,
         propose_id: tokio::sync::oneshot::Sender<ProposerResult>,
-    ) -> (ProposeResult, Option<BlockMessage>) {
+    ) -> Result<(ProposeResult, Option<BlockMessage>), String> {
         let validator = Validator::from_slice(self.validator.public_key.bytes());
         let next_seq = (self.get_latest_seq_number)(validator).await + 1;
 
@@ -127,19 +130,23 @@ impl Proposer {
             });
             self.do_propose().await
         } else {
-            let (result, block_opt) = self.do_propose().await;
-            let proposer_result = match &block_opt {
-                Some(block) => ProposerResult::Success {
+            let result = self.do_propose().await;
+            let proposer_result = match &result {
+                Ok((result, Some(block))) => ProposerResult::Success {
                     status: result.propose_status.clone(),
                     block: block.clone(),
                 },
-                None => ProposerResult::Failure {
+                Ok((result, None)) => ProposerResult::Failure {
                     status: result.propose_status.clone(),
+                    seq_number: next_seq,
+                },
+                Err(_) => ProposerResult::Failure {
+                    status: ProposeStatus::BugError,
                     seq_number: next_seq,
                 },
             };
             let _ = propose_id.send(proposer_result);
-            (result, block_opt)
+            result
         }
     }
 
@@ -211,35 +218,35 @@ impl Proposer {
                 })
             };
 
-        let create_block: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync> =
-            {
+        let create_block: Arc<
+            dyn Fn(&ValidatorIdentity) -> BoxFuture<Result<BlockCreatorResult, String>> + Send + Sync,
+        > = {
+            let runtime = runtime.clone();
+            let dag = dag.clone();
+            let block_store = block_store.clone();
+            let block_index = block_index.clone();
+            let shard_id = shard_id.clone();
+            Arc::new(move |vi: &ValidatorIdentity| {
                 let runtime = runtime.clone();
                 let dag = dag.clone();
                 let block_store = block_store.clone();
                 let block_index = block_index.clone();
+                let vi = vi.clone();
                 let shard_id = shard_id.clone();
-                Arc::new(move |vi: &ValidatorIdentity| {
-                    let runtime = runtime.clone();
-                    let dag = dag.clone();
-                    let block_store = block_store.clone();
-                    let block_index = block_index.clone();
-                    let vi = vi.clone();
-                    let shard_id = shard_id.clone();
-                    Box::pin(async move {
-                        create_block(
-                            runtime.as_ref(),
-                            dag.as_ref(),
-                            &block_store,
-                            block_index.as_ref(),
-                            &vi,
-                            &shard_id,
-                            epoch_length,
-                        )
-                        .await
-                        .expect("create block failed")
-                    })
+                Box::pin(async move {
+                    create_block(
+                        runtime.as_ref(),
+                        dag.as_ref(),
+                        &block_store,
+                        block_index.as_ref(),
+                        &vi,
+                        &shard_id,
+                        epoch_length,
+                    )
+                    .await
                 })
-            };
+            })
+        };
 
         let validate_block: Arc<dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync> =
             {
@@ -322,7 +329,7 @@ where
         .map(|m| m.block_num)
         .max()
         .map(|m| m + 1)
-        .unwrap_or_else(|| BlockHeight::try_from(0).unwrap());
+        .unwrap_or_else(BlockHeight::zero);
     let parent_hashes: Vec<BlockHash> =
         pre_state.justifications.iter().map(|m| m.block_hash).collect();
     let offenders: BTreeSet<Validator> = pre_state
@@ -444,10 +451,10 @@ mod tests {
         let check_active: Arc<dyn Fn(&ValidatorIdentity) -> BoxFuture<bool> + Send + Sync> =
             Arc::new(|_v| Box::pin(async { true }));
         let create_block: Arc<
-            dyn Fn(&ValidatorIdentity) -> BoxFuture<BlockCreatorResult> + Send + Sync,
+            dyn Fn(&ValidatorIdentity) -> BoxFuture<Result<BlockCreatorResult, String>> + Send + Sync,
         > = Arc::new(move |_v| {
             let create = create.clone();
-            Box::pin(async move { create })
+            Box::pin(async move { Ok(create) })
         });
         let validate: Arc<
             dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync,
@@ -486,7 +493,7 @@ mod tests {
     async fn no_new_deploys_returns_failure() {
         let p = proposer(BlockCreatorResult::NoNewDeploys);
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let (result, block_opt) = p.propose(false, tx).await;
+        let (result, block_opt) = p.propose(false, tx).await.unwrap();
         assert_eq!(result.propose_status, ProposeStatus::NoNewDeploys);
         assert!(block_opt.is_none());
         assert!(matches!(rx.await.unwrap(), ProposerResult::Failure { .. }));
@@ -496,7 +503,7 @@ mod tests {
     async fn created_block_returns_success() {
         let p = proposer(BlockCreatorResult::Created(block()));
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let (result, block_opt) = p.propose(false, tx).await;
+        let (result, block_opt) = p.propose(false, tx).await.unwrap();
         assert_eq!(result.propose_status, ProposeStatus::ProposeSuccess);
         assert!(block_opt.is_some());
         assert!(matches!(rx.await.unwrap(), ProposerResult::Success { .. }));

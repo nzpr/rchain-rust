@@ -199,7 +199,10 @@ where
 
     // Merge the conflict scope (non-finalized blocks above the fringe).
     let (pre_state_hash, cs_rejected_deploys) = if parent_hashes.len() == 1 {
-        let parent = parent_hashes.iter().next().unwrap();
+        let parent = parent_hashes
+            .iter()
+            .next()
+            .ok_or_else(|| "expected one parent".to_string())?;
         let block = get_block_unsafe(block_store, parent).await?;
         (
             Blake2b256Hash::from_byte_array(&block.post_state_hash),
