@@ -26,8 +26,9 @@ The full argument — with a Rust → calculus → formalization correspondence 
 
 The rewrite is governed by [`AGENTS.md`](AGENTS.md) — the binding intent + formal specification —
 and the machine-checked formalizations in [`spec/`](spec/) (the 19-law invariant inventory in
-[`spec/INVENTORY.md`](spec/INVENTORY.md), plus the Lean/Coq tracks). The prime directive is
-**faithful porting**: no behavior is "fixed" or reordered relative to the Scala node.
+[`spec/INVENTORY.md`](spec/INVENTORY.md), plus the Lean/Coq tracks). The prime directive is a
+**faithful implementation of the ρ-calculus**: the 19 laws are the oracle; the Scala node was the
+port reference.
 
 ## Layout
 

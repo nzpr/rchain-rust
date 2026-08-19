@@ -94,10 +94,12 @@ intuition; `spec/` is its machine-checked realization.
   documents the tuplespace model, quoting of processes into names, normalization (de Bruijn
   α-equivalence and the canonical `|` sort), and the ρ/λ/π relationship.
 
-## A corollary: preserve, don't repair
+## A corollary: implement the calculus, don't reproduce the JVM
 
-The rewrite is a *faithful port*. The motivation is memory safety and calculus-native expression,
-**not** a correctness repair — the Scala logic is broadly sound. The binding constraint is stated in
-[`AGENTS.md`](../../AGENTS.md): do not "fix", improve, or reorder behavior; where the port and the
-Scala node disagree, the Scala node is correct. The 19 laws in
-[`spec/INVENTORY.md`](../../spec/INVENTORY.md) are what must be preserved.
+The port is complete; the node is now a *faithful implementation of the ρ-calculus*. The motivation is
+memory safety and calculus-native expression, **not** a correctness repair of consensus behavior. The
+binding constraint is stated in [`AGENTS.md`](../../AGENTS.md): the 19 laws in
+[`spec/INVENTORY.md`](../../spec/INVENTORY.md) and the ρ→CoC type discipline in
+[`spec/TYPE-SYSTEM.md`](../../spec/TYPE-SYSTEM.md) are the oracle. Rust carries those invariants
+structurally (refinement types, no silent partiality) rather than reproducing the JVM's patterns —
+including its latent bugs.

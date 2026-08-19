@@ -21,20 +21,25 @@ Single sources of truth (do not duplicate these):
 The RChain node runs Rholang natively. We are rewriting it in **Rust**, absorbing both the Scala/JVM
 code and the C++ Rosette VM. The motivation — memory safety and the calculus-native expression of the
 node (λ → π → ρ → Calculus of Constructions) — is laid out in
-[`docs/src/why-rust.md`](docs/src/why-rust.md); the short version is that this is **not** a
-correctness repair, since the existing logic is broadly sound.
+[`docs/src/why-rust.md`](docs/src/why-rust.md).
 
-**Prime directive:** the rewrite is a *faithful port*. Do **not** "fix", "improve", refactor, or
-reorder behavior. Every mathematical invariant listed in [`spec/INVENTORY.md`](spec/INVENTORY.md) must
-hold in the Rust port, exactly as it holds today. Where the port and the Scala node disagree on
-behavior, the Scala node is correct and the port is wrong.
+**Prime directive:** the Scala/JVM + Rosette *port* is complete; the node is now a **faithful
+implementation of the ρ-calculus**. The oracle is the mathematical specification — the 19 laws in
+[`spec/INVENTORY.md`](spec/INVENTORY.md) and the ρ→CoC type discipline in
+[`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) — **not** the Scala code. Implement each law using Rust's
+strengths: carry the invariants *structurally* in the type system (refinement types, no silent
+partiality), rather than mechanically reproducing Scala's patterns. Where the Scala code and the
+specification disagree, the specification is correct and the code is brought into line — a latent
+Scala bug (e.g. wrapping a negative cost into a `uint64`) is **not** preserved; such deviations are
+recorded in [`spec/AUDIT.md`](spec/AUDIT.md)'s Scala-deviation register.
 
 ## How to use this file
 
 For any component you are about to write in Rust:
 
 1. Find its layer below and its law numbers in [`spec/INVENTORY.md`](spec/INVENTORY.md).
-2. Read the corresponding formalization (Lean 4 and/or Coq) and the source-of-truth Scala/C++ file.
+2. Read the corresponding formalization (Lean 4 and/or Coq) and the law's invariant statement; the
+   Scala/C++ file is reference material for the ported behavior, not the oracle.
 3. Read the ground-truth Scala test that already encodes the law.
 4. Write Rust that satisfies the law, gated by a property test and a differential test (see
    *Translation contract*).
@@ -73,8 +78,10 @@ strength:
 | **Coq** (Autosubst, de Bruijn) | 2–6 | ρ-calculus PL metatheory: α-equivalence, structural congruence `≡`, capture-avoiding substitution, reduction (comm), spatial matching, free variables |
 | **Lean 4** (Mathlib) | 1, 7–11 | order/algebra: canonicalization (`sort`), RSpace join commutativity, deterministic COMM, merge monoid, Merkle determinism, replay determinism |
 
-**Proofs-first policy**: the Rust rewrite (including `crypto`/`models`/…) is **paused** until Laws 1–11
-are proven; then `rspace`/`rholang` (and the rest) are ported against the verified spec.
+**Proofs-first policy** (historical): the original plan paused the rewrite until Laws 1–11 were
+proven. The rewrite is now complete (see Status); the formalization continues in parallel as the
+residual proof track, and the specification remains the oracle for any subsequent change to the Rust
+code.
 
 ### Phase sequence
 
@@ -136,15 +143,17 @@ For every law in the inventory:
 
 ## Ground truth
 
-The formalization is validated against — and must agree with — the Scala tests that already encode
-the laws:
+The oracle is the invariant catalog + the machine-checked formalization. The Scala tests below encode
+the laws and remain **differential reference vectors** — the Rust implementation must agree with them
+on every law, since they pin the ρ-calculus behavior:
 
 - `rholang/src/test/scala/coop/rchain/rholang/interpreter/{ReduceSpec,ReplaySpec}.scala`
 - `models/src/test/scala/coop/rchain/models/rholang/SortTest.scala`
 - `node/src/test/scala/coop/rchain/node/mergeablity/MergeabilityRules.scala`
 - `casper/src/test/scala/coop/rchain/casper/batch1/MultiParentCasperReportingSpec.scala`
 
-These are the oracle. If the formalization and these tests disagree, reconcile them before writing Rust.
+A divergence from the *specification* is fixed in the Rust code and recorded in
+[`spec/AUDIT.md`](spec/AUDIT.md); it is **not** propagated to stay byte-identical with a Scala bug.
 
 ## Module scoping & rewrite order
 
