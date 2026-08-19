@@ -109,7 +109,7 @@ fn compare_bytes_signed(a: &[u8], b: &[u8]) -> Ordering {
     let mut i = 0;
     loop {
         match (a.get(i), b.get(i)) {
-            (Some(x), Some(y)) => match (*x as i8).cmp(&(*y as i8)) {
+            (Some(x), Some(y)) => match rchain_crypto::util::sorting::cmp_signed_byte(*x, *y) {
                 Ordering::Equal => i += 1,
                 other => return other,
             },
