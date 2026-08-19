@@ -109,6 +109,18 @@ impl private::Sealed for ProcSort {}
 impl Sort for NameSort {}
 impl Sort for ProcSort {}
 
+/// The join of two sorts under parallel composition (the sort lattice): `Name ⊔ X = X`, and
+/// `Proc ⊔ X = Proc`. `Name` is the identity, `Proc` the absorbing element.
+pub trait SortJoin<B: Sort> {
+    type Output: Sort;
+}
+impl<B: Sort> SortJoin<B> for NameSort {
+    type Output = B;
+}
+impl<B: Sort> SortJoin<B> for ProcSort {
+    type Output = ProcSort;
+}
+
 /// A `Par` — the top-level process, a flat record of eight list fields, sort-indexed by `S`.
 ///
 /// The phantom `S` is not part of the wire encoding (it is `#[serde(skip)]`ed) nor of the
@@ -150,8 +162,9 @@ impl<S: Sort> Par<S> {
         out
     }
 
-    /// Re-mark the phantom sort (the flat record is unchanged).
-    fn re_mark<T: Sort>(self) -> Par<T> {
+    /// Re-mark the phantom sort (the flat record is unchanged). The sort is a marker, so this is
+    /// a total operation on the identical flat record.
+    pub fn re_sort<T: Sort>(self) -> Par<T> {
         Par {
             sends: self.sends,
             receives: self.receives,
@@ -172,22 +185,22 @@ impl Par<ProcSort> {
     /// `@Proc` — quote a process into a name (the reflective `@`; the flat record is unchanged,
     /// only the sort marker changes).
     pub fn quote(self) -> Name {
-        self.re_mark()
+        self.re_sort()
     }
 }
 
 impl Par<NameSort> {
     /// `*Name` — evaluate a name into a process (the reflective `*`).
     pub fn eval(self) -> Proc {
-        self.re_mark()
+        self.re_sort()
     }
 }
 
 /// A send: `chan!(data)` (or `chan!!(data)` when persistent).
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Send {
-    pub chan: Box<Par>,
-    pub data: Vec<Par>,
+    pub chan: Box<Name>,
+    pub data: Vec<Name>,
     pub persistent: bool,
     pub locally_free: AlwaysEqual<BitSet>,
     pub connective_used: bool,
@@ -196,8 +209,8 @@ pub struct Send {
 /// A receive bind: `patterns <- source`.
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct ReceiveBind {
-    pub patterns: Vec<Par>,
-    pub source: Box<Par>,
+    pub patterns: Vec<Name>,
+    pub source: Box<Name>,
     pub remainder: Option<Box<Var>>,
     pub free_count: i32,
 }
@@ -227,7 +240,7 @@ pub struct New {
 /// A match case: `pattern => source`.
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct MatchCase {
-    pub pattern: Box<Par>,
+    pub pattern: Box<Name>,
     pub source: Box<Par>,
     pub free_count: i32,
 }
@@ -235,7 +248,7 @@ pub struct MatchCase {
 /// A `match target { cases }`.
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
 pub struct Match {
-    pub target: Box<Par>,
+    pub target: Box<Name>,
     pub cases: Vec<MatchCase>,
     pub locally_free: AlwaysEqual<BitSet>,
     pub connective_used: bool,

@@ -7,7 +7,7 @@
 
 use rchain_models::ast::{
     AlwaysEqual, Bundle, Connective, ConnectiveBody, EMethod, EList, ETuple, Expr, Match,
-    MatchCase, New, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
+    MatchCase, Name, New, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Sort, Var, VarRef,
 };
 use rchain_models::par_ops::{par_concat, prepend_connective, prepend_expr, single_bundle, until_free};
 use rchain_models::sorter::{
@@ -48,12 +48,12 @@ fn maybe_substitute_varref(var_ref: &VarRef, depth: i32, env: &Env<Par>) -> Mayb
     }
 }
 
-fn sub_exprs(exprs: &[Expr], depth: i32, env: &Env<Par>) -> Result<Par, RholangError> {
-    let mut par = Par::default();
+fn sub_exprs(exprs: &[Expr], depth: i32, env: &Env<Par>) -> Result<Name, RholangError> {
+    let mut par = Name::default();
     for expr in exprs.iter().rev() {
         match expr {
             Expr::EVar(v) => match maybe_substitute_var(v, depth, env)? {
-                Ok(sub_par) => par = par_concat(&sub_par, &par),
+                Ok(sub_par) => par = par_concat(&sub_par.quote(), &par),
                 Err(evar) => par = prepend_expr(&par, Expr::EVar(Box::new(evar)), depth),
             },
             _ => {
@@ -65,12 +65,12 @@ fn sub_exprs(exprs: &[Expr], depth: i32, env: &Env<Par>) -> Result<Par, RholangE
     Ok(par)
 }
 
-fn sub_conns(conns: &[Connective], depth: i32, env: &Env<Par>) -> Result<Par, RholangError> {
-    let mut par = Par::default();
+fn sub_conns(conns: &[Connective], depth: i32, env: &Env<Par>) -> Result<Name, RholangError> {
+    let mut par = Name::default();
     for conn in conns.iter().rev() {
         match conn {
             Connective::VarRef(var_ref) => match maybe_substitute_varref(var_ref, depth, env) {
-                Ok(sub_par) => par = par_concat(&sub_par, &par),
+                Ok(sub_par) => par = par_concat(&sub_par.quote(), &par),
                 Err(vr) => par = prepend_connective(&par, Connective::VarRef(vr), depth),
             },
             Connective::Empty => {}
@@ -113,11 +113,11 @@ fn sub_conns(conns: &[Connective], depth: i32, env: &Env<Par>) -> Result<Par, Rh
     Ok(par)
 }
 
-pub fn substitute_par_no_sort(
-    par: &Par,
+pub fn substitute_par_no_sort<S: Sort>(
+    par: &Par<S>,
     depth: i32,
     env: &Env<Par>,
-) -> Result<Par, RholangError> {
+) -> Result<Par<S>, RholangError> {
     let exprs_par = sub_exprs(&par.exprs, depth, env)?;
     let connectives_par = sub_conns(&par.connectives, depth, env)?;
     let sends = par
@@ -146,7 +146,7 @@ pub fn substitute_par_no_sort(
         .map(|m| substitute_match_no_sort(m, depth, env))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let rest = Par {
+    let rest: Par<S> = Par {
         sends,
         bundles,
         receives,
@@ -155,13 +155,13 @@ pub fn substitute_par_no_sort(
         unforgeables: par.unforgeables.clone(),
         locally_free: AlwaysEqual(until_free(&par.locally_free.0, env.shift_amount())),
         connective_used: par.connective_used,
-        ..Par::default()
+        ..Default::default()
     };
     let t1 = par_concat(&exprs_par, &connectives_par);
     Ok(par_concat(&t1, &rest))
 }
 
-pub fn substitute_par(par: &Par, depth: i32, env: &Env<Par>) -> Result<Par, RholangError> {
+pub fn substitute_par<S: Sort>(par: &Par<S>, depth: i32, env: &Env<Par>) -> Result<Par<S>, RholangError> {
     Ok(sort_par_term(&substitute_par_no_sort(par, depth, env)?))
 }
 
@@ -511,11 +511,11 @@ mod tests {
     fn substitutes_bound_var() {
         let env = Env::new().put(Par {
             exprs: vec![Expr::GInt(42)],
-            ..Par::default()
+            ..Default::default()
         });
-        let par = Par {
+        let par: Par = Par {
             exprs: vec![Expr::EVar(Box::new(Var::BoundVar(0)))],
-            ..Par::default()
+            ..Default::default()
         };
         let result = substitute_par(&par, 0, &env).unwrap();
         assert_eq!(result.exprs, vec![Expr::GInt(42)]);
@@ -524,9 +524,9 @@ mod tests {
     #[test]
     fn free_var_at_depth_zero_is_illegal() {
         let env = Env::new();
-        let par = Par {
+        let par: Par = Par {
             exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
-            ..Par::default()
+            ..Default::default()
         };
         assert!(substitute_par(&par, 0, &env).is_err());
     }

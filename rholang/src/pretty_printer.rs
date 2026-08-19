@@ -5,6 +5,7 @@
 //! preserved faithfully.
 
 use rchain_models::ast::{
+    Sort,
     Bundle, Connective, Expr, GUnforgeable, Match, MatchCase, New, Par, Receive, Send, Var,
 };
 use rchain_models::par_ops::is_nil;
@@ -71,7 +72,7 @@ impl PrettyPrinter {
     }
 
     /// Top-level: render a `Par`.
-    pub fn build_string(&self, p: &Par) -> String {
+    pub fn build_string<S: Sort>(&self, p: &Par<S>) -> String {
         self.build_par(p, 0)
     }
 
@@ -99,7 +100,7 @@ impl PrettyPrinter {
 
     // --- term dispatch -------------------------------------------------
 
-    fn build_par(&self, p: &Par, indent: i32) -> String {
+    fn build_par<S: Sort>(&self, p: &Par<S>, indent: i32) -> String {
         if is_nil(p) {
             return "Nil".to_string();
         }
@@ -373,7 +374,7 @@ impl PrettyPrinter {
 
     // --- channel / pattern helpers -------------------------------------
 
-    fn build_channel_inner(&self, p: &Par, indent: i32) -> String {
+    fn build_channel_inner<S: Sort>(&self, p: &Par<S>, indent: i32) -> String {
         let printer = self.with(|c| c.is_building_channel = true);
         let rendered = printer.build_par(p, indent);
         let b = if rendered.len() > 60 {
@@ -391,7 +392,7 @@ impl PrettyPrinter {
         }
     }
 
-    fn is_bound_new(&self, p: &Par) -> bool {
+    fn is_bound_new<S: Sort>(&self, p: &Par<S>) -> bool {
         if let [Expr::EVar(v)] = p.exprs.as_slice() {
             if let Var::BoundVar(level) = v.as_ref() {
                 return self.is_new_var(*level);
@@ -415,7 +416,7 @@ impl PrettyPrinter {
             .join(", ")
     }
 
-    fn build_pattern(&self, patterns: &[Par]) -> String {
+    fn build_pattern<S: Sort>(&self, patterns: &[Par<S>]) -> String {
         patterns
             .iter()
             .enumerate()

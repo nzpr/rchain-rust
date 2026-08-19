@@ -233,7 +233,7 @@ fn sort_gbool(g: bool) -> ScoredTerm<bool> {
 
 fn sort_send(s: &Send) -> ScoredTerm<Send> {
     let sorted_chan = sort_par(&s.chan);
-    let scored_data: Vec<ScoredTerm<Par>> = s.data.iter().map(sort_par).collect();
+    let scored_data: Vec<ScoredTerm<Name>> = s.data.iter().map(sort_par).collect();
     let persistent_score = if s.persistent { 1 } else { 0 };
     let connective_used_score = if s.connective_used { 1 } else { 0 };
 
@@ -254,7 +254,7 @@ fn sort_send(s: &Send) -> ScoredTerm<Send> {
 }
 
 fn sort_receive_bind(bind: &ReceiveBind) -> ScoredTerm<ReceiveBind> {
-    let scored_patterns: Vec<ScoredTerm<Par>> = bind.patterns.iter().map(sort_par).collect();
+    let scored_patterns: Vec<ScoredTerm<Name>> = bind.patterns.iter().map(sort_par).collect();
     let sorted_channel = sort_par(&bind.source);
     let sorted_remainder = match &bind.remainder {
         Some(var) => {
@@ -697,7 +697,7 @@ fn sort_expr(e: &Expr) -> ScoredTerm<Expr> {
     }
 }
 
-fn sort_par(par: &Par) -> ScoredTerm<Par> {
+fn sort_par<S: Sort>(par: &Par<S>) -> ScoredTerm<Par<S>> {
     let mut sends = par.sends.iter().map(sort_send).collect::<Vec<_>>();
     let mut receives = par.receives.iter().map(sort_receive).collect::<Vec<_>>();
     let mut exprs = par.exprs.iter().map(sort_expr).collect::<Vec<_>>();
@@ -753,7 +753,7 @@ fn sort_par(par: &Par) -> ScoredTerm<Par> {
 // --- Public API ---------------------------------------------------------------------------------
 
 /// Canonicalize a single `Par` (the Scala `Sortable[Par].sortMatch(par).term`).
-pub fn sort_par_term(par: &Par) -> Par {
+pub fn sort_par_term<S: Sort>(par: &Par<S>) -> Par<S> {
     sort_par(par).term
 }
 
@@ -871,28 +871,28 @@ mod tests {
     fn g_int(i: i64) -> Par {
         Par {
             exprs: vec![Expr::GInt(i)],
-            ..Par::default()
+            ..Default::default()
         }
     }
 
     fn g_bool(b: bool) -> Par {
         Par {
             exprs: vec![Expr::GBool(b)],
-            ..Par::default()
+            ..Default::default()
         }
     }
 
     fn expr(e: Expr) -> Par {
         Par {
             exprs: vec![e],
-            ..Par::default()
+            ..Default::default()
         }
     }
 
     fn send(chan: Par, data: Vec<Par>, persistent: bool) -> Send {
         Send {
-            chan: Box::new(chan),
-            data,
+            chan: Box::new(chan.quote()),
+            data: data.into_iter().map(|d| d.quote()).collect(),
             persistent,
             locally_free: AlwaysEqual(BitSet::new()),
             connective_used: false,
@@ -915,7 +915,7 @@ mod tests {
 
     #[test]
     fn smaller_integers_come_first() {
-        let par_ground = Par {
+        let par_ground: Par = Par {
             exprs: vec![
                 Expr::GInt(2),
                 Expr::GInt(1),
@@ -923,9 +923,9 @@ mod tests {
                 Expr::GInt(-2),
                 Expr::GInt(0),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::GInt(-2),
                 Expr::GInt(-1),
@@ -933,7 +933,7 @@ mod tests {
                 Expr::GInt(1),
                 Expr::GInt(2),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_ground), expected);
     }
@@ -941,7 +941,7 @@ mod tests {
     #[test]
     fn smaller_bigint_values_come_first() {
         let big = |s: &str| BigInt::parse_bytes(s.as_bytes(), 10).unwrap();
-        let par_ground = Par {
+        let par_ground: Par = Par {
             exprs: vec![
                 Expr::GBigInt(BigInt::from(2)),
                 Expr::GBigInt(big("9999999999999999999999999999999999999999999999")),
@@ -949,9 +949,9 @@ mod tests {
                 Expr::GBigInt(BigInt::from(-2)),
                 Expr::GBigInt(BigInt::from(0)),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::GBigInt(big("-9999999999999999999999999999999999999999999999")),
                 Expr::GBigInt(BigInt::from(-2)),
@@ -959,7 +959,7 @@ mod tests {
                 Expr::GBigInt(BigInt::from(2)),
                 Expr::GBigInt(big("9999999999999999999999999999999999999999999999")),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_ground), expected);
     }
@@ -967,7 +967,7 @@ mod tests {
     #[test]
     fn sort_order_of_ground_types() {
         let byte_array = Expr::GByteArray(vec![0x80]);
-        let par_ground = Par {
+        let par_ground: Par = Par {
             exprs: vec![
                 byte_array.clone(),
                 Expr::GBigInt(BigInt::from(0)),
@@ -976,9 +976,9 @@ mod tests {
                 Expr::GString("Hello".to_string()),
                 Expr::GBool(true),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::GBool(true),
                 Expr::GInt(47),
@@ -987,7 +987,7 @@ mod tests {
                 Expr::GBigInt(BigInt::from(0)),
                 byte_array,
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_ground), expected);
     }
@@ -1032,18 +1032,18 @@ mod tests {
         let s2 = send(
             Par {
                 receives: vec![receive(vec![], par(), false, false)],
-                ..Par::default()
+                ..Default::default()
             },
             vec![],
             false,
         );
-        let p21 = Par {
+        let p21: Par = Par {
             sends: vec![s2.clone(), s1.clone()],
-            ..Par::default()
+            ..Default::default()
         };
-        let p12 = Par {
+        let p12: Par = Par {
             sends: vec![s1, s2],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&p12), sort_par_term(&p21));
     }
@@ -1059,30 +1059,30 @@ mod tests {
 
     #[test]
     fn sort_according_to_pemdas() {
-        let par_expr = Par {
+        let par_expr: Par = Par {
             exprs: vec![
                 Expr::EMinus(Box::new(g_int(4)), Box::new(g_int(3))),
                 Expr::EDiv(Box::new(g_int(1)), Box::new(g_int(5))),
                 Expr::EPlus(Box::new(g_int(1)), Box::new(g_int(3))),
                 Expr::EMult(Box::new(g_int(6)), Box::new(g_int(3))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::EMult(Box::new(g_int(6)), Box::new(g_int(3))),
                 Expr::EDiv(Box::new(g_int(1)), Box::new(g_int(5))),
                 Expr::EPlus(Box::new(g_int(1)), Box::new(g_int(3))),
                 Expr::EMinus(Box::new(g_int(4)), Box::new(g_int(3))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_expr), expected);
     }
 
     #[test]
     fn sort_comparisons_in_order() {
-        let par_expr = Par {
+        let par_expr: Par = Par {
             exprs: vec![
                 Expr::EEq(Box::new(g_int(4)), Box::new(g_int(3))),
                 Expr::ENeq(Box::new(g_int(1)), Box::new(g_int(5))),
@@ -1091,9 +1091,9 @@ mod tests {
                 Expr::ELte(Box::new(g_int(1)), Box::new(g_int(5))),
                 Expr::EGte(Box::new(g_bool(false)), Box::new(g_bool(true))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::ELt(Box::new(g_int(1)), Box::new(g_int(5))),
                 Expr::ELte(Box::new(g_int(1)), Box::new(g_int(5))),
@@ -1102,37 +1102,37 @@ mod tests {
                 Expr::EEq(Box::new(g_int(4)), Box::new(g_int(3))),
                 Expr::ENeq(Box::new(g_int(1)), Box::new(g_int(5))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_expr), expected);
     }
 
     #[test]
     fn sort_evars_based_on_type_and_levels() {
-        let par_ground = Par {
+        let par_ground: Par = Par {
             exprs: vec![
                 Expr::EVar(Box::new(Var::FreeVar(2))),
                 Expr::EVar(Box::new(Var::FreeVar(1))),
                 Expr::EVar(Box::new(Var::BoundVar(2))),
                 Expr::EVar(Box::new(Var::BoundVar(1))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::EVar(Box::new(Var::BoundVar(1))),
                 Expr::EVar(Box::new(Var::BoundVar(2))),
                 Expr::EVar(Box::new(Var::FreeVar(1))),
                 Expr::EVar(Box::new(Var::FreeVar(2))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_ground), expected);
     }
 
     #[test]
     fn sort_exprs_in_order_of_ground_vars_arithmetic_comparisons_logical() {
-        let par_expr = Par {
+        let par_expr: Par = Par {
             exprs: vec![
                 Expr::EEq(Box::new(g_int(4)), Box::new(g_int(3))),
                 Expr::EDiv(Box::new(g_int(1)), Box::new(g_int(5))),
@@ -1140,9 +1140,9 @@ mod tests {
                 Expr::EOr(Box::new(g_bool(false)), Box::new(g_bool(true))),
                 Expr::GInt(1),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             exprs: vec![
                 Expr::GInt(1),
                 Expr::EVar(Box::new(Var::BoundVar(1))),
@@ -1150,30 +1150,30 @@ mod tests {
                 Expr::EEq(Box::new(g_int(4)), Box::new(g_int(3))),
                 Expr::EOr(Box::new(g_bool(false)), Box::new(g_bool(true))),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_expr), expected);
     }
 
     #[test]
     fn sort_sends_based_on_persistence_channel_data() {
-        let par_expr = Par {
+        let par_expr: Par = Par {
             sends: vec![
                 send(g_int(5), vec![g_int(3)], false),
                 send(g_int(5), vec![g_int(3)], true),
                 send(g_int(4), vec![g_int(2)], false),
                 send(g_int(5), vec![g_int(2)], false),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             sends: vec![
                 send(g_int(4), vec![g_int(2)], false),
                 send(g_int(5), vec![g_int(2)], false),
                 send(g_int(5), vec![g_int(3)], false),
                 send(g_int(5), vec![g_int(3)], true),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_expr), expected);
     }
@@ -1186,7 +1186,7 @@ mod tests {
             p: Box::new(p),
             ..New::default()
         };
-        let par_new = Par {
+        let par_new: Par = Par {
             news: vec![
                 new(2, &[], par()),
                 new(2, &["rho:io:stderr"], par()),
@@ -1194,9 +1194,9 @@ mod tests {
                 new(1, &[], par()),
                 new(2, &["rho:io:stdout"], g_int(7)),
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             news: vec![
                 new(1, &[], par()),
                 new(2, &[], par()),
@@ -1204,28 +1204,28 @@ mod tests {
                 new(2, &["rho:io:stdout"], par()),
                 new(2, &["rho:io:stdout"], g_int(7)),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_new), expected);
     }
 
     #[test]
     fn sort_uris_in_news() {
-        let par_new = Par {
+        let par_new: Par = Par {
             news: vec![New {
                 bind_count: 1,
                 uri: vec!["rho:io:stdout".to_string(), "rho:io:stderr".to_string()],
                 ..New::default()
             }],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             news: vec![New {
                 bind_count: 1,
                 uri: vec!["rho:io:stderr".to_string(), "rho:io:stdout".to_string()],
                 ..New::default()
             }],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_new), expected);
     }
@@ -1233,49 +1233,49 @@ mod tests {
     #[test]
     fn sort_matches_based_on_value_and_cases() {
         let match_case = |p: i64, s: i64| MatchCase {
-            pattern: Box::new(g_int(p)),
+            pattern: Box::new(g_int(p).quote()),
             source: Box::new(g_int(s)),
             free_count: 0,
         };
-        let par_match = Par {
+        let par_match: Par = Par {
             matches: vec![
                 Match {
-                    target: Box::new(g_int(5)),
+                    target: Box::new(g_int(5).quote()),
                     cases: vec![match_case(5, 5), match_case(4, 4)],
                     ..Match::default()
                 },
                 Match {
-                    target: Box::new(g_bool(true)),
+                    target: Box::new(g_bool(true).quote()),
                     cases: vec![match_case(5, 5), match_case(4, 4)],
                     ..Match::default()
                 },
                 Match {
-                    target: Box::new(g_bool(true)),
+                    target: Box::new(g_bool(true).quote()),
                     cases: vec![match_case(4, 4), match_case(3, 3)],
                     ..Match::default()
                 },
             ],
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             matches: vec![
                 Match {
-                    target: Box::new(g_bool(true)),
+                    target: Box::new(g_bool(true).quote()),
                     cases: vec![match_case(4, 4), match_case(3, 3)],
                     ..Match::default()
                 },
                 Match {
-                    target: Box::new(g_bool(true)),
+                    target: Box::new(g_bool(true).quote()),
                     cases: vec![match_case(5, 5), match_case(4, 4)],
                     ..Match::default()
                 },
                 Match {
-                    target: Box::new(g_int(5)),
+                    target: Box::new(g_int(5).quote()),
                     cases: vec![match_case(5, 5), match_case(4, 4)],
                     ..Match::default()
                 },
             ],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_match), expected);
     }
@@ -1290,12 +1290,12 @@ mod tests {
     #[test]
     fn sort_logical_connectives_in_not_and_or_order() {
         let evar = |lvl| Expr::EVar(Box::new(Var::FreeVar(lvl))).into_par();
-        let par_expr = Par {
+        let par_expr: Par = Par {
             connectives: vec![
                 Connective::ConnAnd(ConnectiveBody {
                     ps: vec![evar(0), Par {
                         sends: vec![send(evar(1), vec![evar(2)], false)],
-                        ..Par::default()
+                        ..Default::default()
                     }],
                 }),
                 Connective::ConnOr(ConnectiveBody {
@@ -1307,15 +1307,15 @@ mod tests {
                 Connective::ConnNot(Box::new(par())),
             ],
             connective_used: true,
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             connectives: vec![
                 Connective::ConnNot(Box::new(par())),
                 Connective::ConnAnd(ConnectiveBody {
                     ps: vec![evar(0), Par {
                         sends: vec![send(evar(1), vec![evar(2)], false)],
-                        ..Par::default()
+                        ..Default::default()
                     }],
                 }),
                 Connective::ConnOr(ConnectiveBody {
@@ -1326,7 +1326,7 @@ mod tests {
                 }),
             ],
             connective_used: true,
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_expr), expected);
     }
@@ -1338,13 +1338,13 @@ mod tests {
                 p: Box::new(Expr::EVar(Box::new(Var::Wildcard)).into_par()),
                 ..New::default()
             }],
-            ..Par::default()
+            ..Default::default()
         }
     }
 
     #[test]
     fn sort_logical_connectives_varref_bool_int_string_uri_bytearray_bigint() {
-        let par_expr = Par {
+        let par_expr: Par = Par {
             connectives: vec![
                 Connective::ConnByteArray(true),
                 Connective::ConnUri(true),
@@ -1355,9 +1355,9 @@ mod tests {
                 Connective::VarRef(VarRef::default()),
             ],
             connective_used: true,
-            ..Par::default()
+            ..Default::default()
         };
-        let expected = Par {
+        let expected: Par = Par {
             connectives: vec![
                 Connective::VarRef(VarRef::default()),
                 Connective::ConnBool(true),
@@ -1368,7 +1368,7 @@ mod tests {
                 Connective::ConnBigInt(true),
             ],
             connective_used: true,
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(sort_par_term(&par_expr), expected);
     }
@@ -1385,7 +1385,7 @@ mod tests {
                         write_flag: true,
                         read_flag: false,
                     }],
-                    ..Par::default()
+                    ..Default::default()
                 },
             )]),
             ..New::default()
@@ -1415,7 +1415,7 @@ mod tests {
 
     #[test]
     fn sort_is_idempotent() {
-        let p = Par {
+        let p: Par = Par {
             exprs: vec![
                 Expr::EPlus(Box::new(g_int(3)), Box::new(g_int(1))),
                 Expr::GInt(7),
@@ -1425,7 +1425,7 @@ mod tests {
                 send(g_int(2), vec![g_int(1)], false),
                 send(g_int(1), vec![g_int(2)], true),
             ],
-            ..Par::default()
+            ..Default::default()
         };
         let once = sort_par_term(&p);
         let twice = sort_par_term(&once);
@@ -1434,13 +1434,13 @@ mod tests {
 
     #[test]
     fn sort_par_merge_commutes() {
-        let p = Par {
+        let p: Par = Par {
             exprs: vec![Expr::GInt(2), Expr::GInt(1)],
-            ..Par::default()
+            ..Default::default()
         };
-        let q = Par {
+        let q: Par = Par {
             exprs: vec![Expr::GInt(4), Expr::GInt(3)],
-            ..Par::default()
+            ..Default::default()
         };
         let merged = p.par_merge(&q);
         let merged_rev = q.par_merge(&p);
@@ -1458,7 +1458,7 @@ impl IntoPar for Expr {
     fn into_par(self) -> Par {
         Par {
             exprs: vec![self],
-            ..Par::default()
+            ..Default::default()
         }
     }
 }
@@ -1468,7 +1468,7 @@ impl ParSet {
     fn into_expr(self) -> Par {
         Par {
             exprs: vec![Expr::ESet(self)],
-            ..Par::default()
+            ..Default::default()
         }
     }
 }
@@ -1478,7 +1478,7 @@ impl ParMap {
     fn into_expr(self) -> Par {
         Par {
             exprs: vec![Expr::EMap(self)],
-            ..Par::default()
+            ..Default::default()
         }
     }
 }

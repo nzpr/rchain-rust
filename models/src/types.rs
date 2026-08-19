@@ -7,7 +7,7 @@
 
 use crate::ast::{
     Bundle, Connective, Expr, GUnforgeable, Match, MatchCase, New, Par, Receive, ReceiveBind, Send,
-    Var,
+    Sort, Var,
 };
 
 /// The two syntactic sorts (mirrors `Ty.lean`'s `inductive PSort | proc | name`): a term is used in
@@ -76,7 +76,7 @@ fn closed_var(v: &Var) -> bool {
     }
 }
 
-fn closed_par(p: &Par) -> bool {
+fn closed_par<S: Sort>(p: &Par<S>) -> bool {
     p.sends.iter().all(closed_send)
         && p.receives.iter().all(closed_receive)
         && p.news.iter().all(closed_new)
@@ -214,14 +214,14 @@ mod tests {
     fn g_int(i: i64) -> Par {
         Par {
             exprs: vec![Expr::GInt(i)],
-            ..Par::default()
+            ..Default::default()
         }
     }
 
     fn free_var(l: i32) -> Par {
         Par {
             exprs: vec![Expr::EVar(Box::new(Var::FreeVar(l)))],
-            ..Par::default()
+            ..Default::default()
         }
     }
 
@@ -234,7 +234,7 @@ mod tests {
     fn classify_process_is_proc() {
         let send = Par {
             sends: vec![Send::default()],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(classify(&send), PSort::Proc);
     }
@@ -274,7 +274,7 @@ mod tests {
     fn bound_variable_is_closed() {
         let bound = Par {
             exprs: vec![Expr::EVar(Box::new(Var::BoundVar(0)))],
-            ..Par::default()
+            ..Default::default()
         };
         assert!(is_closed(&bound));
     }

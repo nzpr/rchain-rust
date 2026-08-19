@@ -12,26 +12,27 @@ fn new_return_name() -> Par {
     let mut rand = Blake2b512Random::default_random();
     Par {
         unforgeables: vec![GUnforgeable::GPrivate(GPrivate { id: rand.next() })],
-        ..Par::default()
+        ..Default::default()
     }
 }
 
 fn get_balance_par(vault_par: &Par, return_channel: &Par) -> Par {
     Par {
         sends: vec![Send {
-            chan: Box::new(vault_par.clone()),
+            chan: Box::new(vault_par.clone().quote()),
             data: vec![
                 Par {
                     exprs: vec![Expr::GString("balance".to_string())],
-                    ..Par::default()
-                },
-                return_channel.clone(),
+                    ..Default::default()
+                }
+                .quote(),
+                return_channel.clone().quote(),
             ],
             persistent: false,
             locally_free: Default::default(),
             connective_used: false,
         }],
-        ..Par::default()
+        ..Default::default()
     }
 }
 

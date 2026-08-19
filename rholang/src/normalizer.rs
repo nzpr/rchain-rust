@@ -11,7 +11,7 @@ use num_bigint::BigInt;
 
 use rchain_models::ast::{
     AlwaysEqual, Bundle, Connective, ConnectiveBody, EList, ETuple, Expr, Match, MatchCase, New,
-    Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
+    NameSort, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
 };
 use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
@@ -702,7 +702,7 @@ fn normalize_match(
         match_cases.insert(
             0,
             MatchCase {
-                pattern: Box::new(pattern_result.par.clone()),
+                pattern: Box::new(pattern_result.par.clone().quote()),
                 source: Box::new(case_body_result.par.clone()),
                 free_count: bound_count,
             },
@@ -717,7 +717,7 @@ fn normalize_match(
     }
 
     let m = Match {
-        target: Box::new(target_result.par.clone()),
+        target: Box::new(target_result.par.clone().quote()),
         cases: match_cases,
         locally_free: AlwaysEqual(union_free(&locally_free, &target_result.par.locally_free.0)),
         connective_used: connective_used || target_result.par.connective_used,
@@ -802,8 +802,8 @@ fn normalize_contr(
 
     let receive = Receive {
         binds: vec![ReceiveBind {
-            patterns: formal_pars,
-            source: Box::new(name_result.par.clone()),
+            patterns: formal_pars.into_iter().map(|p| p.quote()).collect(),
+            source: Box::new(name_result.par.clone().quote()),
             remainder: remainder_var.map(Box::new),
             free_count: bound_count,
         }],
@@ -861,8 +861,8 @@ fn normalize_send(
 
     let persistent = matches!(send, SendKind::SendMultiple);
     let s = Send {
-        chan: Box::new(name_result.par.clone()),
-        data: data_pars,
+        chan: Box::new(name_result.par.clone().quote()),
+        data: data_pars.into_iter().map(|p| p.quote()).collect(),
         persistent,
         locally_free: AlwaysEqual(union_free(
             &name_result.par.locally_free.0,
@@ -958,15 +958,15 @@ fn normalize_if(
     )?;
 
     let m = Match {
-        target: Box::new(target.par.clone()),
+        target: Box::new(target.par.clone().quote()),
         cases: vec![
             MatchCase {
-                pattern: Box::new(from_expr(Expr::GBool(true))),
+                pattern: Box::new(from_expr(Expr::GBool(true)).quote()),
                 source: Box::new(true_result.par.clone()),
                 free_count: 0,
             },
             MatchCase {
-                pattern: Box::new(from_expr(Expr::GBool(false))),
+                pattern: Box::new(from_expr(Expr::GBool(false)).quote()),
                 source: Box::new(false_result.par.clone()),
                 free_count: 0,
             },
@@ -1164,8 +1164,8 @@ fn normalize_input(
         let (opt_var, pattern_free) = normalize_remainder_name(remainder, pattern_free)?;
         let free_count = pattern_free.count_no_wildcards();
         let rb = ReceiveBind {
-            patterns: pattern_pars,
-            source: Box::new(source_pars[binds.len()].clone()),
+            patterns: pattern_pars.into_iter().map(|p| p.quote()).collect(),
+            source: Box::new(source_pars[binds.len()].clone().quote()),
             remainder: opt_var.map(Box::new),
             free_count,
         };
@@ -1179,7 +1179,7 @@ fn normalize_input(
         sorted.iter().map(|(_, fm)| fm.clone()).collect();
 
     // Check for repeated channels.
-    let channels: BTreeSet<Par> = receive_binds.iter().map(|rb| (*rb.source).clone()).collect();
+    let channels: BTreeSet<Par<NameSort>> = receive_binds.iter().map(|rb| (*rb.source).clone()).collect();
     if channels.len() != receive_binds.len() {
         return Err(RholangError::ReceiveOnSameChannelsError { line: 0, col: 0 });
     }
@@ -1274,9 +1274,9 @@ fn normalize_let(
     )?;
 
     let m = Match {
-        target: Box::new(value_par.par.clone()),
+        target: Box::new(value_par.par.clone().quote()),
         cases: vec![MatchCase {
-            pattern: Box::new(pattern_par.par.clone()),
+            pattern: Box::new(pattern_par.par.clone().quote()),
             source: Box::new(continuation.par.clone()),
             free_count: pattern_bound_count,
         }],
@@ -1625,8 +1625,8 @@ mod tests {
         assert_eq!(
             out.par.exprs,
             vec![Expr::EPlus(
-                Box::new(Par { exprs: vec![Expr::GInt(1)], ..Par::default() }),
-                Box::new(Par { exprs: vec![Expr::GInt(2)], ..Par::default() }),
+                Box::new(Par { exprs: vec![Expr::GInt(1)], ..Default::default() }),
+                Box::new(Par { exprs: vec![Expr::GInt(2)], ..Default::default() }),
             )]
         );
     }
@@ -1644,7 +1644,7 @@ mod tests {
         assert_eq!(par.news[0].p.sends.len(), 1);
         assert_eq!(par.news[0].p.sends[0].data, vec![Par {
             exprs: vec![Expr::GInt(1)],
-            ..Par::default()
+            ..Default::default()
         }]);
     }
 

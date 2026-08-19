@@ -80,7 +80,7 @@ pub fn registry_bootstrap_ast() -> Par {
             bootstrap(&FixedChannels::reg_insert_random()),
             bootstrap(&FixedChannels::reg_insert_signed()),
         ],
-        ..Par::default()
+        ..Default::default()
     }
 }
 
@@ -92,20 +92,20 @@ fn bootstrap(channel: &Par) -> New {
         p: Box::new(Par {
             receives: vec![Receive {
                 binds: vec![ReceiveBind {
-                    patterns: vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0))))],
-                    source: Box::new(channel.clone()),
+                    patterns: vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0)))).quote()],
+                    source: Box::new(channel.clone().quote()),
                     remainder: None,
                     free_count: 1,
                 }],
                 body: Box::new(Par {
                     sends: vec![Send {
-                        chan: Box::new(from_expr(Expr::EVar(Box::new(Var::BoundVar(0))))),
-                        data: vec![channel.clone()],
+                        chan: Box::new(from_expr(Expr::EVar(Box::new(Var::BoundVar(0)))).quote()),
+                        data: vec![channel.clone().quote()],
                         persistent: false,
                         locally_free: AlwaysEqual(vec![]),
                         connective_used: false,
                     }],
-                    ..Par::default()
+                    ..Default::default()
                 }),
                 persistent: false,
                 peek: false,
@@ -113,7 +113,7 @@ fn bootstrap(channel: &Par) -> New {
                 locally_free: AlwaysEqual(vec![]),
                 connective_used: false,
             }],
-            ..Par::default()
+            ..Default::default()
         }),
         uri: vec![],
         injections: BTreeMap::new(),

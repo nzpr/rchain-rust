@@ -1,11 +1,11 @@
 //! Sub-`Par` splitting and free-variable filtering (port of `matcher/ParSpatialMatcherUtils.scala`).
 
-use rchain_models::ast::{Expr, Par, Var};
+use rchain_models::ast::{Expr, Par, Sort, Var};
 
 use crate::matcher::par_count::ParCount;
 
 /// Remove free-variable/wildcard exprs from a `Par` (port of `noFrees`).
-pub fn no_frees(par: &Par) -> Par {
+pub fn no_frees<S: Sort>(par: &Par<S>) -> Par<S> {
     Par {
         exprs: no_frees_exprs(&par.exprs),
         ..par.clone()
@@ -101,13 +101,13 @@ fn worker<A: Clone>(items: &[A], min_size: i32, max_size: i32) -> Vec<(Vec<A>, V
 
 /// Split `par` into every (matched sub-`Par`, remainder) pair consistent with the min/max bounds
 /// (port of `subPars`).
-pub fn sub_pars(
-    par: &Par,
+pub fn sub_pars<S: Sort>(
+    par: &Par<S>,
     min: &ParCount,
     max: &ParCount,
     min_prune: &ParCount,
     max_prune: &ParCount,
-) -> Vec<(Par, Par)> {
+) -> Vec<(Par<S>, Par<S>)> {
     let send_max = i32::min(max.sends, par.sends.len() as i32 - min_prune.sends);
     let receive_max = i32::min(max.receives, par.receives.len() as i32 - min_prune.receives);
     let news_max = i32::min(max.news, par.news.len() as i32 - min_prune.news);
@@ -154,7 +154,7 @@ pub fn sub_pars(
                                     matches: sm.0.clone(),
                                     unforgeables: su.0.clone(),
                                     bundles: sb.0.clone(),
-                                    ..Par::default()
+                                    ..Default::default()
                                 };
                                 let comp = Par {
                                     sends: ss.1.clone(),
@@ -164,7 +164,7 @@ pub fn sub_pars(
                                     matches: sm.1.clone(),
                                     unforgeables: su.1.clone(),
                                     bundles: sb.1.clone(),
-                                    ..Par::default()
+                                    ..Default::default()
                                 };
                                 out.push((sub, comp));
                             }

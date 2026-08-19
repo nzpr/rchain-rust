@@ -1,6 +1,6 @@
 //! Counting the fields of a `Par` for spatial matching (port of `matcher/ParCount.scala`).
 
-use rchain_models::ast::{Connective, ConnectiveBody, Expr, Par, Var};
+use rchain_models::ast::{Connective, ConnectiveBody, Expr, Par, Sort, Var};
 
 use crate::matcher::par_spatial_matcher_utils::no_frees;
 
@@ -48,7 +48,7 @@ impl ParCount {
         self.bin_op(saturating_add, other)
     }
 
-    pub fn from_par(par: &Par) -> ParCount {
+    pub fn from_par<S: Sort>(par: &Par<S>) -> ParCount {
         ParCount {
             sends: par.sends.len() as i32,
             receives: par.receives.len() as i32,

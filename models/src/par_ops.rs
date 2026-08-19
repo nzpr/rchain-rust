@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use crate::ast::{
     AlwaysEqual, BitSet, Bundle, Connective, Expr, GUnforgeable, Match, New, Par, Receive, Send,
-    Var, VarRef,
+    Sort, SortJoin, Var, VarRef,
 };
 
 fn union_free(a: &[i32], b: &[i32]) -> Vec<i32> {
@@ -137,7 +137,7 @@ pub fn connective_used_of_new(n: &New) -> bool {
 // --- Par builders (mirrors `prepend` / `++` / `single*`) --------------
 
 /// The Scala `p ++ that` (argument's fields first, then receiver's).
-pub fn par_concat(p: &Par, that: &Par) -> Par {
+pub fn par_concat<A: Sort + SortJoin<B>, B: Sort>(p: &Par<A>, that: &Par<B>) -> Par<<A as SortJoin<B>>::Output> {
     let mut sends = that.sends.clone();
     sends.extend(p.sends.iter().cloned());
     let mut receives = that.receives.clone();
@@ -202,7 +202,7 @@ pub fn prepend_new(par: &Par, n: New) -> Par {
     }
 }
 
-pub fn prepend_expr(par: &Par, e: Expr, depth: i32) -> Par {
+pub fn prepend_expr<S: Sort>(par: &Par<S>, e: Expr, depth: i32) -> Par<S> {
     let mut exprs = vec![e.clone()];
     exprs.extend(par.exprs.iter().cloned());
     Par {
@@ -216,7 +216,7 @@ pub fn prepend_expr(par: &Par, e: Expr, depth: i32) -> Par {
     }
 }
 
-pub fn prepend_match(par: &Par, m: Match) -> Par {
+pub fn prepend_match<S: Sort>(par: &Par<S>, m: Match) -> Par<S> {
     let mut matches = vec![m.clone()];
     matches.extend(par.matches.iter().cloned());
     Par {
@@ -227,7 +227,7 @@ pub fn prepend_match(par: &Par, m: Match) -> Par {
     }
 }
 
-pub fn prepend_bundle(par: &Par, b: Bundle) -> Par {
+pub fn prepend_bundle<S: Sort>(par: &Par<S>, b: Bundle) -> Par<S> {
     let mut bundles = vec![b.clone()];
     bundles.extend(par.bundles.iter().cloned());
     Par {
@@ -237,7 +237,7 @@ pub fn prepend_bundle(par: &Par, b: Bundle) -> Par {
     }
 }
 
-pub fn prepend_connective(par: &Par, c: Connective, depth: i32) -> Par {
+pub fn prepend_connective<S: Sort>(par: &Par<S>, c: Connective, depth: i32) -> Par<S> {
     let mut connectives = vec![c.clone()];
     connectives.extend(par.connectives.iter().cloned());
     Par {
@@ -251,7 +251,7 @@ pub fn prepend_connective(par: &Par, c: Connective, depth: i32) -> Par {
 
 // --- `single*` accessors ----------------------------------------------
 
-fn par_empty_except(p: &Par, which: usize) -> bool {
+fn par_empty_except<S: Sort>(p: &Par<S>, which: usize) -> bool {
     let empties = [
         p.sends.is_empty(),
         p.receives.is_empty(),
@@ -265,7 +265,7 @@ fn par_empty_except(p: &Par, which: usize) -> bool {
     empties.iter().enumerate().all(|(i, &e)| i == which || e)
 }
 
-pub fn single_expr(p: &Par) -> Option<&Expr> {
+pub fn single_expr<S: Sort>(p: &Par<S>) -> Option<&Expr> {
     if par_empty_except(p, 3) && p.exprs.len() == 1 {
         p.exprs.first()
     } else {
@@ -273,7 +273,7 @@ pub fn single_expr(p: &Par) -> Option<&Expr> {
     }
 }
 
-pub fn single_bundle(p: &Par) -> Option<&Bundle> {
+pub fn single_bundle<S: Sort>(p: &Par<S>) -> Option<&Bundle> {
     if par_empty_except(p, 6) && p.bundles.len() == 1 {
         p.bundles.first()
     } else {
@@ -281,7 +281,7 @@ pub fn single_bundle(p: &Par) -> Option<&Bundle> {
     }
 }
 
-pub fn single_unforgeable(p: &Par) -> Option<&GUnforgeable> {
+pub fn single_unforgeable<S: Sort>(p: &Par<S>) -> Option<&GUnforgeable> {
     if par_empty_except(p, 5) && p.unforgeables.len() == 1 {
         p.unforgeables.first()
     } else {
@@ -289,7 +289,7 @@ pub fn single_unforgeable(p: &Par) -> Option<&GUnforgeable> {
     }
 }
 
-pub fn single_connective(p: &Par) -> Option<&Connective> {
+pub fn single_connective<S: Sort>(p: &Par<S>) -> Option<&Connective> {
     if par_empty_except(p, 7) && p.connectives.len() == 1 {
         p.connectives.first()
     } else {
@@ -298,7 +298,7 @@ pub fn single_connective(p: &Par) -> Option<&Connective> {
 }
 
 /// The Scala `isNil`.
-pub fn is_nil(p: &Par) -> bool {
+pub fn is_nil<S: Sort>(p: &Par<S>) -> bool {
     p.sends.is_empty()
         && p.receives.is_empty()
         && p.news.is_empty()
@@ -315,7 +315,7 @@ pub fn from_expr(expr: Expr) -> Par {
         exprs: vec![expr.clone()],
         locally_free: AlwaysEqual(locally_free_of_expr(&expr, 0)),
         connective_used: connective_used_of_expr(&expr),
-        ..Par::default()
+        ..Default::default()
     }
 }
 

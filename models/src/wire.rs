@@ -370,7 +370,7 @@ fn emethod_from_proto(p: &p::EMethod) -> Result<a::EMethod, ModelsError> {Ok(
     a::EMethod {
         method_name: p.method_name.clone(),
         target: Box::new(par_from_proto(p.target.as_ref().ok_or(ModelsError::Malformed("target"))?)?),
-        arguments: p.arguments.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        arguments: p.arguments.iter().map(|x| par_from_proto(x)).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
     }
@@ -380,8 +380,8 @@ fn emethod_from_proto(p: &p::EMethod) -> Result<a::EMethod, ModelsError> {Ok(
 
 pub fn send_to_proto(s: &a::Send) -> p::Send {
     p::Send {
-        chan: Some(par_to_proto(&s.chan)),
-        data: s.data.iter().map(par_to_proto).collect(),
+        chan: Some(par_to_proto(s.chan.as_ref())),
+        data: s.data.iter().map(|d| par_to_proto(d)).collect(),
         persistent: s.persistent,
         locally_free: bitset_to_bytes(&s.locally_free.0),
         connective_used: s.connective_used,
@@ -389,8 +389,8 @@ pub fn send_to_proto(s: &a::Send) -> p::Send {
 }
 pub fn send_from_proto(p: &p::Send) -> Result<a::Send, ModelsError> {Ok(
     a::Send {
-        chan: Box::new(par_from_proto(p.chan.as_ref().ok_or(ModelsError::Malformed("chan"))?)?),
-        data: p.data.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        chan: Box::new(par_from_proto::<a::NameSort>(p.chan.as_ref().ok_or(ModelsError::Malformed("chan"))?)?),
+        data: p.data.iter().map(|d| par_from_proto::<a::NameSort>(d)).collect::<Result<Vec<_>, ModelsError>>()?,
         persistent: p.persistent,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
@@ -400,7 +400,7 @@ pub fn send_from_proto(p: &p::Send) -> Result<a::Send, ModelsError> {Ok(
 pub fn receive_to_proto(r: &a::Receive) -> p::Receive {
     p::Receive {
         binds: r.binds.iter().map(receive_bind_to_proto).collect(),
-        body: Some(par_to_proto(&r.body)),
+        body: Some(par_to_proto(r.body.as_ref())),
         persistent: r.persistent,
         peek: r.peek,
         bind_count: r.bind_count,
@@ -422,16 +422,16 @@ pub fn receive_from_proto(p: &p::Receive) -> Result<a::Receive, ModelsError> {Ok
 
 pub fn receive_bind_to_proto(rb: &a::ReceiveBind) -> p::ReceiveBind {
     p::ReceiveBind {
-        patterns: rb.patterns.iter().map(par_to_proto).collect(),
-        source: Some(par_to_proto(&rb.source)),
+        patterns: rb.patterns.iter().map(|p| par_to_proto(p)).collect(),
+        source: Some(par_to_proto(rb.source.as_ref())),
         remainder: rb.remainder.as_deref().map(var_to_proto),
         free_count: rb.free_count,
     }
 }
 pub fn receive_bind_from_proto(p: &p::ReceiveBind) -> Result<a::ReceiveBind, ModelsError> {Ok(
     a::ReceiveBind {
-        patterns: p.patterns.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
-        source: Box::new(par_from_proto(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
+        patterns: p.patterns.iter().map(|p| par_from_proto(p)).collect::<Result<Vec<_>, ModelsError>>()?,
+        source: Box::new(par_from_proto::<a::NameSort>(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
         remainder: p.remainder.as_ref().map(var_from_proto).map(Box::new),
         free_count: p.free_count,
     }
@@ -440,7 +440,7 @@ pub fn receive_bind_from_proto(p: &p::ReceiveBind) -> Result<a::ReceiveBind, Mod
 pub fn new_to_proto(n: &a::New) -> p::New {
     p::New {
         bind_count: n.bind_count,
-        p: Some(par_to_proto(&n.p)),
+        p: Some(par_to_proto(n.p.as_ref())),
         uri: n.uri.clone(),
         injections: n
             .injections
@@ -466,7 +466,7 @@ pub fn new_from_proto(p: &p::New) -> Result<a::New, ModelsError> {Ok(
 
 pub fn match_to_proto(m: &a::Match) -> p::Match {
     p::Match {
-        target: Some(par_to_proto(&m.target)),
+        target: Some(par_to_proto(m.target.as_ref())),
         cases: m.cases.iter().map(match_case_to_proto).collect(),
         locally_free: bitset_to_bytes(&m.locally_free.0),
         connective_used: m.connective_used,
@@ -474,7 +474,7 @@ pub fn match_to_proto(m: &a::Match) -> p::Match {
 }
 pub fn match_from_proto(p: &p::Match) -> Result<a::Match, ModelsError> {Ok(
     a::Match {
-        target: Box::new(par_from_proto(p.target.as_ref().ok_or(ModelsError::Malformed("target"))?)?),
+        target: Box::new(par_from_proto::<a::NameSort>(p.target.as_ref().ok_or(ModelsError::Malformed("target"))?)?),
         cases: p.cases.iter().map(match_case_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
@@ -483,14 +483,14 @@ pub fn match_from_proto(p: &p::Match) -> Result<a::Match, ModelsError> {Ok(
 
 pub fn match_case_to_proto(mc: &a::MatchCase) -> p::MatchCase {
     p::MatchCase {
-        pattern: Some(par_to_proto(&mc.pattern)),
-        source: Some(par_to_proto(&mc.source)),
+        pattern: Some(par_to_proto(mc.pattern.as_ref())),
+        source: Some(par_to_proto(mc.source.as_ref())),
         free_count: mc.free_count,
     }
 }
 pub fn match_case_from_proto(p: &p::MatchCase) -> Result<a::MatchCase, ModelsError> {Ok(
     a::MatchCase {
-        pattern: Box::new(par_from_proto(p.pattern.as_ref().ok_or(ModelsError::Malformed("pattern"))?)?),
+        pattern: Box::new(par_from_proto::<a::NameSort>(p.pattern.as_ref().ok_or(ModelsError::Malformed("pattern"))?)?),
         source: Box::new(par_from_proto(p.source.as_ref().ok_or(ModelsError::Malformed("source"))?)?),
         free_count: p.free_count,
     }
@@ -511,7 +511,7 @@ pub fn bundle_from_proto(p: &p::Bundle) -> Result<a::Bundle, ModelsError> {Ok(
     }
 )}
 
-pub fn par_to_proto(par: &a::Par) -> p::Par {
+pub fn par_to_proto<S: a::Sort>(par: &a::Par<S>) -> p::Par {
     p::Par {
         sends: par.sends.iter().map(send_to_proto).collect(),
         receives: par.receives.iter().map(receive_to_proto).collect(),
@@ -526,7 +526,7 @@ pub fn par_to_proto(par: &a::Par) -> p::Par {
     }
 }
 
-pub fn par_from_proto(p: &p::Par) -> Result<a::Par, ModelsError> {Ok(
+pub fn par_from_proto<S: a::Sort>(p: &p::Par) -> Result<a::Par<S>, ModelsError> {Ok(
     a::Par {
         sends: p.sends.iter().map(send_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         receives: p.receives.iter().map(receive_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
@@ -553,7 +553,7 @@ pub fn bind_pattern_to_proto(bp: &BindPattern) -> p::BindPattern {
 }
 pub fn bind_pattern_from_proto(p: &p::BindPattern) -> Result<BindPattern, ModelsError> {Ok(
     BindPattern {
-        patterns: p.patterns.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
+        patterns: p.patterns.iter().map(|p| par_from_proto(p)).collect::<Result<Vec<_>, ModelsError>>()?,
         remainder: p.remainder.as_ref().map(var_from_proto),
         free_count: p.free_count,
     }

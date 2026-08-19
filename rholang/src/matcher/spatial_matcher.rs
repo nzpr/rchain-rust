@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use rchain_models::ast::{
     Bundle, Connective, ConnectiveBody, EList, ETuple, Expr, GUnforgeable, Match, MatchCase, New,
-    Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var,
+    Par, ParMap, ParSet, Receive, ReceiveBind, Send, Sort, Var,
 };
 use rchain_models::par_ops::{connective_used_of_expr, locally_free_of_expr, single_expr};
 use rchain_models::sorter::{par_map, par_set};
@@ -40,7 +40,14 @@ macro_rules! impl_matchable {
     };
 }
 
-impl_matchable!(Par);
+impl<S: Sort> MatchableTerm for Par<S> {
+    fn connective_used(&self) -> bool {
+        self.connective_used
+    }
+    fn locally_free_empty(&self) -> bool {
+        self.locally_free.0.is_empty()
+    }
+}
 impl_matchable!(Send);
 impl_matchable!(Receive);
 impl_matchable!(Match);
@@ -153,11 +160,11 @@ fn with_unforgeables(p: &Par, u: &[GUnforgeable]) -> Par {
 }
 
 /// The public entry point (port of `SpatialMatcher.spatialMatchResult`).
-pub fn spatial_match_result(target: &Par, pattern: &Par) -> Result<Option<FreeMap>, RholangError> {
+pub fn spatial_match_result<S: Sort>(target: &Par<S>, pattern: &Par<S>) -> Result<Option<FreeMap>, RholangError> {
     Ok(spatial_match(target, pattern, &FreeMap::new())?.into_iter().next())
 }
 
-pub fn spatial_match(target: &Par, pattern: &Par, fm: &FreeMap) -> MResult {
+pub fn spatial_match<S: Sort>(target: &Par<S>, pattern: &Par<S>, fm: &FreeMap) -> MResult {
     if !pattern.connective_used {
         return guard(fm, pattern == target);
     }
@@ -191,11 +198,11 @@ pub fn spatial_match(target: &Par, pattern: &Par, fm: &FreeMap) -> MResult {
     remainder_bounds.remove(0);
 
     // Fold over connectives: match each against a sub-`Par` of the running remainder.
-    let mut states: Vec<(Par, FreeMap)> = vec![(target.clone(), fm.clone())];
+    let mut states: Vec<(Par<S>, FreeMap)> = vec![(target.clone(), fm.clone())];
     for (i, con) in filtered_pattern.connectives.iter().enumerate() {
         let (min_b, max_b) = &individual_bounds[i];
         let (min_prune, max_prune) = &remainder_bounds[i];
-        let mut next: Vec<(Par, FreeMap)> = Vec::new();
+        let mut next: Vec<(Par<S>, FreeMap)> = Vec::new();
         for (rem, fm_state) in states {
             for (sub, comp) in sub_pars(&rem, min_b, max_b, min_prune, max_prune) {
                 for fm_match in spatial_match_connective(&sub, con, &fm_state)? {
@@ -283,14 +290,14 @@ pub fn spatial_match(target: &Par, pattern: &Par, fm: &FreeMap) -> MResult {
     Ok(out)
 }
 
-pub fn spatial_match_connective(target: &Par, con: &Connective, fm: &FreeMap) -> MResult {
+pub fn spatial_match_connective<S: Sort>(target: &Par<S>, con: &Connective, fm: &FreeMap) -> MResult {
     match con {
         Connective::ConnAnd(ConnectiveBody { ps }) => {
             let mut states = vec![fm.clone()];
             for p in ps {
                 let mut next = Vec::new();
                 for fm_state in states {
-                    next.extend(spatial_match(target, p, &fm_state)?);
+                    next.extend(spatial_match(target, &p.clone().re_sort(), &fm_state)?);
                 }
                 states = next;
             }
@@ -299,12 +306,12 @@ pub fn spatial_match_connective(target: &Par, con: &Connective, fm: &FreeMap) ->
         Connective::ConnOr(ConnectiveBody { ps }) => {
             let mut all = Vec::new();
             for p in ps {
-                all.extend(spatial_match(target, p, fm)?);
+                all.extend(spatial_match(target, &p.clone().re_sort(), fm)?);
             }
             Ok(all.into_iter().take(1).collect())
         }
         Connective::ConnNot(p) => {
-            let matches = spatial_match(target, p, fm)?;
+            let matches = spatial_match(target, &p.clone().re_sort(), fm)?;
             guard(fm, matches.is_empty())
         }
         Connective::Empty | Connective::VarRef(_) => Ok(Vec::new()),
@@ -340,7 +347,7 @@ pub fn spatial_match_send(target: &Send, pattern: &Send, fm: &FreeMap) -> MResul
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for fm1 in spatial_match(&target.chan, &pattern.chan, fm)? {
+    for fm1 in spatial_match(target.chan.as_ref(), pattern.chan.as_ref(), fm)? {
         for (_, fm2) in fold_match(&target.data, &pattern.data, None, &fm1, &spatial_match)? {
             out.push(fm2);
         }
@@ -379,7 +386,7 @@ pub fn spatial_match_new(target: &New, pattern: &New, fm: &FreeMap) -> MResult {
 
 pub fn spatial_match_match(target: &Match, pattern: &Match, fm: &FreeMap) -> MResult {
     let mut out = Vec::new();
-    for fm1 in spatial_match(&target.target, &pattern.target, fm)? {
+    for fm1 in spatial_match(target.target.as_ref(), pattern.target.as_ref(), fm)? {
         for (_, fm2) in fold_match(
             &target.cases,
             &pattern.cases,
@@ -748,7 +755,7 @@ mod tests {
     fn par(exprs: Vec<Expr>) -> Par {
         Par {
             exprs,
-            ..Par::default()
+            ..Default::default()
         }
     }
 
@@ -766,7 +773,7 @@ mod tests {
         let pattern = Par {
             exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
             connective_used: true,
-            ..Par::default()
+            ..Default::default()
         };
         let expected = FreeMap::from([(0, par(vec![Expr::GInt(42)]))]);
         assert_eq!(spatial_match_result(&target, &pattern).unwrap(), Some(expected));

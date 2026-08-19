@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use num_bigint::BigInt;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{
-    AlwaysEqual, Bundle, EList, ETuple, Expr, GPrivate, GUnforgeable, Match, MatchCase, New, Par,
-    ParMap, ParSet, Receive, ReceiveBind, Send, Var,
+    AlwaysEqual, Bundle, EList, ETuple, Expr, GPrivate, GUnforgeable, Match, MatchCase, Name, New,
+    Par, ParMap, ParSet, Receive, ReceiveBind, Send, Sort, SortJoin, Var,
 };
 use rchain_models::par_ops::{from_expr, par_concat, single_bundle, single_expr, typ};
 use rchain_models::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
@@ -103,8 +103,8 @@ fn restrict_to_int(n: i64) -> Result<usize, RholangError> {
     }
 }
 
-pub fn eval_single_expr(
-    par: &Par,
+pub fn eval_single_expr<S: Sort>(
+    par: &Par<S>,
     env: &Env<Par>,
     cost: &CostAccounting,
 ) -> Result<Expr, RholangError> {
@@ -197,11 +197,11 @@ fn interpolate(string: &str, pairs: &[(String, String)]) -> String {
     result
 }
 
-fn eval_expr_to_par(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Result<Par, RholangError> {
+fn eval_expr_to_par<S: Sort>(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Result<Par<S>, RholangError> {
     match expr {
         Expr::EVar(v) => {
             let p = eval_var(v, env, cost)?;
-            eval_expr(&p, env, cost)
+            eval_expr(&p, env, cost).map(|r| r.re_sort())
         }
         Expr::EMethod(em) => {
             cost.charge(Costs::method_call_cost())?;
@@ -211,9 +211,9 @@ fn eval_expr_to_par(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resul
                 .iter()
                 .map(|a| eval_expr(a, env, cost))
                 .collect::<Result<_, _>>()?;
-            eval_method(&em.method_name, &evaled_target, &evaled_args, env, cost)
+            eval_method(&em.method_name, &evaled_target, &evaled_args, env, cost).map(|r| r.re_sort())
         }
-        _ => Ok(from_expr(eval_expr_to_expr(expr, env, cost)?)),
+        _ => Ok(from_expr(eval_expr_to_expr(expr, env, cost)?).re_sort()),
     }
 }
 
@@ -600,14 +600,14 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
 }
 
 /// Evaluate the top-level expressions of a `Par` (port of `evalExpr`).
-pub fn eval_expr(par: &Par, env: &Env<Par>, cost: &CostAccounting) -> Result<Par, RholangError> {
+pub fn eval_expr<S: Sort + SortJoin<S>>(par: &Par<S>, env: &Env<Par>, cost: &CostAccounting) -> Result<Par<S>, RholangError> {
     let mut result = Par {
         exprs: Vec::new(),
         ..par.clone()
     };
     for e in &par.exprs {
         let evaled = eval_expr_to_par(e, env, cost)?;
-        result = par_concat(&result, &evaled);
+        result = par_concat(&result, &evaled).re_sort();
     }
     Ok(result)
 }
@@ -1269,7 +1269,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         cost.charge(Costs::send_eval_cost())?;
-        let eval_chan = eval_expr(&send.chan, env, cost)?;
+        let eval_chan = eval_expr(send.chan.as_ref(), env, cost)?;
         let sub_chan = substitute_par(&eval_chan, 0, env)?;
         let unbundled = match single_bundle(&sub_chan) {
             Some(value) => {
@@ -1280,21 +1280,21 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 }
                 (*value.body).clone()
             }
-            None => sub_chan,
+            None => sub_chan.eval(),
         };
-        let data: Vec<Par> = send
+        let data: Vec<Name> = send
             .data
             .iter()
             .map(|d| eval_expr(d, env, cost))
             .collect::<Result<_, _>>()?;
-        let subst_data: Vec<Par> = data
+        let subst_data: Vec<Name> = data
             .iter()
             .map(|d| substitute_par(d, 0, env))
             .collect::<Result<_, _>>()?;
         self.produce(
             &unbundled,
             ListParWithRandom {
-                pars: subst_data,
+                pars: subst_data.into_iter().map(|d| d.eval()).collect(),
                 random_state: rand.clone(),
             },
             send.persistent,
@@ -1314,14 +1314,14 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         let mut binds: Vec<(BindPattern, Par)> = Vec::new();
         for rb in &receive.binds {
             let q = self.unbundle_receive(rb, env, cost)?;
-            let subst_patterns: Vec<Par> = rb
+            let subst_patterns: Vec<Name> = rb
                 .patterns
                 .iter()
                 .map(|p| substitute_par(p, 1, env))
                 .collect::<Result<_, _>>()?;
             binds.push((
                 BindPattern {
-                    patterns: subst_patterns,
+                    patterns: subst_patterns.into_iter().map(|p| p.eval()).collect(),
                     remainder: rb.remainder.as_deref().cloned(),
                     free_count: rb.free_count,
                 },
@@ -1348,7 +1348,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         env: &Env<Par>,
         cost: &CostAccounting,
     ) -> Result<Par, RholangError> {
-        let eval_src = eval_expr(&rb.source, env, cost)?;
+        let eval_src = eval_expr(rb.source.as_ref(), env, cost)?;
         let subst = substitute_par(&eval_src, 0, env)?;
         match single_bundle(&subst) {
             Some(value) => {
@@ -1360,7 +1360,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                     Ok((*value.body).clone())
                 }
             }
-            None => Ok(subst),
+            None => Ok(subst.eval()),
         }
     }
 
@@ -1390,7 +1390,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             let bytes = rand.next();
             let addr = Par {
                 unforgeables: vec![GUnforgeable::GPrivate(GPrivate { id: bytes })],
-                ..Par::default()
+                ..Default::default()
             };
             new_env = new_env.put(addr);
         }
@@ -1425,9 +1425,9 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         cost.charge(Costs::match_eval_cost())?;
-        let evaled_target = eval_expr(&m.target, env, cost)?;
+        let evaled_target = eval_expr(m.target.as_ref(), env, cost)?;
         let subst_target = substitute_par(&evaled_target, 0, env)?;
-        self.first_match(&subst_target, &m.cases, env, rand, cost)
+        self.first_match(&subst_target.eval(), &m.cases, env, rand, cost)
             .await
     }
 
@@ -1441,7 +1441,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
     ) -> Result<(), RholangError> {
         for case in cases {
             let pattern = substitute_par(&case.pattern, 1, env)?;
-            if let Some(free_map) = spatial_match_result(target, &pattern)? {
+            if let Some(free_map) = spatial_match_result(target, &pattern.eval())? {
                 let mut new_env = env.clone();
                 for e in 0..case.free_count {
                     new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
@@ -1668,15 +1668,15 @@ mod tests {
         let rand = Blake2b512Random::new_random(128);
 
         let send = Send {
-            chan: Box::new(from_expr(Expr::GInt(1))),
-            data: vec![from_expr(Expr::GInt(2))],
+            chan: Box::new(from_expr(Expr::GInt(1)).quote()),
+            data: vec![from_expr(Expr::GInt(2)).quote()],
             persistent: false,
             locally_free: AlwaysEqual(vec![]),
             connective_used: false,
         };
         let par = Par {
             sends: vec![send],
-            ..Par::default()
+            ..Default::default()
         };
         interp.eval(&par, &env, &rand, &cost).await.unwrap();
 

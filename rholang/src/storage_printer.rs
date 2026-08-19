@@ -62,8 +62,8 @@ fn to_sends(data: &[Datum<ListParWithRandom>], channels: &[Par]) -> Par {
     for datum in data {
         for channel in channels {
             let send = Send {
-                chan: Box::new(channel.clone()),
-                data: datum.a.pars.clone(),
+                chan: Box::new(channel.clone().quote()),
+                data: datum.a.pars.iter().map(|p| p.clone().quote()).collect(),
                 persistent: datum.persist,
                 locally_free: AlwaysEqual(vec![]),
                 connective_used: false,
@@ -81,8 +81,8 @@ fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], chan
             .iter()
             .zip(wk.patterns.iter())
             .map(|(channel, pattern)| ReceiveBind {
-                patterns: pattern.patterns.clone(),
-                source: Box::new(channel.clone()),
+                patterns: pattern.patterns.iter().map(|p| p.clone().quote()).collect(),
+                source: Box::new(channel.clone().quote()),
                 remainder: pattern.remainder.clone().map(Box::new),
                 free_count: pattern.free_count,
             })
