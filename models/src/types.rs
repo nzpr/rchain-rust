@@ -224,54 +224,60 @@ impl From<Closed> for Par {
 }
 
 // --- Well-scopedness (the variable half of the judgment) ---------------------------------
+//
+// `BoundVar` uses de Bruijn *levels*: `BoundVar(l)` is the `l`-th binder from the outermost, so a
+// sub-term inside `n` binders is checked under a context of depth `depth + n`. `FreeVar`/wildcard/
+// empty carry no scope requirement.
 
-fn well_scoped_var(ctx: &Ctx, v: &Var) -> bool {
+fn well_scoped_var(depth: usize, v: &Var) -> bool {
     match v {
-        Var::BoundVar(l) => *l >= 0 && (*l as usize) < ctx.len(),
+        Var::BoundVar(l) => *l >= 0 && (*l as usize) < depth,
         Var::FreeVar(_) | Var::Wildcard | Var::Empty => true,
     }
 }
 
-fn well_scoped_par<S: Sort>(ctx: &Ctx, p: &Par<S>) -> bool {
-    p.sends.iter().all(|s| well_scoped_send(ctx, s))
-        && p.receives.iter().all(|r| well_scoped_receive(ctx, r))
-        && p.news.iter().all(|n| well_scoped_new(ctx, n))
-        && p.exprs.iter().all(|e| well_scoped_expr(ctx, e))
-        && p.matches.iter().all(|m| well_scoped_match(ctx, m))
-        && p.bundles.iter().all(|b| well_scoped_par(ctx, &b.body))
-        && p.connectives.iter().all(|c| well_scoped_connective(ctx, c))
+fn well_scoped_par<S: Sort>(depth: usize, p: &Par<S>) -> bool {
+    p.sends.iter().all(|s| well_scoped_send(depth, s))
+        && p.receives.iter().all(|r| well_scoped_receive(depth, r))
+        && p.news.iter().all(|n| well_scoped_new(depth, n))
+        && p.exprs.iter().all(|e| well_scoped_expr(depth, e))
+        && p.matches.iter().all(|m| well_scoped_match(depth, m))
+        && p.bundles.iter().all(|b| well_scoped_par(depth, &b.body))
+        && p.connectives.iter().all(|c| well_scoped_connective(depth, c))
 }
 
-fn well_scoped_send(ctx: &Ctx, s: &Send) -> bool {
-    well_scoped_par(ctx, &s.chan) && s.data.iter().all(|d| well_scoped_par(ctx, d))
+fn well_scoped_send(depth: usize, s: &Send) -> bool {
+    well_scoped_par(depth, &s.chan) && s.data.iter().all(|d| well_scoped_par(depth, d))
 }
 
-fn well_scoped_receive_bind(ctx: &Ctx, rb: &ReceiveBind) -> bool {
-    rb.patterns.iter().all(|p| well_scoped_par(ctx, p))
-        && well_scoped_par(ctx, &rb.source)
+fn well_scoped_receive_bind(depth: usize, rb: &ReceiveBind) -> bool {
+    rb.patterns.iter().all(|p| well_scoped_par(depth, p))
+        && well_scoped_par(depth, &rb.source)
         && rb.remainder
             .as_ref()
-            .map(|v| well_scoped_var(ctx, v))
+            .map(|v| well_scoped_var(depth, v))
             .unwrap_or(true)
 }
 
-fn well_scoped_receive(ctx: &Ctx, r: &Receive) -> bool {
-    r.binds.iter().all(|b| well_scoped_receive_bind(ctx, b)) && well_scoped_par(ctx, &r.body)
+fn well_scoped_receive(depth: usize, r: &Receive) -> bool {
+    r.binds.iter().all(|b| well_scoped_receive_bind(depth, b))
+        && well_scoped_par(depth + r.bind_count.max(0) as usize, &r.body)
 }
 
-fn well_scoped_new(ctx: &Ctx, n: &New) -> bool {
-    well_scoped_par(ctx, &n.p)
+fn well_scoped_new(depth: usize, n: &New) -> bool {
+    well_scoped_par(depth + n.bind_count.max(0) as usize, &n.p)
 }
 
-fn well_scoped_match_case(ctx: &Ctx, mc: &MatchCase) -> bool {
-    well_scoped_par(ctx, &mc.pattern) && well_scoped_par(ctx, &mc.source)
+fn well_scoped_match_case(depth: usize, mc: &MatchCase) -> bool {
+    well_scoped_par(depth, &mc.pattern)
+        && well_scoped_par(depth + i32::from(mc.free_count).max(0) as usize, &mc.source)
 }
 
-fn well_scoped_match(ctx: &Ctx, m: &Match) -> bool {
-    well_scoped_par(ctx, &m.target) && m.cases.iter().all(|c| well_scoped_match_case(ctx, c))
+fn well_scoped_match(depth: usize, m: &Match) -> bool {
+    well_scoped_par(depth, &m.target) && m.cases.iter().all(|c| well_scoped_match_case(depth, c))
 }
 
-fn well_scoped_expr(ctx: &Ctx, e: &Expr) -> bool {
+fn well_scoped_expr(depth: usize, e: &Expr) -> bool {
     match e {
         Expr::GBool(_)
         | Expr::GInt(_)
@@ -279,8 +285,8 @@ fn well_scoped_expr(ctx: &Ctx, e: &Expr) -> bool {
         | Expr::GString(_)
         | Expr::GUri(_)
         | Expr::GByteArray(_) => true,
-        Expr::EVar(v) => well_scoped_var(ctx, v),
-        Expr::ENot(p) | Expr::ENeg(p) => well_scoped_par(ctx, p),
+        Expr::EVar(v) => well_scoped_var(depth, v),
+        Expr::ENot(p) | Expr::ENeg(p) => well_scoped_par(depth, p),
         Expr::EMult(p, q)
         | Expr::EDiv(p, q)
         | Expr::EMod(p, q)
@@ -299,26 +305,26 @@ fn well_scoped_expr(ctx: &Ctx, e: &Expr) -> bool {
         | Expr::EMatches(p, q)
         | Expr::EPercentPercent(p, q)
         | Expr::EPlusPlus(p, q)
-        | Expr::EMinusMinus(p, q) => well_scoped_par(ctx, p) && well_scoped_par(ctx, q),
-        Expr::EList(el) => el.ps.iter().all(|p| well_scoped_par(ctx, p)),
-        Expr::ETuple(et) => et.ps.iter().all(|p| well_scoped_par(ctx, p)),
-        Expr::ESet(set) => set.ps.iter().all(|p| well_scoped_par(ctx, p)),
+        | Expr::EMinusMinus(p, q) => well_scoped_par(depth, p) && well_scoped_par(depth, q),
+        Expr::EList(el) => el.ps.iter().all(|p| well_scoped_par(depth, p)),
+        Expr::ETuple(et) => et.ps.iter().all(|p| well_scoped_par(depth, p)),
+        Expr::ESet(set) => set.ps.iter().all(|p| well_scoped_par(depth, p)),
         Expr::EMap(map) => map
             .kvs
             .iter()
-            .all(|(k, v)| well_scoped_par(ctx, k) && well_scoped_par(ctx, v)),
+            .all(|(k, v)| well_scoped_par(depth, k) && well_scoped_par(depth, v)),
         Expr::EMethod(em) => {
-            well_scoped_par(ctx, &em.target) && em.arguments.iter().all(|p| well_scoped_par(ctx, p))
+            well_scoped_par(depth, &em.target) && em.arguments.iter().all(|p| well_scoped_par(depth, p))
         }
     }
 }
 
-fn well_scoped_connective(ctx: &Ctx, c: &Connective) -> bool {
+fn well_scoped_connective(depth: usize, c: &Connective) -> bool {
     match c {
         Connective::ConnAnd(cb) | Connective::ConnOr(cb) => {
-            cb.ps.iter().all(|p| well_scoped_par(ctx, p))
+            cb.ps.iter().all(|p| well_scoped_par(depth, p))
         }
-        Connective::ConnNot(p) => well_scoped_par(ctx, p),
+        Connective::ConnNot(p) => well_scoped_par(depth, p),
         Connective::VarRef(_)
         | Connective::ConnBool(_)
         | Connective::ConnInt(_)
@@ -331,10 +337,10 @@ fn well_scoped_connective(ctx: &Ctx, c: &Connective) -> bool {
 }
 
 /// `well_scoped Γ t` — every bound level of `t` is within `Γ` (the variable half of the typing
-/// judgment). A `BoundVar(l)` is in scope iff `0 ≤ l < Γ.len()`; free/wildcard/empty variables carry
-/// no local scope requirement.
+/// judgment). The outer context `Γ` supplies the initial depth; binders introduced by `t` (`new`/
+/// `for`/`match`) extend it as the check recurses.
 pub fn well_scoped(ctx: &Ctx, p: &Par) -> bool {
-    well_scoped_par(ctx, p)
+    well_scoped_par(ctx.len(), p)
 }
 
 /// A well-scoped process under a de Bruijn context `Γ` — the variable half of the typing judgment
@@ -534,6 +540,23 @@ mod tests {
         let ws = WellScoped::new(ctx, bound_var(0)).unwrap();
         let p: Par = ws.into();
         assert_eq!(p, bound_var(0));
+    }
+
+    #[test]
+    fn well_scoped_accounts_for_internal_binders() {
+        // `new x in { x }` — the body's `BoundVar(0)` references the `new` binder.
+        let program = Par {
+            news: vec![New {
+                bind_count: 1,
+                p: Box::new(Par {
+                    exprs: vec![Expr::EVar(Box::new(Var::BoundVar(0)))],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(well_scoped(&vec![], &program));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use rchain_models::ast::{
     AlwaysEqual, Bundle, Connective, ConnectiveBody, EList, ETuple, Expr, Match, MatchCase, New,
     NameSort, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
 };
-use rchain_models::types::{Closed, FreeCount};
+use rchain_models::types::{well_scoped, Closed, FreeCount};
 use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
     prepend_new, prepend_receive, prepend_send, single_bundle, single_connective,
@@ -1514,6 +1514,13 @@ pub fn source_to_ast(source: &str) -> Result<Proc, RholangError> {
 pub fn ast_to_adt(proc: &Proc, env: &BTreeMap<String, Par>) -> Result<Closed, RholangError> {
     let par = normalize_term(proc, env)?;
     let sorted = sort_par_term(&par);
+    // The variable half of the judgment: every `BoundVar` must reference an in-scope binder (the
+    // normalizer maintains this via the bound-map chain; the check is the load-bearing validation).
+    if !well_scoped(&Vec::new(), &sorted) {
+        return Err(RholangError::NormalizerError(
+            "top-level term is not well-scoped (dangling bound variable)".into(),
+        ));
+    }
     Closed::new(sorted).ok_or_else(|| {
         RholangError::NormalizerError("top-level term is not closed (free variables)".into())
     })
