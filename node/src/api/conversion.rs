@@ -132,7 +132,7 @@ mod tests {
     fn par_int(n: i64) -> Par {
         Par {
             exprs: vec![Expr::GInt(n)],
-            ..Par::default()
+            ..Default::default()
         }
     }
 

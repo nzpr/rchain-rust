@@ -12,6 +12,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::casper_message::{
     Event, PCost, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData, SystemDeployData,
 };
+use rchain_models::normalizer_env::NormalizerEnv;
 use rchain_models::par_ops::from_expr;
 use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
@@ -177,9 +178,12 @@ impl RuntimeManager {
         rand: &Blake2b512Random,
     ) -> Result<(ProcessedDeploy, EvaluateResult), String> {
         let fallback = self.runtime.create_soft_checkpoint().await;
+        // Bind `rho:rchain:deployerId` (and `rho:rchain:deployId`) so the deploy's free URI names
+        // resolve during normalization (port of `NormalizerEnv(deploy).toEnv`).
+        let normalizer_env = NormalizerEnv::new(deploy);
         let eval_result = self
             .runtime
-            .evaluate(&deploy.data.term, rand)
+            .evaluate_with_env(&deploy.data.term, normalizer_env.to_env(), rand)
             .await
             .map_err(|e| e.to_string())?;
         let checkpoint = self.runtime.create_soft_checkpoint().await;
@@ -219,7 +223,10 @@ impl RuntimeManager {
             let r = rand
                 .split_byte(u8::try_from(i).map_err(|e| e.to_string())?)
                 .split_byte(1);
-            let (processed, eval_result) = self.process_deploy(d, &r).await?;
+            let (processed, eval_result) = self
+                .process_deploy(d, &r)
+                .await
+                .map_err(|e| format!("deploy #{i} failed: {e}"))?;
             results.push(UserDeployRuntimeResult {
                 deploy: processed,
                 mergeable: BTreeMap::new(),

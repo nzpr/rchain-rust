@@ -13,7 +13,7 @@ use crate::par_ops::{from_expr, is_nil, single_expr, single_unforgeable};
 fn from_unforgeable(u: GUnforgeable) -> Par {
     Par {
         unforgeables: vec![u],
-        ..Par::default()
+        ..Default::default()
     }
 }
 

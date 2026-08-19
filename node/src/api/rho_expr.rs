@@ -222,7 +222,7 @@ mod tests {
         // An arithmetic expression has no RhoExpr representation.
         let p = Par {
             exprs: vec![Expr::EPlus(Box::default(), Box::default())],
-            ..Par::default()
+            ..Default::default()
         };
         assert_eq!(expr_from_par(&p), None);
     }

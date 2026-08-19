@@ -9,8 +9,19 @@ use rchain_node::configuration::configuration::Configuration;
 use rchain_node::runtime::{node_environment, node_runtime, run_cli};
 use rchain_shared::log::StderrLog;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // The rholang parser + reducer recurse through deeply-nested contract sources (the genesis
+    // blessed terms in particular); a 2 MiB worker stack overflows. Give the runtime a larger
+    // per-worker stack (the JVM node runs these paths on a much larger native stack).
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(32 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+    runtime.block_on(async_main());
+}
+
+async fn async_main() {
     let options = Options::parse();
 
     // Execute a thin-client CLI command (port of `Main.main`'s `runCLI` branch).

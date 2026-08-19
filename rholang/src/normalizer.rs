@@ -1081,8 +1081,15 @@ fn normalize_input(
     body: &Proc,
     input: ProcVisitInputs,
 ) -> Result<ProcVisitOutputs, RholangError> {
-    if receipts.len() != 1 {
-        return Err(defer("multi-receipt input"));
+    if receipts.len() > 1 {
+        // Desugar `for (r1; r2; ...; rn) { body }` into nested single-receipt receives
+        // `for (r1) { for (r2) { ... for (rn) { body } ... } }` (port of the `PInputNormalizer`
+        // reverse fold). Each inner receive is a single-receipt `PInput`.
+        let mut proc = body.clone();
+        for receipt in receipts.iter().rev() {
+            proc = Proc::PInput(vec![receipt.clone()], Box::new(proc));
+        }
+        return normalize_proc(&proc, input);
     }
     let receipt = &receipts[0];
 

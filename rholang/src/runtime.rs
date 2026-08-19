@@ -82,7 +82,7 @@ fn write_bundle(channel: Par) -> Par {
             write_flag: true,
             read_flag: false,
         }],
-        ..Par::default()
+        ..Default::default()
     }
 }
 
@@ -570,15 +570,15 @@ mod tests {
         let reducer = setup_reducer(charging, cost.clone(), Par::default());
 
         let send = rchain_models::ast::Send {
-            chan: Box::new(rchain_models::par_ops::from_expr(rchain_models::ast::Expr::GInt(1))),
-            data: vec![rchain_models::par_ops::from_expr(rchain_models::ast::Expr::GInt(2))],
+            chan: Box::new(rchain_models::par_ops::from_expr(rchain_models::ast::Expr::GInt(1)).quote()),
+            data: vec![rchain_models::par_ops::from_expr(rchain_models::ast::Expr::GInt(2)).quote()],
             persistent: false,
             locally_free: rchain_models::ast::AlwaysEqual(vec![]),
             connective_used: false,
         };
         let par = Par {
             sends: vec![send],
-            ..Par::default()
+            ..Default::default()
         };
         let rand = Blake2b512Random::new_random(128);
         reducer

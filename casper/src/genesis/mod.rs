@@ -50,10 +50,12 @@ fn create_block_with_processed_deploys(
     post_state_hash: Vec<u8>,
     processed_deploys: Vec<ProcessedDeploy>,
 ) -> Result<BlockMessage, String> {
-    assert!(
-        processed_deploys.iter().all(|d| !d.is_failed),
-        "Genesis block contains failed deploys."
-    );
+    if let Some(failed) = processed_deploys.iter().find(|d| d.is_failed) {
+        return Err(format!(
+            "Genesis block contains a failed deploy (deployer {:?})",
+            failed.deploy.deployer
+        ));
+    }
     let state = RholangState {
         deploys: processed_deploys,
         system_deploys: Vec::new(),
@@ -134,6 +136,16 @@ pub async fn create_genesis_block(
     let (start_hash, state_hash, processed_results) = runtime
         .compute_genesis(&blessed_terms, &rand, block_data)
         .await?;
+    // Surface deploy evaluation errors (the Scala `require` only checks the `isFailed` flag; the
+    // underlying errors are otherwise lost, making genesis failures opaque).
+    for (i, r) in processed_results.iter().enumerate() {
+        if !r.eval_result.errors.is_empty() {
+            return Err(format!(
+                "Genesis deploy #{i} failed: {:?}",
+                r.eval_result.errors
+            ));
+        }
+    }
     let processed_deploys: Vec<ProcessedDeploy> =
         processed_results.into_iter().map(|r| r.deploy).collect();
 

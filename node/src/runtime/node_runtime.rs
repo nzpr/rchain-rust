@@ -589,7 +589,15 @@ pub async fn setup_node_program(
         importer,
         log.clone(),
     );
-    tokio::spawn(node_launch);
+    let node_launch_log = log.clone();
+    tokio::spawn(async move {
+        if let Err(err) = node_launch.await {
+            node_launch_log.error(
+                LogSource::new("coop.rchain.node.runtime.Setup"),
+                &format!("NodeLaunch exited with error: {err}"),
+            );
+        }
+    });
 
     // Request-missing-dependencies loop (port of `requestDependencies` in `Setup.setupNodeProgram`).
     let request_deps = {

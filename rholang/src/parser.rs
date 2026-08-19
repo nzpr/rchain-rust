@@ -146,15 +146,26 @@ fn lex(src: &str) -> Result<Vec<Tok>, RholangError> {
             toks.push(Tok::Long(n));
             continue;
         }
-        // identifier / keyword
-        if c.is_ascii_alphabetic() || c == '_' {
+        // identifier / keyword. A standalone `_` is the wildcard token (not a `Var`), so a leading
+        // `_` only starts an identifier when followed by another identifier-continuation char
+        // (mirrors the BNFC `Var` token: `'_' (letter | digit | '_' | '\'')+`).
+        let ident_continue = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '\'';
+        if c.is_ascii_alphabetic()
+            || (c == '_' && chars.get(i + 1).map(|&n| ident_continue(n)).unwrap_or(false))
+        {
             let start = i;
-            while i < chars.len()
-                && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '\'')
-            {
+            while i < chars.len() && ident_continue(chars[i]) {
                 i += 1;
             }
-            toks.push(Tok::Ident(chars[start..i].iter().collect()));
+            let ident: String = chars[start..i].iter().collect();
+            // `bundle0` is the bundle-equivalence keyword; tokenize it as `bundle` + `0` so
+            // `parse_bundle` can read the suffix (see the comment there).
+            if ident == "bundle0" {
+                toks.push(Tok::Ident("bundle".to_string()));
+                toks.push(Tok::Long(0));
+            } else {
+                toks.push(Tok::Ident(ident));
+            }
             continue;
         }
         // operators
@@ -244,7 +255,11 @@ impl Parser {
             self.pos += 1;
             Ok(())
         } else {
-            Err(RholangError::SyntaxError(format!("expected {t:?}, got {:?}", self.peek())))
+            Err(RholangError::SyntaxError(format!(
+                "expected {t:?}, got {:?} (pos={})",
+                self.peek(),
+                self.pos
+            )))
         }
     }
 }
@@ -259,14 +274,13 @@ pub fn parse(source: &str) -> Result<Proc, RholangError> {
 
 impl Parser {
     fn parse_proc(&mut self) -> Result<Proc, RholangError> {
-        let left = self.parse_proc1()?;
-        if self.peek() == &Tok::Pipe {
+        let mut left = self.parse_proc1()?;
+        while self.peek() == &Tok::Pipe {
             self.next();
             let right = self.parse_proc1()?;
-            Ok(Proc::PPar(Box::new(left), Box::new(right)))
-        } else {
-            Ok(left)
+            left = Proc::PPar(Box::new(left), Box::new(right));
         }
+        Ok(left)
     }
 
     fn parse_proc1(&mut self) -> Result<Proc, RholangError> {
@@ -384,6 +398,7 @@ impl Parser {
             _ => false,
         };
         if is_name_start {
+            let save = self.pos;
             let name = self.parse_name()?;
             if matches!(self.peek(), Tok::Bang | Tok::BangBang) {
                 let send = self.parse_send()?;
@@ -400,9 +415,16 @@ impl Parser {
                 self.expect(Tok::RParen)?;
                 return Ok(Proc::PSend(name, send, data));
             }
-            return Err(RholangError::SyntaxError(
-                "bare name in process position".into(),
-            ));
+            // A bare `Var`/`_` in process position is a process-variable reference (`PVar`/
+            // `PVarWildcard`), handled by `parse_proc16`; backtrack and fall through. Only `@`
+            // (a quoted name) remains a bare-name error.
+            if matches!(name, Name::NameVar(_) | Name::NameWildcard) {
+                self.pos = save;
+            } else {
+                return Err(RholangError::SyntaxError(
+                    "bare name in process position".into(),
+                ));
+            }
         }
         self.parse_proc4()
     }
@@ -629,22 +651,82 @@ impl Parser {
     }
 
     fn parse_proc16(&mut self) -> Result<Proc, RholangError> {
-        if self.peek() == &Tok::LBrace {
-            self.next();
-            let p = self.parse_proc()?;
-            self.expect(Tok::RBrace)?;
-            Ok(p)
+        let mut target = if self.peek() == &Tok::LBrace {
+            self.parse_braced_or_map()?
         } else if self.eat_ident("Nil") {
-            Ok(Proc::PNil)
+            Proc::PNil
         } else if let Some(t) = self.parse_simple_type()? {
-            Ok(Proc::PSimpleType(t))
+            Proc::PSimpleType(t)
         } else if self.is_ground() {
-            Ok(Proc::PGround(self.parse_ground()?))
+            Proc::PGround(self.parse_ground()?)
         } else if self.is_collection() {
-            Ok(Proc::PCollect(self.parse_collection()?))
+            Proc::PCollect(self.parse_collection()?)
         } else {
-            Ok(Proc::PVar(self.parse_proc_var()?))
+            Proc::PVar(self.parse_proc_var()?)
+        };
+        // Method calls (`receiver.method` / `receiver.method(args...)`) bind tighter than the
+        // operators above and chain left-to-right.
+        while self.peek() == &Tok::Dot {
+            self.next();
+            let method = self.parse_source_var()?;
+            let args = if self.peek() == &Tok::LParen {
+                self.next();
+                let mut args = Vec::new();
+                while self.peek() != &Tok::RParen {
+                    args.push(self.parse_proc()?);
+                    if self.peek() == &Tok::Comma {
+                        self.next();
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(Tok::RParen)?;
+                args
+            } else {
+                Vec::new()
+            };
+            target = Proc::PMethod(Box::new(target), method, args);
         }
+        Ok(target)
+    }
+
+    /// Disambiguate `{ Proc }` (a braced process) from `{ KeyValuePair, ... }` (a map collection).
+    /// Both productions start with `{` at the same precedence (`Proc16`), so the parser decides
+    /// after reading the first process: a following `:` marks a map; otherwise it is a braced
+    /// process. Empty braces are an empty map (there is no empty braced process).
+    fn parse_braced_or_map(&mut self) -> Result<Proc, RholangError> {
+        self.expect(Tok::LBrace)?;
+        if self.peek() == &Tok::RBrace {
+            self.next();
+            return Ok(Proc::PCollect(Collection::CollectMap(
+                Vec::new(),
+                ProcRemainder::ProcRemainderEmpty,
+            )));
+        }
+        let first = self.parse_proc()?;
+        if self.peek() != &Tok::Colon {
+            self.expect(Tok::RBrace)?;
+            return Ok(first);
+        }
+        let mut kvs = Vec::new();
+        let mut key = first;
+        loop {
+            self.expect(Tok::Colon)?;
+            let value = self.parse_proc()?;
+            kvs.push(KeyValuePair(key, value));
+            if self.peek() == &Tok::Comma {
+                self.next();
+                if self.peek() == &Tok::RBrace || self.peek() == &Tok::Ellipsis {
+                    break;
+                }
+                key = self.parse_proc()?;
+            } else {
+                break;
+            }
+        }
+        let remainder = self.parse_proc_remainder()?;
+        self.expect(Tok::RBrace)?;
+        Ok(Proc::PCollect(Collection::CollectMap(kvs, remainder)))
     }
 
     fn parse_source_var(&mut self) -> Result<String, RholangError> {
@@ -822,22 +904,27 @@ impl Parser {
     }
 
     fn is_bundle(&self) -> bool {
-        match self.peek() {
-            Tok::Ident(s) => {
-                s == "bundle" || s == "bundle+" || s == "bundle-" || s == "bundle0"
-            }
-            _ => false,
-        }
+        matches!(self.peek(), Tok::Ident(s) if s == "bundle")
     }
 
     fn parse_bundle(&mut self) -> Result<Bundle, RholangError> {
+        // The lexer emits `bundle+`/`bundle-`/`bundle0` as `Ident("bundle")` followed by the suffix
+        // token, so read the optional suffix to pick the bundle kind.
         match self.next() {
-            Tok::Ident(s) => match s.as_str() {
-                "bundle" => Ok(Bundle::BundleReadWrite),
-                "bundle+" => Ok(Bundle::BundleWrite),
-                "bundle-" => Ok(Bundle::BundleRead),
-                "bundle0" => Ok(Bundle::BundleEquiv),
-                _ => Err(RholangError::SyntaxError("bad bundle".into())),
+            Tok::Ident(s) if s == "bundle" => match self.peek() {
+                Tok::Plus => {
+                    self.next();
+                    Ok(Bundle::BundleWrite)
+                }
+                Tok::Minus => {
+                    self.next();
+                    Ok(Bundle::BundleRead)
+                }
+                Tok::Long(0) => {
+                    self.next();
+                    Ok(Bundle::BundleEquiv)
+                }
+                _ => Ok(Bundle::BundleReadWrite),
             },
             t => Err(RholangError::SyntaxError(format!("expected bundle, got {t:?}"))),
         }
@@ -859,40 +946,58 @@ impl Parser {
     }
 
     fn parse_receipt(&mut self) -> Result<Receipt, RholangError> {
-        // Peek for "<<-" (peek), else linear (repeated uses "<=" which is covered by Lte? no).
-        // Distinguish: linear "<-", repeated "<=", peek "<<-".
-        let binds = self.parse_linear_binds()?;
-        Ok(Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(binds)))
+        // Distinguish the arrow: linear "<-", peek "<<-" (repeated "<=" is deferred).
+        let (names, remainder) = self.parse_bind_head()?;
+        match self.peek() {
+            Tok::LArrow => {
+                self.next();
+                let source = self.parse_name_source()?;
+                let mut binds = vec![LinearBind(names, remainder, source)];
+                while self.peek() == &Tok::Amp {
+                    self.next();
+                    let (n, r) = self.parse_bind_head()?;
+                    self.expect(Tok::LArrow)?;
+                    let s = self.parse_name_source()?;
+                    binds.push(LinearBind(n, r, s));
+                }
+                Ok(Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(binds)))
+            }
+            Tok::LLArrow => {
+                self.next();
+                let source = self.parse_name()?;
+                let mut binds = vec![PeekBind(names, remainder, source)];
+                while self.peek() == &Tok::Amp {
+                    self.next();
+                    let (n, r) = self.parse_bind_head()?;
+                    self.expect(Tok::LLArrow)?;
+                    let s = self.parse_name()?;
+                    binds.push(PeekBind(n, r, s));
+                }
+                Ok(Receipt::ReceiptPeek(ReceiptPeekImpl::PeekSimple(binds)))
+            }
+            t => Err(RholangError::SyntaxError(format!(
+                "expected <- or <<-, got {t:?}"
+            ))),
+        }
     }
 
-    fn parse_linear_binds(&mut self) -> Result<Vec<LinearBind>, RholangError> {
-        let mut binds = Vec::new();
-        loop {
-            let mut names = Vec::new();
-            while self.peek() != &Tok::LArrow && self.peek() != &Tok::Ellipsis {
-                names.push(self.parse_name()?);
-                if self.peek() == &Tok::Comma {
-                    self.next();
-                } else {
-                    break;
-                }
-            }
-            let remainder = if self.peek() == &Tok::Ellipsis {
-                self.next();
-                NameRemainder::NameRemainderVar(self.parse_proc_var()?)
-            } else {
-                NameRemainder::NameRemainderEmpty
-            };
-            self.expect(Tok::LArrow)?;
-            let source = self.parse_name_source()?;
-            binds.push(LinearBind(names, remainder, source));
-            if self.peek() == &Tok::Amp {
+    fn parse_bind_head(&mut self) -> Result<(Vec<Name>, NameRemainder), RholangError> {
+        let mut names = Vec::new();
+        while !matches!(self.peek(), Tok::LArrow | Tok::LLArrow | Tok::Ellipsis) {
+            names.push(self.parse_name()?);
+            if self.peek() == &Tok::Comma {
                 self.next();
             } else {
                 break;
             }
         }
-        Ok(binds)
+        let remainder = if self.peek() == &Tok::Ellipsis {
+            self.next();
+            NameRemainder::NameRemainderVar(self.parse_proc_var()?)
+        } else {
+            NameRemainder::NameRemainderEmpty
+        };
+        Ok((names, remainder))
     }
 
     fn parse_name_source(&mut self) -> Result<NameSource, RholangError> {
@@ -920,10 +1025,15 @@ impl Parser {
     }
 
     fn parse_branch(&mut self) -> Result<Branch, RholangError> {
-        let binds = self.parse_linear_binds()?;
+        let (names, remainder) = self.parse_bind_head()?;
+        self.expect(Tok::LArrow)?;
+        let source = self.parse_name_source()?;
         self.expect(Tok::Arrow)?;
         let body = self.parse_proc3()?;
-        Ok(Branch(ReceiptLinearImpl::LinearSimple(binds), Box::new(body)))
+        Ok(Branch(
+            ReceiptLinearImpl::LinearSimple(vec![LinearBind(names, remainder, source)]),
+            Box::new(body),
+        ))
     }
 
     fn parse_case(&mut self) -> Result<Case, RholangError> {

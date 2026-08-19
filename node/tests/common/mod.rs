@@ -20,6 +20,16 @@ use rchain_shared::log::StderrLog;
 /// The default secp256k1 validator private key (hex), port of `ConstructDeploy.defaultSec`.
 pub const VALIDATOR_PRIV_HEX: &str = "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76";
 
+/// A multi-threaded tokio runtime with a large per-worker stack. The genesis blessed terms recurse
+/// deeper than the default 2 MiB worker stack allows (matching the node binary's runtime).
+pub fn test_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(32 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("build test runtime")
+}
+
 /// Create a temporary directory for a test (caller removes it after dropping the node).
 pub fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(

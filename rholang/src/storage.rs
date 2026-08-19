@@ -140,7 +140,7 @@ mod tests {
     fn par(exprs: Vec<Expr>) -> Par {
         Par {
             exprs,
-            ..Par::default()
+            ..Default::default()
         }
     }
 
@@ -150,7 +150,7 @@ mod tests {
             patterns: vec![Par {
                 exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
                 connective_used: true,
-                ..Par::default()
+                ..Default::default()
             }],
             remainder: None,
             free_count: 1,

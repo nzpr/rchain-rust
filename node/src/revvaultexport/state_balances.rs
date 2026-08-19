@@ -16,14 +16,14 @@ pub async fn get_genesis_vault_map_par(
     let rev_vault_unf = BlockRandomSeed::rev_vault_unforgeable(shard_id);
     let extract_state_string = Par {
         exprs: vec![Expr::GString("extractState".to_string())],
-        ..Par::default()
+        ..Default::default()
     };
     let e = Par {
         exprs: vec![Expr::ETuple(ETuple {
             ps: vec![rev_vault_unf, extract_state_string],
             ..ETuple::default()
         })],
-        ..Par::default()
+        ..Default::default()
     };
 
     let conts = runtime
@@ -37,7 +37,7 @@ pub async fn get_genesis_vault_map_par(
 
     let vault_map_key = Par {
         exprs: vec![Expr::GString("vaultMap".to_string())],
-        ..Par::default()
+        ..Default::default()
     };
     body.sends
         .first()

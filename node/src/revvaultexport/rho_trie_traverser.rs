@@ -40,7 +40,7 @@ pub fn byte_array_to_nybble_list(binary_array: &Par, length: usize) -> Result<Ve
 fn par_string(s: &str) -> Par {
     Par {
         exprs: vec![Expr::GString(s.to_string())],
-        ..Par::default()
+        ..Default::default()
     }
 }
 
@@ -66,12 +66,12 @@ pub fn node_list(nyb_list: &[i32]) -> Par {
                 .iter()
                 .map(|n| Par {
                     exprs: vec![Expr::GInt(*n as i64)],
-                    ..Par::default()
+                    ..Default::default()
                 })
                 .collect(),
             ..EList::default()
         })],
-        ..Par::default()
+        ..Default::default()
     }
 }
 
@@ -103,7 +103,7 @@ fn node_map_list(map_par: &Par, store_token_par: &Par, nyb_list: &[i32]) -> Par 
             ps: vec![map_par.clone(), node_list(nyb_list)],
             ..ETuple::default()
         })],
-        ..Par::default()
+        ..Default::default()
     };
     node_map_store(&map_with_nyb, store_token_par)
 }
@@ -114,7 +114,7 @@ fn node_map_store(map_with_nyb: &Par, store_token_par: &Par) -> Par {
             ps: vec![map_with_nyb.clone(), store_token_par.clone()],
             ..EList::default()
         })],
-        ..Par::default()
+        ..Default::default()
     }
 }
 
@@ -212,11 +212,11 @@ mod tests {
             kvs: vec![(
                 Par {
                     exprs: vec![Expr::GInt(1)],
-                    ..Par::default()
+                    ..Default::default()
                 },
                 Par {
                     exprs: vec![Expr::GString("one".to_string())],
-                    ..Par::default()
+                    ..Default::default()
                 },
             )],
             ..ParMap::default()
