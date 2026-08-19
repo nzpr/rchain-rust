@@ -647,7 +647,7 @@ impl BlockApi for BlockApiImpl {
 
     async fn is_finalized(&self, hash: &str) -> ApiErr<bool> {
         let dag = self.dag.get_representation().await;
-        let given = BlockHash::from_slice(&base16::unsafe_decode(hash));
+        let given = BlockHash::from_slice(&base16::try_decode(hash)?);
         Ok(dag.is_finalized(&given))
     }
 

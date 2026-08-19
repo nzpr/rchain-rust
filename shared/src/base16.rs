@@ -16,10 +16,18 @@ pub fn decode(input: &str) -> Option<Vec<u8>> {
 }
 
 /// Decode a hex string, ignoring any non-hex characters. Always succeeds.
+///
+/// **Lax**: non-hex characters are silently dropped, so malformed input is silently corrupted
+/// rather than rejected. Use [`try_decode`] at untrusted boundaries.
 pub fn unsafe_decode(input: &str) -> Vec<u8> {
     let digits: String = input.chars().filter(|c| c.is_ascii_hexdigit()).collect();
     // `digits` contains only ASCII hex digits, so `parse_hex_padded` cannot return `None`.
     parse_hex_padded(&digits).unwrap_or_default()
+}
+
+/// Decode a hex string, failing on non-hex input (the validated counterpart of [`unsafe_decode`]).
+pub fn try_decode(input: &str) -> Result<Vec<u8>, String> {
+    decode(input).ok_or_else(|| format!("invalid hex input: {input}"))
 }
 
 fn parse_hex_padded(digits: &str) -> Option<Vec<u8>> {
