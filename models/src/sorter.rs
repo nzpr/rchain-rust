@@ -744,6 +744,7 @@ fn sort_par(par: &Par) -> ScoredTerm<Par> {
             unforgeables: unforgeables.into_iter().map(|st| st.term).collect(),
             locally_free: par.locally_free.clone(),
             connective_used: par.connective_used,
+            ..Default::default()
         },
         score: node_score(PAR, children),
     }

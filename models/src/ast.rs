@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
@@ -86,9 +87,35 @@ pub enum Var {
     Empty,
 }
 
-/// A `Par` — the top-level process, a flat record of eight list fields.
+/// The ρ-calculus sort: a term is a `Name` (usable in name position) or a `Proc` (usable in
+/// process position). This is the base sort of the Calculus of Constructions (see
+/// `spec/RHO-CALCULUS.md`); it is a *compile-time* property, carried as a phantom parameter on
+/// [`Par`].
+pub trait Sort:
+    private::Sealed + Clone + Copy + std::fmt::Debug + Default + PartialEq + Eq + PartialOrd + Ord + Hash + 'static
+{
+}
+mod private {
+    pub trait Sealed {}
+}
+/// The `name` sort — a term usable in name position (pure names, grounds, quoted processes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct NameSort;
+/// The `proc` sort — a term usable in process position (sends/receives/news/matches).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct ProcSort;
+impl private::Sealed for NameSort {}
+impl private::Sealed for ProcSort {}
+impl Sort for NameSort {}
+impl Sort for ProcSort {}
+
+/// A `Par` — the top-level process, a flat record of eight list fields, sort-indexed by `S`.
+///
+/// The phantom `S` is not part of the wire encoding (it is `#[serde(skip)]`ed) nor of the
+/// structural equality/order, so the flat canonical form of Law 1 is preserved.
 #[derive(Clone, Debug, PartialEq, Ord, PartialOrd, Eq, Default, Serialize, Deserialize)]
-pub struct Par {
+#[serde(bound = "")]
+pub struct Par<S: Sort = ProcSort> {
     pub sends: Vec<Send>,
     pub receives: Vec<Receive>,
     pub news: Vec<New>,
@@ -99,11 +126,17 @@ pub struct Par {
     pub connectives: Vec<Connective>,
     pub locally_free: AlwaysEqual<BitSet>,
     pub connective_used: bool,
+    #[serde(skip)]
+    pub _sort: PhantomData<S>,
 }
 
-impl Par {
-    /// Field-wise list append (the `|` operator).
-    pub fn par_merge(&self, other: &Par) -> Par {
+/// The `name`-sorted term and the `proc`-sorted term (aliases over the shared flat `Par`).
+pub type Name = Par<NameSort>;
+pub type Proc = Par<ProcSort>;
+
+impl<S: Sort> Par<S> {
+    /// Field-wise list append (the `|` operator), sort-preserving.
+    pub fn par_merge(&self, other: &Self) -> Self {
         let mut out = self.clone();
         out.sends.extend(other.sends.iter().cloned());
         out.receives.extend(other.receives.iter().cloned());
@@ -115,6 +148,38 @@ impl Par {
         out.connectives.extend(other.connectives.iter().cloned());
         out.connective_used = self.connective_used || other.connective_used;
         out
+    }
+
+    /// Re-mark the phantom sort (the flat record is unchanged).
+    fn re_mark<T: Sort>(self) -> Par<T> {
+        Par {
+            sends: self.sends,
+            receives: self.receives,
+            news: self.news,
+            exprs: self.exprs,
+            matches: self.matches,
+            unforgeables: self.unforgeables,
+            bundles: self.bundles,
+            connectives: self.connectives,
+            locally_free: self.locally_free,
+            connective_used: self.connective_used,
+            _sort: PhantomData,
+        }
+    }
+}
+
+impl Par<ProcSort> {
+    /// `@Proc` — quote a process into a name (the reflective `@`; the flat record is unchanged,
+    /// only the sort marker changes).
+    pub fn quote(self) -> Name {
+        self.re_mark()
+    }
+}
+
+impl Par<NameSort> {
+    /// `*Name` — evaluate a name into a process (the reflective `*`).
+    pub fn eval(self) -> Proc {
+        self.re_mark()
     }
 }
 

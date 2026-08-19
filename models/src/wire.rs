@@ -538,6 +538,7 @@ pub fn par_from_proto(p: &p::Par) -> Result<a::Par, ModelsError> {Ok(
         connectives: p.connectives.iter().map(connective_from_proto).collect::<Result<Vec<_>, ModelsError>>()?,
         locally_free: a::AlwaysEqual(bytes_to_bitset(&p.locally_free)),
         connective_used: p.connective_used,
+        ..Default::default()
     }
 )}
 

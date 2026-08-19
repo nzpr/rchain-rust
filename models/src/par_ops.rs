@@ -165,6 +165,7 @@ pub fn par_concat(p: &Par, that: &Par) -> Par {
         connectives,
         locally_free: AlwaysEqual(union_free(&that.locally_free.0, &p.locally_free.0)),
         connective_used: that.connective_used || p.connective_used,
+        ..Default::default()
     }
 }
 
