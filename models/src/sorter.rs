@@ -12,7 +12,6 @@ use std::cmp::Ordering;
 use num_bigint::BigInt;
 
 use crate::ast::*;
-use crate::types::FreeCount;
 
 // --- Score constants (mirroring `ScoreTree.Score`) ---------------------------------------------
 
@@ -1236,7 +1235,7 @@ mod tests {
         let match_case = |p: i64, s: i64| MatchCase {
             pattern: Box::new(g_int(p).quote()),
             source: Box::new(g_int(s)),
-            free_count: FreeCount::ZERO,
+            free_count: crate::types::FreeCount::ZERO,
         };
         let par_match: Par = Par {
             matches: vec![

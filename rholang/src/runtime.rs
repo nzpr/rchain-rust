@@ -8,6 +8,7 @@ use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{Bundle, Expr, Par, Var};
 use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::types::Closed;
 use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::i_replay_space::IReplaySpace;
@@ -204,14 +205,17 @@ impl RhoRuntime {
         *self.block_data.lock().unwrap_or_else(|p| p.into_inner()) = block_data;
     }
 
-    /// Execute a `Par` in the given environment (port of `inj`).
+    /// Execute a `Closed` process in the given environment (port of `inj`). The `Closed` proof is
+    /// discharged at this boundary; reduction then operates on the flat `Par` sub-terms.
     pub async fn inj(
         &self,
-        par: &Par,
+        par: &Closed,
         env: &Env<Par>,
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
-        self.reducer.eval(par, env, rand, self.cost.as_ref()).await
+        self.reducer
+            .eval(par.as_par(), env, rand, self.cost.as_ref())
+            .await
     }
 
     /// Parse + run a rholang term (port of `evaluate`).
@@ -252,13 +256,12 @@ impl RhoRuntime {
             .await
             .map_err(|e| e.to_string())?;
         let rand = Blake2b512Random::default_random();
-        self.inj(
-            &crate::registry::registry_bootstrap_ast(),
-            &Env::new(),
-            &rand,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let bootstrap = crate::registry::registry_bootstrap_ast();
+        let bootstrap =
+            Closed::new(bootstrap).ok_or_else(|| "registry bootstrap is not closed".to_string())?;
+        self.inj(&bootstrap, &Env::new(), &rand)
+            .await
+            .map_err(|e| e.to_string())?;
         let checkpoint = self.space.create_checkpoint().await.map_err(|e| e.to_string())?;
         Ok(checkpoint.root)
     }
@@ -391,14 +394,17 @@ impl ReplayRhoRuntime {
         *self.block_data.lock().unwrap_or_else(|p| p.into_inner()) = block_data;
     }
 
-    /// Execute a `Par` in the given environment (port of `inj`).
+    /// Execute a `Closed` process in the given environment (port of `inj`). The `Closed` proof is
+    /// discharged at this boundary; reduction then operates on the flat `Par` sub-terms.
     pub async fn inj(
         &self,
-        par: &Par,
+        par: &Closed,
         env: &Env<Par>,
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
-        self.reducer.eval(par, env, rand, self.cost.as_ref()).await
+        self.reducer
+            .eval(par.as_par(), env, rand, self.cost.as_ref())
+            .await
     }
 
     /// Parse + run a rholang term (port of `evaluate`).

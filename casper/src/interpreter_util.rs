@@ -28,7 +28,7 @@ use crate::system_deploy::SystemDeploy;
 
 /// Parse + normalize a rholang term (port of `mkTerm`).
 pub fn mk_term(rho: &str, env: &BTreeMap<String, Par>) -> Result<Par, RholangError> {
-    rchain_rholang::normalizer::source_to_adt_with_env(rho, env)
+    rchain_rholang::normalizer::source_to_adt_with_env(rho, env).map(Par::from)
 }
 
 /// Replay a block's deploys and return the computed state hash (port of `replayBlock`).

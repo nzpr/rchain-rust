@@ -10,6 +10,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::types::Closed;
 use rchain_shared::store_manager::KeyValueStoreManager;
 use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
 use rchain_rspace::errors::RSpaceError;
@@ -81,11 +82,13 @@ impl ReportingRuntime {
 
     pub async fn inj(
         &self,
-        par: &Par,
+        par: &Closed,
         env: &Env<Par>,
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
-        self.reducer.eval(par, env, rand, self.cost.as_ref()).await
+        self.reducer
+            .eval(par.as_par(), env, rand, self.cost.as_ref())
+            .await
     }
 
     pub async fn evaluate(

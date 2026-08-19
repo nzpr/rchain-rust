@@ -209,14 +209,17 @@ impl Closed {
         }
     }
 
-    /// The underlying closed process.
-    pub fn into_inner(self) -> Par {
-        self.0
-    }
-
     /// Borrow the underlying closed process.
     pub fn as_par(&self) -> &Par {
         &self.0
+    }
+}
+
+/// One-way boundary discharge: a closed process re-enters the general `Par` (the proof is dropped
+/// at the boundary).
+impl From<Closed> for Par {
+    fn from(c: Closed) -> Par {
+        c.0
     }
 }
 

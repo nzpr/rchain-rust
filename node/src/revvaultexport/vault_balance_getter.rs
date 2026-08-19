@@ -2,6 +2,7 @@
 
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{Expr, GPrivate, GUnforgeable, Par, Send};
+use rchain_models::types::Closed;
 use rchain_rholang::accounting::Costs;
 use rchain_rholang::env::Env;
 use rchain_rholang::runtime::RhoRuntime;
@@ -44,6 +45,8 @@ pub async fn get_balance_from_vault_par(
     runtime.cost().set(Costs::unsafe_max());
     let ret = new_return_name();
     let get_balance_par = get_balance_par(vault_par, &ret);
+    let get_balance_par =
+        Closed::new(get_balance_par).ok_or_else(|| "balance probe is not closed".to_string())?;
     runtime
         .inj(
             &get_balance_par,

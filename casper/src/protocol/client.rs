@@ -45,6 +45,7 @@ pub fn build_par(name: &Name) -> Result<Par, RholangError> {
     match name {
         Name::PubName(content) => {
             rchain_rholang::normalizer::source_to_adt_with_env(content, &BTreeMap::new())
+                .map(Par::from)
         }
         Name::PrivName(content) => Ok(RhoName::apply_bytes(content.as_bytes().to_vec())),
     }

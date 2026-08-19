@@ -13,7 +13,7 @@ use rchain_models::ast::{
     AlwaysEqual, Bundle, Connective, ConnectiveBody, EList, ETuple, Expr, Match, MatchCase, New,
     NameSort, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Var, VarRef,
 };
-use rchain_models::types::FreeCount;
+use rchain_models::types::{Closed, FreeCount};
 use rchain_models::par_ops::{
     from_expr, par_concat, prepend_bundle, prepend_connective, prepend_expr, prepend_match,
     prepend_new, prepend_receive, prepend_send, single_bundle, single_connective,
@@ -1511,19 +1511,22 @@ pub fn source_to_ast(source: &str) -> Result<Proc, RholangError> {
 }
 
 /// Normalize a `Proc` into a sorted `Par` (port of `Compiler.astToADT`).
-pub fn ast_to_adt(proc: &Proc, env: &BTreeMap<String, Par>) -> Result<Par, RholangError> {
+pub fn ast_to_adt(proc: &Proc, env: &BTreeMap<String, Par>) -> Result<Closed, RholangError> {
     let par = normalize_term(proc, env)?;
-    Ok(sort_par_term(&par))
+    let sorted = sort_par_term(&par);
+    Closed::new(sorted).ok_or_else(|| {
+        RholangError::NormalizerError("top-level term is not closed (free variables)".into())
+    })
 }
 
-/// Parse + normalize source into a sorted `Par` with an empty normalizer environment (port of
-/// `Compiler.sourceToADT`).
-pub fn source_to_adt(source: &str) -> Result<Par, RholangError> {
+/// Parse + normalize source into a sorted `Closed` process with an empty normalizer environment
+/// (port of `Compiler.sourceToADT`).
+pub fn source_to_adt(source: &str) -> Result<Closed, RholangError> {
     source_to_adt_with_env(source, &BTreeMap::new())
 }
 
 /// Parse + normalize source with an explicit normalizer environment.
-pub fn source_to_adt_with_env(source: &str, env: &BTreeMap<String, Par>) -> Result<Par, RholangError> {
+pub fn source_to_adt_with_env(source: &str, env: &BTreeMap<String, Par>) -> Result<Closed, RholangError> {
     let proc = source_to_ast(source)?;
     ast_to_adt(&proc, env)
 }
@@ -1641,13 +1644,13 @@ mod tests {
 
     #[test]
     fn compiler_round_trips_int() {
-        let par = source_to_adt("42").unwrap();
+        let par: Par = source_to_adt("42").unwrap().into();
         assert_eq!(par.exprs, vec![Expr::GInt(42)]);
     }
 
     #[test]
     fn compiler_round_trips_send() {
-        let par = source_to_adt("new x in { x!(1) }").unwrap();
+        let par: Par = source_to_adt("new x in { x!(1) }").unwrap().into();
         assert_eq!(par.news.len(), 1);
         assert_eq!(par.news[0].p.sends.len(), 1);
         assert_eq!(par.news[0].p.sends[0].data, vec![Par {

@@ -9,6 +9,7 @@ mod common;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{Expr, Par};
 use rchain_models::par_ops::from_expr;
+use rchain_models::types::Closed;
 use rchain_rholang::env::Env;
 use rchain_rholang::registry::registry_bootstrap_ast;
 use rchain_rspace::history::history::empty_root_hash_value;
@@ -73,7 +74,8 @@ async fn replay_matches_play() {
 async fn empty_state_bootstrap_is_deterministic() {
     let (rt, _replay) = build_runtime_pair().await;
     rt.reset(empty_root_hash_value()).await.unwrap();
-    rt.inj(&registry_bootstrap_ast(), &Env::new(), &fixed_rand())
+    let bootstrap = Closed::new(registry_bootstrap_ast()).expect("registry bootstrap is closed");
+    rt.inj(&bootstrap, &Env::new(), &fixed_rand())
         .await
         .unwrap();
     let root = rt.create_checkpoint().await.unwrap().root;
