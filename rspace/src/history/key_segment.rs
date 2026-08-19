@@ -10,12 +10,22 @@ pub struct KeySegment {
     value: Vec<u8>,
 }
 
+/// Validated construction: a key segment is at most 127 bytes (the radix-tree wire invariant).
+impl TryFrom<Vec<u8>> for KeySegment {
+    type Error = String;
+    fn try_from(value: Vec<u8>) -> Result<Self, String> {
+        if value.len() <= 127 {
+            Ok(KeySegment { value })
+        } else {
+            Err(format!("key segment length {} exceeds 127", value.len()))
+        }
+    }
+}
+
 impl KeySegment {
+    /// Total constructor on already-valid input: the caller guarantees `value.len() <= 127` (the
+    /// radix-tree wire invariant). Use [`TryFrom`] at boundaries where the length is untrusted.
     pub fn new(value: Vec<u8>) -> Self {
-        assert!(
-            value.len() <= 127,
-            "Size of key segment is more than 127"
-        );
         KeySegment { value }
     }
 

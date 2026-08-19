@@ -5,8 +5,13 @@
 use std::cmp::Ordering;
 
 /// A public key, as a raw byte array.
+///
+/// The inner bytes are **private**: the only ways to observe them are the read-only [`bytes`]
+/// accessor and the boundary `as_bytes`-style conversions, so the raw key cannot be mutated in
+/// place mid-domain (mirrors the refinement "no type escape" rule; the Scala `ByteString` is
+/// variable-length, so there is no fixed-width `TryFrom` here).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct PublicKey(pub Vec<u8>);
+pub struct PublicKey(Vec<u8>);
 
 impl PublicKey {
     /// Construct from raw bytes.
@@ -14,7 +19,7 @@ impl PublicKey {
         Self(bytes)
     }
 
-    /// The raw key bytes.
+    /// The raw key bytes (read-only view).
     pub fn bytes(&self) -> &[u8] {
         &self.0
     }

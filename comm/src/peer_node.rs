@@ -18,16 +18,20 @@ impl NodeIdentifier {
     }
 
     /// Parse a hex string into a node identifier (the Scala `NodeIdentifier.apply(name)`).
-    pub fn from_hex(name: &str) -> Self {
-        let bytes = name
-            .as_bytes()
-            .chunks(2)
-            .map(|pair| {
-                let s = std::str::from_utf8(pair).unwrap_or("");
-                u8::from_str_radix(s, 16).unwrap_or(0)
-            })
-            .collect();
-        NodeIdentifier { key: bytes }
+    ///
+    /// Rejects odd-length and non-hex input (the previous form silently dropped non-hex bytes to
+    /// `0`, corrupting the peer identity).
+    pub fn from_hex(name: &str) -> Result<Self, String> {
+        if name.len() % 2 != 0 {
+            return Err(format!("odd-length hex key: {name}"));
+        }
+        let mut key = Vec::with_capacity(name.len() / 2);
+        for pair in name.as_bytes().chunks(2) {
+            let s = std::str::from_utf8(pair).map_err(|_| format!("invalid hex key: {name}"))?;
+            let byte = u8::from_str_radix(s, 16).map_err(|_| format!("invalid hex key: {name}"))?;
+            key.push(byte);
+        }
+        Ok(NodeIdentifier { key })
     }
 
     pub fn key(&self) -> &[u8] {
@@ -136,7 +140,7 @@ impl PeerNode {
         let protocol = Port::new(protocol.ok_or_else(err)?);
         let discovery = Port::new(discovery.ok_or_else(err)?);
         Ok(PeerNode::from(
-            NodeIdentifier::from_hex(key_hex),
+            NodeIdentifier::from_hex(key_hex).map_err(|e| crate::errors::CommError::ParseError(e))?,
             host.to_string(),
             protocol,
             discovery,
@@ -158,7 +162,7 @@ mod tests {
     fn node_identifier_hex_round_trips() {
         let id = NodeIdentifier::new(vec![0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(id.s_key(), "deadbeef");
-        assert_eq!(NodeIdentifier::from_hex("deadbeef"), id);
+        assert_eq!(NodeIdentifier::from_hex("deadbeef").unwrap(), id);
     }
 
     #[test]

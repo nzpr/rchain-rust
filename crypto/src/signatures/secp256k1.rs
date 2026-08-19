@@ -115,10 +115,10 @@ mod tests {
 
     #[test]
     fn verifies_signature_with_keypair() {
-        let (PrivateKey(sec), PublicKey(pub_key)) = Secp256k1.new_key_pair();
+        let (PrivateKey(sec), public_key) = Secp256k1.new_key_pair();
         let data = sha256::hash(b"testing");
         let sig = Secp256k1::sign_bytes(&data, &sec).expect("sign with valid secret key");
-        assert!(Secp256k1::verify_bytes(&data, &sig, &pub_key));
+        assert!(Secp256k1::verify_bytes(&data, &sig, public_key.bytes()));
     }
 
     #[test]
