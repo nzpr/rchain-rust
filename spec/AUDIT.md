@@ -82,8 +82,9 @@ list cannot exceed 255; config durations/sizes cannot exceed `Long` range). Chan
   structurally by `classify`/`is_pure_name` (`models/src/types.rs`), per `TYPE-SYSTEM.md` §1.1 and
   the Lean `Par.lean` flat record.
 - **Stubbed semantics** (honest inventory for the formal spec): set difference `--`
-  (`rholang/src/reduce.rs:516-518`); normalizer `defer(...)` cases (`normalizer.rs:38-42,1085,1101,1257`);
-  `substituteAndCharge`/`Chargeable` deferrals (`substitute.rs:5`, `accounting.rs:5`, `storage.rs:88`).
+  (`rholang/src/reduce.rs:516-518`); normalizer `defer(...)` cases — `process` dispatch, `complex
+  input source`, `concurrent let` (`normalizer.rs`); `substituteAndCharge`/`Chargeable` deferrals
+  (`substitute.rs:5`, `accounting.rs:5`, `storage.rs:88`).
 - **Deliberate Scala deviations (determinism):** `New.injections` sorted by key
   (`models/src/sorter.rs:324-327`); `locally_free` excluded from equality/hash via `AlwaysEqual`
   (`models/src/ast.rs:35-77`).
@@ -188,6 +189,14 @@ Under the new oracle (the ρ-calculus spec, not Scala), the following were **fix
   `NodeIdentifier::from_hex` rejects odd-length/non-hex, `base16::try_decode` added and used at the
   `is_finalized` API boundary.
 - **Signed-byte ordering** — `cmp_signed_byte` helper in `crypto::util::sorting` (shared with the sorter).
+- **Rholang parser completed** — map-vs-block disambiguation (`{k:v}` was misparsed as a braced
+  process), `_` wildcard lexing, `bundle0` → `bundle`+`0`, and multi-receipt `for` desugaring
+  (`for (r1; r2; …) { P }` → nested receives). The 9 blessed genesis contracts now parse.
+- **Genesis boot fixed** — the deploy normalizer env now binds `rho:rchain:deployerId`/`deployId`
+  (`NormalizerEnv::new(deploy)`; it was empty, so the URI was unbound at `eval_new`); the
+  `tokio::spawn(node_launch)` result is logged instead of dropped; `create_block_with_processed_deploys`
+  `assert!` → `Result`; the runtime uses a 32 MiB worker stack (the blessed terms recurse past the
+  2 MiB default).
 
 **Assessed (not fixed — unreachable / boundary / over-engineering):**
 
