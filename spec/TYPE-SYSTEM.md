@@ -259,10 +259,12 @@ round-trip tests are excluded). The typed fix is either a proven-total refinemen
 | `history/instances/radix_history.rs:80` | `panic!("history commit failed")` | `Result` (storage commit) |
 | `history/instances/rspace_history_reader_impl.rs:78,86,94` | `panic!("unexpected leaf …")` | `Result` (sum-type invariant) |
 
-> **Completeness note:** this catalogue was produced by grepping
-> `.unwrap() | .expect( | panic! | unreachable!` over `crates/**/*.rs` and excluding `#[cfg(test)]`
-> and `assert!`-guarded test sites. Re-run the grep to confirm zero uncatalogued production sites
-> before the follow-on Rust refactor (out of scope here).
+> **Completeness note:** the sweep is done. Re-running the grep over the workspace (excluding
+> `#[cfg(test)]` modules, `build.rs`, and the parser's `self.expect(Tok)` method) leaves zero
+> production `.unwrap()`/`.expect(`/`panic!`/`unreachable!` sites, except the two deliberately-unsafe
+> `getUnsafe` helpers in `sdk/src/primitive.rs` (`MapOps::get_unsafe` / `TryOps::get_unsafe`), which
+> are the explicit Scala `getUnsafe` escape hatch (panic by design, not silent partiality). The
+> storage-layer fallibility (`KeyValueStore`/`KeyValueTypedStore` → `Result`) is part of this pass.
 
 ---
 
