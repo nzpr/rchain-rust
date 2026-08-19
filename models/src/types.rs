@@ -46,6 +46,27 @@ pub fn classify(p: &Par) -> PSort {
     }
 }
 
+/// Validated sort construction: a `Par` is a `Name` iff it is a pure name (the structural sort).
+/// The `quote` re-marking carries the sort thereafter; the invariant is checked exactly once, here.
+impl TryFrom<Par> for crate::ast::Name {
+    type Error = String;
+    fn try_from(p: Par) -> Result<Self, Self::Error> {
+        if is_pure_name(&p) {
+            Ok(p.quote())
+        } else {
+            Err("term is not a pure name (has a top-level send/receive/new/match)".to_string())
+        }
+    }
+}
+
+/// One-way boundary discharge: a `Name` re-enters the general `Par` by `eval` (the reflective `*`;
+/// the flat record is unchanged).
+impl From<crate::ast::Name> for Par {
+    fn from(n: crate::ast::Name) -> Par {
+        n.eval()
+    }
+}
+
 // --- Closedness (Law 6): no free variables ------------------------------------------------
 
 fn closed_var(v: &Var) -> bool {
