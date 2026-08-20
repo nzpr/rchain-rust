@@ -135,4 +135,19 @@ mod tests {
         assert!(uri.starts_with("rho:id:"));
         assert_eq!(uri.len(), "rho:id:".len() + 54);
     }
+
+    #[test]
+    #[ignore = "build_uri diverges from the Scala oracle (registry URIs wrong -> registry lookups empty -> bondsCache/finalization blocked)"]
+    fn build_uri_matches_scala_build_uri_test_vector() {
+        // Scala `RegistryOpsTest`: `buildUri("foo".toByteArray())` == this uri. NOTE: the Scala
+        // rholang `toByteArray` serializes the whole `Par` (scodec `Serialize[Par]`), NOT the raw
+        // string bytes — so the clean `blake2b256("foo")` input below is NOT the true oracle input
+        // and this vector needs `toByteArray` ported first to be meaningful.
+        let h = rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::create(b"foo");
+        let uri = build_uri(h.as_bytes());
+        assert_eq!(
+            uri,
+            "rho:id:5zsti8g1zpshouu8f7dm1dmqmte3wreeb1abf5dj51h1dds1cjizja"
+        );
+    }
 }
