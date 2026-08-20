@@ -1,8 +1,7 @@
 //! Casper merge index data structures (Law 17: merge determinism).
 //!
-//! Ports the pure data types and conflict/dependency relations from `casper/.../merging/`. The
-//! effectful constructors (`DeployChainIndex.apply`, `BlockIndex.apply`, `MergeScope.merge`) are
-//! deferred pending the runtime/history wiring.
+//! Ports the pure data types, conflict/dependency relations, and the effectful constructors
+//! (`DeployChainIndex.apply`, `BlockIndex.apply`, `MergeScope.merge`) from `casper/.../merging/`.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};

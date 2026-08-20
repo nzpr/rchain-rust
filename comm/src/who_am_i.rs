@@ -2,8 +2,7 @@
 //!
 //! The cats-effect `F[_]` and `Log[F]` are simplified to synchronous calls: logging is a
 //! `FnMut(String)` callback and the HTTP fetch is a minimal HTTP/1.0 GET over `TcpStream` (the two
-//! services are plain `http://`). `retrieveExternalAddress` delegates to `UPnP.assurePortForwarding`
-//! (whose gateway discovery is deferred).
+//! services are plain `http://`). `retrieveExternalAddress` delegates to `UPnP.assurePortForwarding`.
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};

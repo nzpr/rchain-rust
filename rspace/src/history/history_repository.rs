@@ -1,6 +1,6 @@
 //! The top-level history repository: checkpoint, reset, and reader construction.
 //!
-//! Mirrors `HistoryRepository.scala` + `HistoryRepositoryImpl.scala` (exporter/importer deferred).
+//! Mirrors `HistoryRepository.scala` + `HistoryRepositoryImpl.scala`.
 
 use std::marker::PhantomData;
 use std::sync::Arc;

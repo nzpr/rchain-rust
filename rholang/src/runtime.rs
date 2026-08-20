@@ -65,8 +65,7 @@ pub fn setup_reducer(
     reducer
 }
 
-/// The rholang runtime (port of `RhoRuntime`). `evaluate` (parse+run) is deferred; `inj`,
-/// checkpointing, and tuplespace reads are provided.
+/// The rholang runtime (port of `RhoRuntime`): `evaluate`/`inj`, checkpointing, and tuplespace reads.
 pub struct RhoRuntime {
     reducer: Arc<RhoReducer>,
     space: RhoSpace,

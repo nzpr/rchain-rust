@@ -1,7 +1,4 @@
 //! Interpreter utilities (port of `rholang/InterpreterUtil.scala`).
-//!
-//! `validateBlockCheckpoint` is deferred pending `MultiParentCasper.getPreStateForParents` and
-//! `BlockRandomSeed`.
 
 use std::collections::{BTreeMap, BTreeSet};
 

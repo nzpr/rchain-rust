@@ -34,8 +34,8 @@ use crate::runtime_replay::RuntimeReplayOps;
 use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, SystemDeployUserError};
 
 /// The runtime manager (port of `RuntimeManager`). Deploy execution (user deploys + system
-/// deploys), genesis/state computation, and bond/validator queries are implemented; replay is
-/// deferred pending the replay-runtime wiring.
+/// deploys), genesis/state computation, replay, and bond/validator queries are implemented.
+///
 /// The mergeable-channel store (port of `RuntimeManager.MergeableStore`).
 pub type MergeableStore = Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<DeployMergeableData>>>;
 

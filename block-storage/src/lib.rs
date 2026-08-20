@@ -7,7 +7,7 @@
 //! has no async or serialization dependencies.
 //!
 //! The store glue (`BlockStore`/`ApprovedStore`) lives in [`block_store`]/[`approved_store`]; the
-//! concrete `BlockDagStorage` implementation is casper-owned in Scala and remains deferred.
+//! concrete `BlockDagStorage` implementation lives in the `casper` crate (`BlockDagKeyValueStorage`).
 
 pub mod approved_store;
 pub mod block_store;

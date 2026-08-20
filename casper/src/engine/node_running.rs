@@ -2,8 +2,8 @@
 //!
 //! The message handlers wire the transport layer to the block store / DAG / block retriever: block
 //! hash broadcasts and has-block messages feed the retriever, block requests are served from the
-//! store, and fork-choice-tip / finalized-fringe requests are served from the DAG. The
-//! `StoreItemsMessageRequest` handler is deferred pending `RSpaceStateManager`/`RSpaceExporter`.
+//! store, fork-choice-tip / finalized-fringe requests are served from the DAG, and store-items
+//! (LFS state-sync) requests are served from the RSpace exporter.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -244,8 +244,8 @@ pub async fn handle_finalized_fringe_request(
     log.info(source, &format!("FinalizedFringe sent to {peer}"));
 }
 
-/// The running-state engine (port of the `NodeRunning` class). The `apply` streaming loop that
-/// consumes `incoming_blocks` is deferred; the message handling is fully ported.
+/// The running-state engine (port of the `NodeRunning` class): message handling and the
+/// store-items (LFS state-sync) serving are ported.
 pub struct NodeRunning<E: RSpaceExporter> {
     transport: Arc<dyn TransportLayer>,
     conf: RPConf,

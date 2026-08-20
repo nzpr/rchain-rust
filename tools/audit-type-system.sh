@@ -65,7 +65,6 @@ TEST_ONLY_FILE_RE='(_tests?|test_)\.rs$|/property_tests\.rs$'
 # boundaries and remain a "validate-on-ingress" follow-up (tracked in spec/AUDIT.md).
 WHITELIST_PANIC=(
   '/sdk/src/primitive.rs'
-  '/node/src/dag/implementation.rs'
   '/regex/src/regex_pattern.rs'
   '/models/src/block_hash.rs'
   '/models/src/block/state_hash.rs'

@@ -98,8 +98,8 @@ impl Serialize<DeployData> for DeployData {
     }
 }
 
-/// A signed deploy (the wire form of `Signed[DeployData]`). Signature *verification* is deferred to
-/// the deploy-acceptance path (casper); here only the wire round-trip is modeled.
+/// A signed deploy (the wire form of `Signed[DeployData]`). Signature *verification* lives in the
+/// casper deploy-acceptance path; here only the wire round-trip is modeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedDeployData {
     pub data: DeployData,

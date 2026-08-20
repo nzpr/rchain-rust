@@ -1,8 +1,7 @@
 //! Normalizer matchers (port of `interpreter/compiler/normalizer/` + the
 //! `ProcNormalizeMatcher` dispatch in `normalize.scala`).
 //!
-//! These fold the concrete `Proc` AST into the de Bruijn `Par`. Source positions are placeholders
-//! until the lexer is ported; the structural processes (`PSend`/`PNew`/`PInput`/…) are deferred.
+//! These fold the concrete `Proc` AST into the de Bruijn `Par` (source positions are placeholders).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};

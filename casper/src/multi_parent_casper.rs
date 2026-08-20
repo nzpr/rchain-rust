@@ -1,7 +1,4 @@
 //! The multi-parent CBC-Casper façade (port of `MultiParentCasper.scala`).
-//!
-//! The block `validate` orchestration is deferred pending `InterpreterUtil.validateBlockCheckpoint`
-//! and the mergeable-channel store.
 
 use std::collections::{BTreeMap, BTreeSet};
 

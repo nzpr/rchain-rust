@@ -7,7 +7,10 @@ use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::public_key::PublicKey;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::Event;
-use rchain_models::rholang::RhoType::{RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoSysAuthToken};
+use rchain_models::rholang::RhoType::{
+    RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken,
+    RhoTupleN,
+};
 use rchain_models::validator::Validator;
 
 /// A user-level system-deploy error (port of `SystemDeployUserError`).
@@ -145,11 +148,26 @@ impl SystemDeploy {
 
 /// Interpret the `(Bool, Either[String, Nil])` result of the charge/refund/close/slash deploys
 /// (port of their shared `processResult`).
+///
+/// The `Either[String, Nil]` is a bare `GString` on `Left` (the error message) or `Nil` on `Right`;
+/// a `(true, _)` result succeeds, `(false, Left(msg))` fails with `msg`, and anything else fails
+/// with `<no cause>`.
 pub fn process_bool_result(output: &Par) -> Result<(), SystemDeployUserError> {
-    // The result is a tuple `(Bool, Either[String, Nil])`; a faithful extraction is deferred, so
-    // accept any output for now.
-    let _ = output;
-    Ok(())
+    let parts = RhoTupleN::unapply(output)
+        .ok_or_else(|| SystemDeployUserError("<no cause>".to_string()))?;
+    let success = parts
+        .first()
+        .and_then(RhoBoolean::unapply)
+        .ok_or_else(|| SystemDeployUserError("<no cause>".to_string()))?;
+    if success {
+        return Ok(());
+    }
+    let error = parts
+        .get(1)
+        .and_then(RhoString::unapply)
+        .map(|s| SystemDeployUserError(s.to_string()))
+        .unwrap_or_else(|| SystemDeployUserError("<no cause>".to_string()));
+    Err(error)
 }
 
 const PRE_CHARGE_SOURCE: &str = r#"new rl(`rho:registry:lookup`), poSCh, initialDeployerId(`sys:casper:deployerId`), chargeAmount(`sys:casper:chargeAmount`), sysAuthToken(`sys:casper:authToken`), return(`sys:casper:return`) in {
@@ -189,7 +207,34 @@ mod tests {
     }
 
     #[test]
-    fn process_bool_result_accepts() {
-        assert_eq!(process_bool_result(&Par::default()), Ok(()));
+    fn process_bool_result_interprets_tuple() {
+        use rchain_models::rholang::RhoType::{RhoBoolean, RhoNil, RhoString, RhoTupleN};
+
+        // (true, _) succeeds regardless of the Either.
+        let ok = RhoTupleN::apply(vec![RhoBoolean::apply(true), RhoNil::apply()]);
+        assert_eq!(process_bool_result(&ok), Ok(()));
+
+        // (false, Left("boom")) fails with the message.
+        let fail = RhoTupleN::apply(vec![
+            RhoBoolean::apply(false),
+            RhoString::apply("boom".to_string()),
+        ]);
+        assert_eq!(
+            process_bool_result(&fail),
+            Err(SystemDeployUserError("boom".to_string()))
+        );
+
+        // (false, Right(Nil)) fails with no cause.
+        let fail_nil = RhoTupleN::apply(vec![RhoBoolean::apply(false), RhoNil::apply()]);
+        assert_eq!(
+            process_bool_result(&fail_nil),
+            Err(SystemDeployUserError("<no cause>".to_string()))
+        );
+
+        // A malformed result fails with no cause.
+        assert_eq!(
+            process_bool_result(&Par::default()),
+            Err(SystemDeployUserError("<no cause>".to_string()))
+        );
     }
 }

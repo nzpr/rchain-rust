@@ -1,8 +1,5 @@
 //! Block-storage syntax (port of `BlockStoreSyntax.scala`, `ApprovedStoreSyntax.scala`, and
 //! `BlockDagStorageSyntax.scala`).
-//!
-//! The fs2 batch/traversal operations (`getUnsafe(hashes)`, `lookupUnsafe(hashes)`,
-//! `nonFinalizedBlocks`, `descendants`, `ancestors`) are deferred.
 
 use std::collections::BTreeSet;
 

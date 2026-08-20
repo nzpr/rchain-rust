@@ -45,9 +45,8 @@ pub fn message_from_block_metadata(
     })
 }
 
-/// The concrete block DAG storage (port of `BlockDagKeyValueStorage`). Fringe pruning and deploy
-/// expiry are deferred (they depend on the not-yet-ported `BlockIndex` cache and
-/// `MultiParentCasper.deployLifespan`).
+/// The concrete block DAG storage (port of `BlockDagKeyValueStorage`). Fringe pruning (the
+/// `BlockIndex` cache) and deploy-pool expiry run on finalization.
 pub struct BlockDagKeyValueStorage {
     representation: tokio::sync::RwLock<DagRepresentation>,
     lock: tokio::sync::Mutex<()>,

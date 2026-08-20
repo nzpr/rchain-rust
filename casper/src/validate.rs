@@ -92,9 +92,6 @@ pub fn phlo_price(b: &BlockMessage, min_phlo_price: i64) -> BlockStatus {
 }
 
 // --- Effectful checks (depend on the block DAG) ------------------------------------------------
-//
-// `repeatDeploy` (needs `BlockStore` + `DagOps`) and `bondsCache` (needs `RuntimeManager`) are
-// deferred.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 

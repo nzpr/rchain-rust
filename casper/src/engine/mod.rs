@@ -1,9 +1,8 @@
 //! Node engine (port of the `casper/engine/` state machines).
 //!
-//! The pure `LfsState`/`LfsTupleSpaceState` requester states and the effectful
-//! `LfsBlockRequester`/`LfsTupleSpaceRequester`/`NodeSyncing`/`NodeRunning` machines are ported.
-//! `NodeLaunch`'s genesis-from-config helpers are ported; its `apply` mode-dispatch is deferred
-//! pending the node runtime's comm/discovery wiring.
+//! The pure `LfsState`/`LfsTupleSpaceState` requester states, the effectful
+//! `LfsBlockRequester`/`LfsTupleSpaceRequester`/`NodeSyncing`/`NodeRunning` machines, and
+//! `NodeLaunch`'s genesis-from-config helpers + `apply` mode-dispatch are ported.
 
 pub mod lfs_block_requester;
 pub mod lfs_tuple_space_requester;

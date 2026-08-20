@@ -16,8 +16,8 @@ use super::representation::DagRepresentation;
 /// A deploy id (the Scala `BlockDagStorage.DeployId = ByteString`).
 pub type DeployId = Vec<u8>;
 
-/// The block DAG storage interface (port of `BlockDagStorage[F]`).
-// impl deferred to casper (the concrete `BlockDagKeyValueStorage`).
+/// The block DAG storage interface (port of `BlockDagStorage[F]`). The concrete implementation is
+/// the `casper` crate's `BlockDagKeyValueStorage`.
 #[async_trait]
 pub trait BlockDagStorage: Send + Sync {
     async fn get_representation(&self) -> DagRepresentation;

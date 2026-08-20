@@ -1,8 +1,7 @@
 //! Last Finalized State tuple-space requester (port of `engine/LfsTupleSpaceRequester.scala`).
 //!
-//! Downloads the rholang state (history + data items) for the last finalized state in chunks. The
-//! pure `LfsTupleSpaceState` state machine is ported here; the effectful `stream` orchestration is
-//! deferred pending the comm/stream layer.
+//! Downloads the rholang state (history + data items) for the last finalized state in chunks, via
+//! the pure `LfsTupleSpaceState` state machine and the effectful `stream` orchestration.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
