@@ -3,16 +3,22 @@
 # --- Build stage ---------------------------------------------------------------
 FROM rust:1.95.0 AS builder
 
+# `protoc` (prost-build .proto codegen) + the protobuf well-known types
+# (`google/protobuf/empty.proto` etc., shipped by libprotobuf-dev) + build-essential
+# + perl (ring/lmdb-rkv C builds, already in the full rust image).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# The full rust image carries build-essential + perl, which `ring` (rustls/rcgen)
-# and `lmdb-rkv` (bundled C) need.
 COPY . .
 
 RUN cargo build --release -p rchain-node --bin rnode
 
 # --- Runtime stage -------------------------------------------------------------
-FROM debian:bookworm-slim
+# Must match the builder's glibc (rust:1.95.0 = Debian trixie / glibc 2.41).
+FROM debian:trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

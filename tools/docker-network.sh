@@ -7,14 +7,12 @@
 #   tools/docker-network.sh down           stop the network (+ optional -v to drop volumes)
 #   tools/docker-network.sh status         docker ps for the network
 #   tools/docker-network.sh logs <node>    tail a node's logs
-#   tools/docker-network.sh cli <node> -- <rnode subcommand...>
+#   tools/docker-network.sh cli <node> <rnode subcommand...>
 #
-# Nodes serve Deploy+Propose+Repl all on the internal gRPC port 40402; each node's 40402 is
-# mapped to a distinct host port so the local `rnode` binary can target it:
-#   bootstrap -> localhost:40402, peer1 -> 41402, peer2 -> 42402, ...
+# Nodes serve Deploy+Propose+Repl all on the internal gRPC port 40402. `cli` runs the Rust
+# `rnode` client inside the network (via `docker run`), so the host needs only docker + openssl.
 #
-# Prereqs: docker, openssl (to read the bootstrap node-id from its generated TLS cert), and an
-# `rnode` binary on PATH (set RNODE=... to override).
+# Prereqs: docker, openssl (to read the bootstrap node-id from its generated TLS cert).
 
 set -euo pipefail
 
@@ -31,10 +29,8 @@ VALIDATOR_PRIV_HEX="a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d800
 VALIDATOR_PUB_HEX="04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
 STAKE=100
 
-# Host port for the bootstrap's gRPC; peers get 40402 + 1000*i.
+# Host port for the bootstrap's gRPC; peers get 40402 + 1000*i (for optional host-side access).
 GRPC_BASE=40402
-
-RNODE="${RNODE:-rnode}"
 
 usage() {
   sed -n '2,15p' "$0" >&2
@@ -66,20 +62,8 @@ wait_for_cert() {
 
 bootstrap_id() {
   docker exec "$BOOTSTRAP" cat /var/lib/rnode/node.certificate.pem \
-    | openssl x509 -noout -subject -nameopt sep_multiline \
-    | awk -F'= ' '/commonName/ {print $2; exit}'
-}
-
-node_port() {
-  # bootstrap -> GRPC_BASE, peerN -> GRPC_BASE + N*1000
-  if [[ "$1" == "$BOOTSTRAP" ]]; then
-    echo "$GRPC_BASE"
-  elif [[ "$1" == "${PEER_PREFIX}"[1-5] ]]; then
-    echo $((GRPC_BASE + ${1#"$PEER_PREFIX"} * 1000))
-  else
-    echo "unknown node: $1" >&2
-    return 1
-  fi
+    | openssl x509 -noout -subject \
+    | awk -F'=' '{print $NF}'
 }
 
 cmd_up() {
@@ -132,10 +116,10 @@ cmd_up() {
   done
 
   echo ""
-  echo "==> up. CLI targets (gRPC):"
-  echo "    bootstrap -> ${RNODE} --grpc-host localhost --grpc-port ${GRPC_BASE} ..."
+  echo "==> up. Interact with:"
+  echo "    tools/docker-network.sh cli bootstrap <rnode subcommand...>"
   for (( i = 1; i < n; i++ )); do
-    echo "    ${PEER_PREFIX}${i} -> ${RNODE} --grpc-host localhost --grpc-port $((GRPC_BASE + i * 1000)) ..."
+    echo "    tools/docker-network.sh cli ${PEER_PREFIX}${i} <rnode subcommand...>"
   done
 }
 
@@ -162,9 +146,12 @@ cmd_logs() {
 cmd_cli() {
   local node="$1"
   shift
-  local port
-  port="$(node_port "$node")"
-  exec "$RNODE" --grpc-host localhost --grpc-port "$port" "$@"
+  # Run the Rust client in a container on the network (reaching the node by name);
+  # the Rust client speaks the same gRPC protocol as the image's node binary.
+  local tty=""
+  [[ "${1:-}" == "repl" ]] && tty="-t"
+  docker run --rm -i $tty --network "$NETWORK" "$IMAGE" \
+    --grpc-host "$node" --grpc-port 40402 "$@"
 }
 
 case "${1:-}" in
