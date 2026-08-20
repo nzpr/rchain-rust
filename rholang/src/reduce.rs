@@ -1,9 +1,9 @@
 //! The pure expression-evaluation surface of the reducer (Law 4).
 //!
 //! Mirrors `Reduce.scala` (`evalExpr` / `evalExprToExpr` / `evalSingleExpr` / `evalToBool` and the
-//! arithmetic/comparison/boolean/string/method helpers). The effectful term dispatch
-//! (`eval(Send/Receive/New/Match/Bundle)`, `produce`/`consume`, `new` allocation) and the
-//! collection methods (`union`/`diff`/`add`/`delete`/`contains`/`slice`/`keys`) are deferred.
+//! arithmetic/comparison/boolean/string/method helpers), the effectful term dispatch
+//! (`eval(Send/Receive/New/Match/Bundle)`, `produce`/`consume`, `new` allocation), and the
+//! collection methods (`union`/`diff`/`add`/`delete`/`contains`/`slice`/`keys`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;

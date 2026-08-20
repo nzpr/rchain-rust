@@ -38,7 +38,7 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `graphz` | **done** (DOT builder) |
 | `models` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer + JSON serde) |
 | `block-storage` | **done** (DAG finalizer + BlockStore/ApprovedStore/BlockDagStorage) |
-| `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util, state/exporters incl. `traverseHistory`/`validateStateItems` + store-backed instances, store→ReplayRSpace factory); LMDB FFI (`RSpaceExporterDisk`) deferred |
+| `rspace` | **done** (hashing/radix-tree/history/merger + play/replay engine, merger execution `computeTrieActions`, replay verification, reporting, hot-store back-fill, util, state/exporters incl. `traverseHistory`/`validateStateItems` + store-backed instances, store→ReplayRSpace factory, and the disk exporter `RSpaceExporterDisk.writeToDisk` in `state/exporters`) |
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration + weupnp SSDP/SOAP gateway discovery) |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler + full parser — map-vs-block disambiguation, `_` wildcard, `bundle+/-/0`, peek `<<-`, method calls, n-ary `par`, multi-receipt `for` — so the 9 blessed genesis contracts parse; system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
 | `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers, engine state machines: LfsState/LfsTupleSpaceState/LfsBlockRequester/LfsTupleSpaceRequester/NodeSyncing/NodeRunning/BlockReceiver.apply + NodeLaunch genesis helpers) |
@@ -99,11 +99,10 @@ block receiver/processor streams, the transport/protocol server + peer-message s
 `NodeLaunch.apply`, and the request-dependencies loop.
 Remaining:
 
-- **node HTTP routes** — the `/api/v1` OpenAPI schema route (needs endpoints4s) remains deferred; the
-  `/reporting` trace route, `/status`, and the `/api/v1` JSON routes are ported.
-- **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
-  obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
-  [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).
+- **Formalization** — Law 1 (canonical order) and the ρ-core infrastructure (structural congruence,
+  reduction, substitution, closedness) are stated and proven in Lean (`spec/Rchain/`). Laws 3–18 have
+  **no Lean files yet** (only `Syntax`/`Par`/`Cmp`/`Rho`/`Sort`/`Ty` exist), and Law 1's 69 comparator
+  `axiom`s remain to discharge (see [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).
 - **Cast / raw-byte remediation** — the ~284 `as`-cast + 21 lax + raw-byte sites are the remaining
   checklist from the adversarial audit (see [`spec/AUDIT.md`](../../spec/AUDIT.md)). The
   *safe-by-construction type system* itself is done: the sort-indexed `Par<S>` (compile-time

@@ -1,7 +1,7 @@
 //! Web API syntax helpers (port of `api/WebApiSyntax.scala`).
 //!
 //! Extension methods that lift `Option`/`Either` into a result carrying the API's exception types.
-//! Used by the (deferred) `WebApiImpl`/`AdminWebApiImpl`.
+//! Used by `WebApiImpl`/`AdminWebApiImpl`.
 
 use super::dto::{BlockApiException, SignatureException};
 

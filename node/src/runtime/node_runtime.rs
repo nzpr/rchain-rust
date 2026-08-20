@@ -1,9 +1,9 @@
 //! Node runtime assembly (port of `runtime/Setup.scala` + `runtime/NodeRuntime.scala`).
 //!
 //! Assembles the store manager → RSpace → RhoRuntime → RuntimeManager → BlockApiImpl →
-//! GrpcServices/WebApi/AdminWebApi chain and serves it over gRPC + HTTP. The comm/transport/
-//! discovery layer, the proposer, the block receiver/processor streams, the NodeLaunch state
-//! machines, and the report-store codec are deferred.
+//! GrpcServices/WebApi/AdminWebApi chain and serves it over gRPC + HTTP, including the
+//! comm/transport/discovery layer, the proposer, the block receiver/processor streams, the
+//! NodeLaunch state machines, and the report-store codec.
 
 use std::future::Future;
 use std::pin::Pin;
