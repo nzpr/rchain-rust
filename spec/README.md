@@ -28,31 +28,43 @@ import `Mathlib.Data.*`/`Mathlib.Order.*` for `Multiset`/`Finset`/`Order`.
 spec/
   Rchain.lean          root module (imports everything)
   Rchain/
-    Syntax.lean        Ground / Var / Proc — the core Rholang ADT (de Bruijn levels)
-    Sort.lean          canonicalization `sort` + Law 1 theorem statements
-    RSpace/            (Phase 2) join commutativity, deterministic COMM, merge monoid, Merkle
-    Rosette/           (Phase 3) actor atomicity, reflection, fork-join barrier
-    Casper/            (Phase 4) >2/3 finality, fringe, block validation invariants
-    Crypto/            (Phase 5) RNG merge + abstract crypto axioms
+    Syntax.lean        Ground / Var — the core Rholang scalar ADT (de Bruijn levels)
+    Par.lean           the flat `Par` ADT (8 list fields) + `nilPar`/`parMerge`
+    Cmp.lean           the `Comparator` scaffold + `sortList`
+    Rho.lean           Law 2 core (`StrCong` ≡) + Law 4 core (`Reduce` ⟶ COMM)
+    Sort.lean          Law 1: canonicalization `sortPar` + `sortPar_idempotent`/`sortPar_comm`
+    Ty.lean            the CoC layer: `PSort`/`Closed` (Law 6) + the proven fundamentals
+    Subst.lean         Law 3: capture-avoiding substitution (`sort ∘ subst` commute)
+    Reduce.lean        Law 4: determinism + `new` freshness
+    Match.lean         Law 5: `BindsAtMostOnce` + decidable spatial matching
+    FreeVars.lean      Law 6: `freeVarOf` + `Closed ↔ no free vars`
+    RSpace/            Laws 7–11: Join/Comm/Merge/Merkle (stated)
+    Casper/            Laws 14–18: Stake/Fringe/Validate (stated)
+    Crypto/            Law 19: Random/Spec (axiomatized by design)
   INVENTORY.md         the 19-law catalog: source-of-truth → theorem → Rust test
 ```
 
+Laws 12–13 (Rosette) are **orphaned**: the `rosette`/`roscala` VM is out of scope (not wired into
+`build.sbt`); they are documented in `INVENTORY.md` but have no Lean files.
+
 ## Proven vs stated
 
-- **Phase 0** stands up the syntax, proves the leaf laws (the `Ground`/`Var` comparators, the
-  `sortList` canonicality lemmas, `StrCong` equivalence, and the closedness theorems in `Rchain.Ty`),
-  and **proves Law 1** (`sortPar_idempotent`, `sortPar_comm`). The single residual is the lawfulness
-  of the 23-function structural comparator family (`cmpPar`/`cmpSend`/…/`cmpListParPair`), declared as
-  69 `cmpX_eq_iff`/`cmpX_swap`/`cmpX_lt_trans` axioms in `Rchain/Sort.lean` (see `INVENTORY.md`).
-  These cannot be discharged with the current definitions: the two-argument mutual induction hangs
-  Lean's termination checker, and `Rchain.cmpPar.mutual_induct` fails to derive (a `whnf` heartbeat
-  timeout). Discharge requires a refactor — a single well-founded recursion over a sum type, or
-  Mathlib in Phase 1 — see the note in `Rchain/Sort.lean`.
-- **Phase 1–5** prove each law in `INVENTORY.md`.
-- **Axiomatized** (never proven, by design): cryptographic primitives (Blake2b, secp256k1,
-  Curve25519) are modeled as abstract interfaces whose required properties are *postulated*. Proving
-  real crypto is out of scope. The algebraic/combinatorial laws (sort idempotence, merge monoid,
-  De Bruijn substitution, join commutativity, Merkle structure) are provable and are the target.
+- **Proven**: Law 1 (`sortPar_idempotent`, `sortPar_comm` in `Rchain/Sort.lean`), Law 2's core
+  (`StrCong` ≡ in `Rchain/Rho.lean`), Law 4's core (`Reduce` ⟶ COMM in `Rchain/Rho.lean` +
+  `reduce_closed` in `Rchain/Ty.lean`), and Law 6 (`Closed` + the preservation fundamentals in
+  `Rchain/Ty.lean`). The one residual of Law 1 is the lawfulness of the 23-function structural
+  comparator family (`cmpPar`/`cmpSend`/…/`cmpListParPair`), declared as 69
+  `cmpX_eq_iff`/`cmpX_swap`/`cmpX_lt_trans` axioms in `Rchain/Sort.lean`. These cannot be discharged
+  with the current definitions: the two-argument mutual induction hangs Lean's termination checker,
+  and `Rchain.cmpPar.mutual_induct` fails to derive (a `whnf` heartbeat timeout). Discharge requires a
+  refactor — a single well-founded recursion over a sum type — see the note in `Rchain/Sort.lean`.
+- **Stated** (axiom, precise signature, definition deferred): Laws 3 (`Subst.lean`), 4-full
+  (`Reduce.lean`), 5 (`Match.lean`), 7–11 (`RSpace/*`), 14–18 (`Casper/*`). Each states the law's
+  signature over the `Par`/abstract data types; the definitions (capture-avoiding substitution,
+  α-equivalence) are Coq's obligation, the RSpace/Casper definitions are later phases.
+- **Axiomatized** (never proven, by design): Law 19's cryptographic primitives (Blake2b, secp256k1,
+  Curve25519) are modeled as abstract interfaces whose required properties are *postulated*
+  (`Crypto/Random.lean`, `Crypto/Spec.lean`). Proving real crypto is out of scope.
 
 ## How laws drive the Rust port
 

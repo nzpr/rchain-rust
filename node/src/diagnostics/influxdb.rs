@@ -1,6 +1,6 @@
 //! InfluxDB line-protocol reporters (port of `UdpInfluxDBReporter.scala` +
-//! `BatchInfluxDBReporter.scala`). The HTTP POST transport is deferred; the line-protocol encoding
-//! and the UDP reporter are ported.
+//! `BatchInfluxDBReporter.scala`). The line-protocol encoding, the UDP reporter, and the batch
+//! reporter's HTTP POST are ported; the periodic flush/batching loop is left to the caller.
 
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
@@ -240,7 +240,7 @@ pub struct BatchSettings {
     pub additional_tags: Tags,
 }
 
-/// Batch InfluxDB reporter (port of `BatchInfluxDBReporter`); the HTTP POST is deferred.
+/// Batch InfluxDB reporter (port of `BatchInfluxDBReporter`); the HTTP POST transport is ported.
 pub struct BatchInfluxDbReporter {
     settings: BatchSettings,
 }
@@ -298,6 +298,24 @@ impl BatchInfluxDbReporter {
         }
 
         builder
+    }
+
+    /// Translate the snapshot to line protocol and POST it to the configured InfluxDB `/write`
+    /// endpoint (port of `BatchInfluxDBReporter.reportPeriodSnapshot`). The periodic flush loop that
+    /// drives this on `batch_interval` is left to the caller.
+    pub async fn report_period_snapshot(&self, snapshot: &PeriodSnapshot) -> Result<(), String> {
+        let body = self.translate_to_line_protocol(snapshot);
+        let client = reqwest::Client::new();
+        let mut req = client.post(&self.settings.url).body(body);
+        if let Some(creds) = &self.settings.credentials {
+            req = req.header(reqwest::header::AUTHORIZATION, format!("Basic {creds}"));
+        }
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("InfluxDB POST returned HTTP {}", resp.status()))
+        }
     }
 }
 

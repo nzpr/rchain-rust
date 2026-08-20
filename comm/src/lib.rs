@@ -5,7 +5,8 @@
 //! (client/server/receiver with mutual TLS and node-id trust), the message buffers/`PacketOps`/
 //! `StreamHandler`, the rp `Connect`/`HandleMessages` layers, and `WhoAmI`/`UPnP` external-IP
 //! discovery (port-forwarding orchestration + IPv4 classification). The weupnp SSDP/SOAP gateway
-//! discovery protocol is deferred (third-party, off the transport critical path).
+//! discovery protocol is implemented in `upnp` (`gateway.rs`: SSDP M-SEARCH, device-description
+//! fetch, and SOAP port-forwarding).
 
 pub mod discovery;
 pub mod errors;

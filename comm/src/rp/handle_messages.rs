@@ -46,11 +46,14 @@ pub fn check_peer_on_same_network(conf: &RPConf, peer: &PeerNode) -> bool {
 }
 
 /// Dispatch an inbound protocol message (port of `handle`).
+///
+/// The connections cell is an `RwLock` rather than `&mut Vec` so the write lock is held only for the
+/// brief mutation, never across the outbound `send` in the handshake path (H3).
 pub async fn handle<T: TransportLayer + ?Sized>(
     proto: Protocol,
     conf: &RPConf,
     transport: &T,
-    connections: &mut Vec<PeerNode>,
+    connections: &tokio::sync::RwLock<Vec<PeerNode>>,
     routing_queue: &tokio::sync::mpsc::Sender<RoutingMessage>,
 ) -> CommunicationResponse {
     let sender = match protocol_helper::sender(&proto) {
@@ -59,18 +62,21 @@ pub async fn handle<T: TransportLayer + ?Sized>(
     };
     match proto.message {
         Some(protocol::Message::Heartbeat(_)) => {
-            *connections = refresh_conn(connections, &sender);
+            let mut conns = connections.write().await;
+            *conns = refresh_conn(&*conns, &sender);
             CommunicationResponse::handled_without_message()
         }
         Some(protocol::Message::ProtocolHandshake(_)) => {
             handle_protocol_handshake(transport, conf, connections, &sender).await
         }
         Some(protocol::Message::ProtocolHandshakeResponse(_)) => {
-            *connections = add_conn(connections, &[sender]);
+            let mut conns = connections.write().await;
+            *conns = add_conn(&*conns, &[sender]);
             CommunicationResponse::handled_without_message()
         }
         Some(protocol::Message::Disconnect(_)) => {
-            *connections = remove_conn(connections, &[sender]);
+            let mut conns = connections.write().await;
+            *conns = remove_conn(&*conns, &[sender]);
             CommunicationResponse::handled_without_message()
         }
         Some(protocol::Message::Packet(packet)) => {
@@ -87,17 +93,20 @@ pub async fn handle<T: TransportLayer + ?Sized>(
 }
 
 /// Handle an inbound protocol handshake (port of `handleProtocolHandshake`): accept only peers on
-/// the same subnetwork class, respond with a handshake response, and record the connection.
+/// the same subnetwork class, respond with a handshake response, and record the connection. The
+/// response `send` runs *before* the connections lock is taken, so a slow peer cannot stall the
+/// connection table (H3).
 pub async fn handle_protocol_handshake<T: TransportLayer + ?Sized>(
     transport: &T,
     conf: &RPConf,
-    connections: &mut Vec<PeerNode>,
+    connections: &tokio::sync::RwLock<Vec<PeerNode>>,
     peer: &PeerNode,
 ) -> CommunicationResponse {
     if check_peer_on_same_network(conf, peer) {
         let response = protocol_helper::protocol_handshake_response(&conf.local, &conf.network_id);
         if transport.send(peer, response).await.is_ok() {
-            *connections = add_conn(connections, &[peer.clone()]);
+            let mut conns = connections.write().await;
+            *conns = add_conn(&*conns, &[peer.clone()]);
         }
     }
     CommunicationResponse::handled_without_message()

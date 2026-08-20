@@ -155,7 +155,7 @@ where
     };
 
     // If a new fringe is finalized, merge it.
-    let finalizer = Finalizer::new(msg_map.clone());
+    let finalizer = Finalizer::new(msg_map);
     let (_parent_fringe, new_fringe_opt) = finalizer.calculate_finalization(&parents, &bonds_map);
     let new_fringe_hashes: Option<BTreeSet<BlockHash>> =
         new_fringe_opt.map(|f| f.iter().map(|m| m.id).collect());

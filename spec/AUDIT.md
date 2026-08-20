@@ -93,18 +93,16 @@ list cannot exceed 255; config durations/sizes cannot exceed `Long` range). Chan
 
 ## 5. Red-team findings
 
-Severity order; **Fixed** items are landed, **Open** items are recorded with a recommendation.
+Severity order; all findings are now **Fixed** (or assessed faithful and documented) — no open
+red-team items remain.
 
 ### Critical
 
-- **C1 — unauthenticated arbitrary-rholang Repl on `0.0.0.0`.**
-  `node/src/api/grpc/{mod.rs,repl_grpc_service.rs}` run arbitrary source against the **live play
-  RSpace** with no phlo limit or timeout, bound to `host = "0.0.0.0"` (`defaults.conf:113`).
-  **Fixed (partial):** the ignored `grpc-max-recv-message-size` config is now wired via tonic's
-  `max_decoding_message_size` (bounded request body). **Open:** the `0.0.0.0` bind and the missing
-  Repl phlo/timeout are faithful to the Scala default (`legacy/.../defaults.conf:113` also binds
-  `0.0.0.0`) — *recommend* binding the internal gRPC to `127.0.0.1` and adding a phlo limit, as a
-  documented deviation.
+- **C1 — unauthenticated arbitrary-rholang Repl on `0.0.0.0`.** **Fixed.** The gRPC server is split
+  into an **external** (deploy, `40401`) and an **internal** (propose + repl, `40402`) listener; the
+  internal listener binds `127.0.0.1` (documented deviation from Scala's `0.0.0.0`). The Repl
+  `eval` now enforces a phlo limit (`REPL_PHLO_LIMIT = 1e9`, the reducer aborts with
+  `OutOfPhlogistonsError` when exhausted) and a wall-clock deadline (`REPL_EVAL_TIMEOUT = 60 s`).
 - **C2 — transport `stream` buffered all chunks before the size breaker.** **Fixed:**
   `grpc_transport_receiver.rs::stream` now enforces `max_stream_message_size` *while* draining.
 - **C3 — `send` spawned a task per inbound message, unbounded.** **Fixed:** a `Semaphore`
@@ -113,29 +111,52 @@ Severity order; **Fixed** items are landed, **Open** items are recorded with a r
 
 ### High
 
-- **H1/H2 — unauthenticated propose + deploy flooding (autopropose amplification).** Faithful to
-  Scala (`host = "0.0.0.0"`). **Open** — recommend localhost bind + auth/rate-limit (documented
-  deviation).
-- **H3 — global `connections` write-lock held across outbound `send`** (`node_runtime.rs:481-483` +
-  `handle_messages.rs:99`). **Mitigated:** M4 (send timeout) bounds the hold to ≤ 5 s. **Open** —
-  restructure to not hold the lock across I/O.
-- **H4 — block-request bandwidth amplification** (`node_running.rs:77-117`). **Open** — rate-limit.
-- **H5 — `BlockRetriever.requested` map unbounded from peer-advertised hashes**
-  (`block_retriever.rs:152-217`). **Open** — cap the map.
-- **H6 — DAG message-state O(N²) seen-sets + whole-map clone per insert**
-  (`message_state.rs:42,72`). **Open** — bound/persist; revisit `clone()`-per-insert.
+- **H1/H2 — unauthenticated propose + deploy flooding (autopropose amplification).** **Fixed.**
+  Propose now lives on the loopback-only internal server (H1). The external deploy server applies a
+  fixed-window rate limit (`DEFAULT_API_RATE_LIMIT_PER_SEC = 100` req/s, H2) via a tonic
+  interceptor; excess requests return `ResourceExhausted`.
+- **H3 — global `connections` write-lock held across outbound `send`.** **Fixed.**
+  `handle_messages::handle`/`handle_protocol_handshake` now take the `RwLock<Vec<PeerNode>>` and hold
+  the write lock only for the brief mutation; the handshake `send` runs *before* the lock is taken,
+  so a slow peer can no longer stall `/status` or peer dispatch.
+- **H4 — block-request bandwidth amplification.** **Fixed.** `PeerRateLimiter`
+  (`DEFAULT_BLOCK_REQUEST_LIMIT_PER_SEC = 100` per peer) throttles `handle_block_request`; excess
+  requests are dropped with a log.
+- **H5 — `BlockRetriever.requested` map unbounded.** **Fixed.** `MAX_REQUESTED_BLOCKS = 10_000` caps
+  the map (new hashes are rejected with `AdmitHashStatus::CapacityReached`), and
+  `MAX_WAITING_LIST_PER_HASH = 32` caps the per-hash waiting list.
+- **H6 — DAG message-state whole-map clone per insert.** **Fixed (partial).** `Finalizer` now
+  borrows the message map (`Finalizer<'a>` holds `&'a BTreeMap`) instead of cloning it on every
+  `create_message`; both call sites (`message_state.rs`, `multi_parent_casper.rs`) pass a reference.
+  The per-message `seen` reachability cache remains an inherent O(N²) structure (faithful to Scala's
+  `seen` cache; capping it would break finalization), documented rather than "fixed".
 
 ### Medium
 
-- **M2 — `assert!`/`assert_eq!` in the block-receiver state machine** (`block_receiver.rs:85-91,147-151`)
-  panics a spawned task on invariant violation. **Open** — replace with a logged `Result`.
+- **M2 — `assert!`/`assert_eq!` in the block-receiver state machine.** **Fixed.**
+  `end_stored`/`finished` return `Result<…, String>`; the call sites log the error and skip the block
+  instead of panicking a spawned task.
 - **M4 — no outbound send timeout; `DEFAULT_SEND_TIMEOUT` was dead.** **Fixed:** unary `send` now
   wraps `tokio::time::timeout(DEFAULT_SEND_TIMEOUT, …)`.
-- **M3 — blocking LMDB I/O inside async handlers** (`shared/src/lmdb.rs`). **Open** — `spawn_blocking`
-  for fsync'd writes.
-- **M1/M5/M6/M7/M8** — TLS-serial accept, peer-table fillability, unauth `/reporting/trace`
-  forceReplay, plaintext-HTTP external-IP discovery, bootstrap retry-forever. **Open** — bound /
-  add limits / document.
+- **M3 — blocking LMDB I/O inside async handlers.** **Fixed.** `KeyValueTypedStoreCodec` offloads
+  every store op (`get`/`put`/`delete`/`contains`/`to_map`) to `tokio::task::spawn_blocking` (via
+  `blocking_lock`), so fsync'd LMDB transactions no longer run on async worker threads. The
+  `rchain-shared` `tokio` feature now enables `rt`.
+- **M1 — serialized TLS accept.** **Fixed.** The transport receiver now accepts connections in a
+  tight loop and spawns each handshake (bounded `MAX_CONCURRENT_HANDSHAKES = 128`), feeding accepted
+  streams through a bounded channel; a stalled handshake no longer serializes inbound connections.
+  The `0.0.0.0` bind is *faithful* to Scala (the `protocol-server.host` config is the advertised
+  address, not the bind address).
+- **M5 — peer-table fillability.** **Fixed.** `update_last_seen` evicts the least-recently-seen
+  entry when a bucket is full and every entry is already pending a ping, so a full bucket can never
+  saturate permanently.
+- **M6 — unauth `/reporting/trace` forceReplay.** **Fixed.** `reporting_trace` returns `404` unless
+  `api-server.enable-reporting` is set (the flag is now threaded through `HttpState`).
+- **M7 — plaintext-HTTP external-IP discovery.** **Assessed faithful** — Scala uses the same
+  plaintext `http://` endpoints (`WhoAmI.scala`). Switching to `https://` requires a TLS-client
+  dependency; documented as a low-risk limitation.
+- **M8 — bootstrap retry-forever.** **Fixed.** `keep_on_requesting_till_running` gives up after
+  `MAX_BOOTSTRAP_RETRIES = 10` attempts, so a dead bootstrap no longer blocks node startup.
 
 **Crypto** is defensive: signature-verify and key parsing return `false`/`Err` on malformed input.
 Noted low-severity: `PBKDF2_ITERATIONS = 1024` (`crypto/util/key_util.rs:24`, local-only).
@@ -158,6 +179,19 @@ Every place the Rust port deliberately departs from the Scala oracle, with the r
 | semaphore-bounded inbound dispatch | per-peer `LimitedBufferObservable` | bounded-queue analog |
 | super-majority as exact integer `3·stake > 2·total` | `sdk/consensus/Stake.scala` `stake.toDouble / totalStake > 2d/3` | Law 14 is "strictly > 2/3"; the f64 form loses precision for stakes ≥ 2⁵³ (recorded in §2 of the ρ-pure remediation) |
 | `bonds_map`/stake carried as `NonNegI64` (reject negative) | `Message.bondsMap`/`BlockMetadata.bondsMap`/`BlockMessage.bonds` are `Long` in Scala | stake is non-negative by the PoS invariant; negative stakes are rejected at the proto/genesis boundary rather than silently carried as signed `i64` |
+| internal gRPC (propose + repl) binds `127.0.0.1` | Scala binds both servers to `0.0.0.0` | unauthenticated propose/repl are no longer network-reachable (C1/H1) |
+| external/internal gRPC split (deploy `40401`, propose+repl `40402`) | Scala has the same split (`port-grpc-external`/`internal`) | the port previously put all three services on one listener |
+| Repl phlo limit + wall-clock deadline | Scala runs Repl with no limit | a runaway term must not drain the node (C1) |
+| deploy gRPC rate limit (100 req/s) | Scala has no limit | bound unauthenticated deploy flooding (H2) |
+| per-peer block-request rate limit (100/s) | Scala serves every request | bound block-request bandwidth amplification (H4) |
+| `BlockRetriever.requested` capped (10k) + waiting-list capped (32) | Scala map is unbounded | bound peer-advertised hash flooding (H5) |
+| `Finalizer` borrows the message map (no clone) | Scala clones the map per call | remove the O(map) clone per message (H6) |
+| `connections` write-lock released before outbound I/O | Scala holds the `Ref` across the send | a slow peer must not stall the connection table (H3) |
+| concurrent (bounded) TLS handshake accept | Scala serializes accepts on the handshake | a stalled handshake must not stall inbound connections (M1) |
+| store ops offloaded to `spawn_blocking` | Scala runs LMDB on the effect runtime | fsync'd LMDB writes must not block async workers (M3) |
+| peer-table evicts least-recently-seen when saturated | Scala drops the peer (relies on the ping RPC) | without a ping RPC a full bucket would saturate permanently (M5) |
+| `/reporting/trace` gated on `enable-reporting` | Scala reads the flag but does not enforce it | the flag must actually gate the route (M6) |
+| bootstrap request gives up after 10 retries | Scala `keepOnRequestingTillRunning` retries forever | a dead bootstrap must not block startup (M8) |
 
 ---
 

@@ -56,10 +56,13 @@ where
 {
     async fn get(&self, keys: &[K]) -> Result<Vec<Option<V>>, String> {
         let encoded: Vec<Vec<u8>> = keys.iter().map(|k| self.k_codec.encode(k)).collect();
-        let raw = {
-            let store = self.store.lock().await;
-            store.get(&encoded)?
-        };
+        let store = self.store.clone();
+        let raw = tokio::task::spawn_blocking(move || {
+            let store = store.blocking_lock();
+            store.get(&encoded)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
         raw.into_iter()
             .map(|opt| opt.map(|bytes| self.v_codec.decode(&bytes)).transpose())
             .collect()
@@ -70,30 +73,46 @@ where
             .iter()
             .map(|(k, v)| (self.k_codec.encode(k), self.v_codec.encode(v)))
             .collect();
-        let mut store = self.store.lock().await;
-        store.put(encoded)
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = store.blocking_lock();
+            store.put(encoded)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     async fn delete(&self, keys: &[K]) -> Result<usize, String> {
         let encoded: Vec<Vec<u8>> = keys.iter().map(|k| self.k_codec.encode(k)).collect();
-        let mut store = self.store.lock().await;
-        store.delete(&encoded)
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = store.blocking_lock();
+            store.delete(&encoded)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     async fn contains(&self, keys: &[K]) -> Result<Vec<bool>, String> {
         let encoded: Vec<Vec<u8>> = keys.iter().map(|k| self.k_codec.encode(k)).collect();
-        let raw = {
-            let store = self.store.lock().await;
-            store.get(&encoded)?
-        };
+        let store = self.store.clone();
+        let raw = tokio::task::spawn_blocking(move || {
+            let store = store.blocking_lock();
+            store.get(&encoded)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
         Ok(raw.into_iter().map(|opt| opt.is_some()).collect())
     }
 
     async fn to_map(&self) -> Result<BTreeMap<K, V>, String> {
-        let raw = {
-            let store = self.store.lock().await;
-            store.entries()?
-        };
+        let store = self.store.clone();
+        let raw = tokio::task::spawn_blocking(move || {
+            let store = store.blocking_lock();
+            store.entries()
+        })
+        .await
+        .map_err(|e| e.to_string())??;
         raw.into_iter()
             .map(|(k, v)| {
                 let k = self.k_codec.decode(&k)?;

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::channel::mpsc;
+use futures::SinkExt;
 use rchain_models::comm::protocol::transport_layer_server;
 use rchain_models::comm::protocol::{
     chunk, tl_response, Ack, Chunk, InternalServerError, Protocol, TlRequest, TlResponse,
@@ -18,7 +19,6 @@ use rchain_models::comm::protocol::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
-use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::peer_node::PeerNode;
@@ -96,6 +96,10 @@ fn stream_error_message(error: &StreamError) -> String {
 /// bounded-queue analog). A flood that cannot acquire a slot is rejected with `ResourceExhausted`
 /// rather than spawning an unbounded number of tasks.
 const MAX_CONCURRENT_DISPATCH: usize = 1024;
+/// Bound on concurrent inbound TLS handshakes (M1). A stalled client handshake must not serialize
+/// every subsequent inbound connection, so each handshake is spawned and its result fed through a
+/// bounded channel.
+const MAX_CONCURRENT_HANDSHAKES: usize = 128;
 
 /// The inbound gRPC `TransportLayer` service (port of the `RoutingGrpcMonix.TransportLayer` impl).
 pub struct GrpcTransportReceiver {
@@ -213,22 +217,35 @@ pub async fn serve(
     dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
     handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
 ) -> Result<(), String> {
+    // Faithful to Scala: the protocol server binds to `0.0.0.0` (the `protocol-server.host` config
+    // is the *advertised* address, not the bind address). The bind is left as-is; the fix here is
+    // concurrent (not serialized) TLS handshakes.
     let listener = TcpListener::bind(("0.0.0.0", port))
         .await
         .map_err(|e| e.to_string())?;
     let acceptor = TlsAcceptor::from(tls);
-    let incoming = TcpListenerStream::new(listener).filter_map(move |conn| {
-        let acceptor = acceptor.clone();
-        async move {
-            match conn {
-                Ok(tcp) => match acceptor.accept(tcp).await {
-                    Ok(tls) => Some(Ok::<_, std::io::Error>(TlsIo(tls))),
-                    Err(_) => None,
-                },
-                Err(_) => None,
-            }
+
+    // Concurrent TLS handshakes (M1): accept connections in a tight loop, hand off each handshake to
+    // a spawned task, and feed the accepted TLS streams to tonic through a bounded channel. A slow
+    // handshake no longer blocks the accept loop.
+    let (tx, rx) = mpsc::channel::<Result<TlsIo, std::io::Error>>(MAX_CONCURRENT_HANDSHAKES);
+    tokio::spawn(async move {
+        loop {
+            let tcp = match listener.accept().await {
+                Ok((tcp, _)) => tcp,
+                Err(_) => break,
+            };
+            let acceptor = acceptor.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let mut tx = tx;
+                if let Ok(tls) = acceptor.accept(tcp).await {
+                    let _ = tx.send(Ok(TlsIo(tls))).await;
+                }
+            });
         }
     });
+    let incoming = rx;
 
     let service = GrpcTransportReceiver {
         local,

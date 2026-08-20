@@ -14,7 +14,9 @@ pub use deploy_grpc_service_v1::DeployGrpcServiceV1;
 pub use propose_grpc_service_v1::ProposeGrpcServiceV1;
 pub use repl_grpc_service::{CmdRequest, EvalRequest, ReplGrpcService, ReplResponse};
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rchain_casper::api::block_api::BlockApi;
 use rchain_casper::api::block_report_api::BlockReportApi;
@@ -44,20 +46,81 @@ impl GrpcServices {
         }
     }
 
-    /// Serve the three gRPC services on `addr` (the tonic transport binding). `max_message_size`
-    /// bounds each inbound message (the `grpc-max-recv-message-size` config, applied to all three
-    /// services so an oversized deploy/repl request is rejected before decoding).
-    pub async fn serve(self, addr: std::net::SocketAddr, max_message_size: usize) -> Result<(), String> {
-        use rchain_models::proto::casper::deploy_service_server::DeployServiceServer;
-        use rchain_models::proto::casper::propose_service_server::ProposeServiceServer;
-        use rchain_models::proto::repl::repl_server::ReplServer;
+}
 
-        ::tonic::transport::Server::builder()
-            .add_service(DeployServiceServer::new(self.deploy).max_decoding_message_size(max_message_size))
-            .add_service(ProposeServiceServer::new(self.propose).max_decoding_message_size(max_message_size))
-            .add_service(ReplServer::new(self.repl).max_decoding_message_size(max_message_size))
-            .serve(addr)
-            .await
-            .map_err(|e| e.to_string())
+/// The deploy request rate limit (requests/second) applied to the external (unauthenticated) gRPC
+/// server. Documented Scala deviation: Scala binds the deploy service to `0.0.0.0` with no limit.
+const DEFAULT_API_RATE_LIMIT_PER_SEC: u64 = 100;
+
+/// A minimal fixed-window rate limiter (bounded requests per second) for the unauthenticated
+/// deploy gRPC server (H2).
+pub struct RateLimiter {
+    max_per_sec: u64,
+    window_start: Mutex<Instant>,
+    count: AtomicU64,
+}
+
+impl RateLimiter {
+    pub fn new(max_per_sec: u64) -> Self {
+        RateLimiter {
+            max_per_sec,
+            window_start: Mutex::new(Instant::now()),
+            count: AtomicU64::new(0),
+        }
     }
+
+    /// Admit a request if the current one-second window has capacity.
+    pub fn allow(&self) -> bool {
+        let now = Instant::now();
+        let mut start = self.window_start.lock().unwrap_or_else(|p| p.into_inner());
+        if now.duration_since(*start) >= Duration::from_secs(1) {
+            *start = now;
+            self.count.store(0, Ordering::SeqCst);
+        }
+        self.count.fetch_add(1, Ordering::SeqCst) < self.max_per_sec
+    }
+}
+
+/// Serve the external gRPC service (deploy) on `addr` (port of the external `GrpcServer`).
+pub async fn serve_deploy(
+    deploy: DeployGrpcServiceV1,
+    addr: std::net::SocketAddr,
+    max_message_size: usize,
+) -> Result<(), String> {
+    use rchain_models::proto::casper::deploy_service_server::DeployServiceServer;
+    use ::tonic::service::interceptor::InterceptedService;
+
+    let limiter = Arc::new(RateLimiter::new(DEFAULT_API_RATE_LIMIT_PER_SEC));
+    let server = DeployServiceServer::new(deploy).max_decoding_message_size(max_message_size);
+    let service = InterceptedService::new(server, move |req: ::tonic::Request<()>| {
+        if limiter.allow() {
+            Ok(req)
+        } else {
+            Err(::tonic::Status::resource_exhausted("deploy rate limit exceeded"))
+        }
+    });
+
+    ::tonic::transport::Server::builder()
+        .add_service(service)
+        .serve(addr)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Serve the internal gRPC services (propose + repl) on `addr` (port of the internal `GrpcServer`).
+pub async fn serve_internal(
+    propose: ProposeGrpcServiceV1,
+    repl: ReplGrpcService,
+    addr: std::net::SocketAddr,
+    max_message_size: usize,
+) -> Result<(), String> {
+    use rchain_models::proto::casper::propose_service_server::ProposeServiceServer;
+    use rchain_models::proto::repl::repl_server::ReplServer;
+
+    ::tonic::transport::Server::builder()
+        .add_service(ProposeServiceServer::new(propose).max_decoding_message_size(max_message_size))
+        .add_service(ReplServer::new(repl).max_decoding_message_size(max_message_size))
+        .serve(addr)
+        .await
+        .map_err(|e| e.to_string())
 }

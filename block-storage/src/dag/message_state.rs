@@ -41,7 +41,7 @@ where
         fin_bonds_map: BTreeMap<S, NonNegI64>,
         justifications: &BTreeSet<Message<M, S>>,
     ) -> Message<M, S> {
-        let finalizer = Finalizer::new(self.msg_map.clone());
+        let finalizer = Finalizer::new(&self.msg_map);
         let (parent_fringe, new_fringe_opt) =
             finalizer.calculate_finalization(justifications, &fin_bonds_map);
 

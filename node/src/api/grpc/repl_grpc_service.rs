@@ -1,12 +1,21 @@
 //! The REPL gRPC service (port of `ReplGrpcService.scala`).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
+use rchain_rholang::accounting::Cost;
 use rchain_rholang::normalizer::source_to_adt;
 use rchain_rholang::pretty_printer::PrettyPrinter;
 use rchain_rholang::runtime::RhoRuntime;
 use rchain_rholang::storage_printer::{pretty_print, pretty_print_unmatched_sends};
+
+/// The phlo (gas) limit for a single Repl evaluation (documented deviation: Scala runs Repl with no
+/// limit). The reducer aborts with `OutOfPhlogistonsError` once the balance is exhausted, so a
+/// runaway term cannot drain the node.
+const REPL_PHLO_LIMIT: i64 = 1_000_000_000;
+/// The wall-clock deadline for a single Repl evaluation (documented deviation).
+const REPL_EVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// `CmdRequest` (run a single line).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,7 +67,22 @@ impl ReplGrpcService {
                 println!("\nEvaluating:");
                 println!("{}", PrettyPrinter::new().build_string(term.as_par()));
                 let rand = Blake2b512Random::default_random();
-                let eval = self.runtime.evaluate(source, &rand).await;
+                // Bound the Repl evaluation: a phlo cap (the reducer aborts when the balance is
+                // exhausted) + a wall-clock deadline.
+                self.runtime.cost().set(Cost::new(REPL_PHLO_LIMIT, "repl"));
+                let eval =
+                    match tokio::time::timeout(REPL_EVAL_TIMEOUT, self.runtime.evaluate(source, &rand))
+                        .await
+                    {
+                        Ok(res) => res,
+                        Err(_) => {
+                            return ReplResponse {
+                                output: format!(
+                                    "Error: evaluation timed out after {REPL_EVAL_TIMEOUT:?}"
+                                ),
+                            };
+                        }
+                    };
                 let pretty_storage = if print_unmatched_sends_only {
                     pretty_print_unmatched_sends(self.runtime.as_ref()).await
                 } else {

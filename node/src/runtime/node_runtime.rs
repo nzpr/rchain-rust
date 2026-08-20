@@ -72,7 +72,7 @@ use rchain_shared::typed_store::{BytesCodec, Codec, KeyValueTypedStore};
 
 use crate::api::admin_web_api::AdminWebApi;
 use crate::api::admin_web_api_impl::AdminWebApiImpl;
-use crate::api::grpc::GrpcServices;
+use crate::api::grpc::{serve_deploy, serve_internal, GrpcServices};
 use crate::api::web_api::WebApi;
 use crate::api::web_api_impl::WebApiImpl;
 use crate::configuration::model::NodeConf;
@@ -211,9 +211,11 @@ pub struct NodeProgram {
     host: String,
     port_http: Port,
     port_admin_http: Port,
+    port_grpc_external: Port,
     port_grpc_internal: Port,
     grpc_max_recv_message_size: usize,
     max_connection_idle: Duration,
+    enable_reporting: bool,
     protocol_server: Option<ProtocolServer>,
     status_provider: Option<StatusProvider>,
 }
@@ -230,18 +232,41 @@ impl NodeProgram {
             host,
             port_http,
             port_admin_http,
+            port_grpc_external,
             port_grpc_internal,
             grpc_max_recv_message_size,
             max_connection_idle,
+            enable_reporting,
             protocol_server,
             status_provider,
         } = self;
 
-        let grpc_addr: std::net::SocketAddr = format!("{}:{}", host, u16::from(port_grpc_internal))
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| e.to_string())?;
+        let GrpcServices {
+            deploy,
+            propose,
+            repl,
+        } = grpc_services;
 
-        let grpc = tokio::spawn(grpc_services.serve(grpc_addr, grpc_max_recv_message_size));
+        let grpc_external_addr: std::net::SocketAddr =
+            format!("{}:{}", host, u16::from(port_grpc_external))
+                .parse::<std::net::SocketAddr>()
+                .map_err(|e| e.to_string())?;
+        // The internal (propose + repl) server binds to loopback only (documented deviation from
+        // Scala's `0.0.0.0` bind) so the unauthenticated propose/repl endpoints are not reachable
+        // from the network.
+        let grpc_internal_addr: std::net::SocketAddr =
+            format!("127.0.0.1:{}", u16::from(port_grpc_internal))
+                .parse::<std::net::SocketAddr>()
+                .map_err(|e| e.to_string())?;
+
+        let grpc_external =
+            tokio::spawn(serve_deploy(deploy, grpc_external_addr, grpc_max_recv_message_size));
+        let grpc_internal = tokio::spawn(serve_internal(
+            propose,
+            repl,
+            grpc_internal_addr,
+            grpc_max_recv_message_size,
+        ));
 
         let http = tokio::spawn({
             let host = host.clone();
@@ -254,6 +279,7 @@ impl NodeProgram {
                     block_report_api,
                     status_provider,
                     max_connection_idle,
+                    enable_reporting,
                 )
                 .await
             }
@@ -274,14 +300,16 @@ impl NodeProgram {
                     .serve(protocol.dispatch, protocol.handle_streamed)
                     .await
             });
-            let (g, h, a, p) = tokio::join!(grpc, http, admin, protocol);
-            g.map_err(|e| e.to_string())??;
+            let (ge, gi, h, a, p) = tokio::join!(grpc_external, grpc_internal, http, admin, protocol);
+            ge.map_err(|e| e.to_string())??;
+            gi.map_err(|e| e.to_string())??;
             h.map_err(|e| e.to_string())??;
             a.map_err(|e| e.to_string())??;
             p.map_err(|e| e.to_string())??;
         } else {
-            let (g, h, a) = tokio::join!(grpc, http, admin);
-            g.map_err(|e| e.to_string())??;
+            let (ge, gi, h, a) = tokio::join!(grpc_external, grpc_internal, http, admin);
+            ge.map_err(|e| e.to_string())??;
+            gi.map_err(|e| e.to_string())??;
             h.map_err(|e| e.to_string())??;
             a.map_err(|e| e.to_string())??;
         }
@@ -485,8 +513,7 @@ fn build_protocol_server(
             let connections = connections.clone();
             let routing_tx = routing_tx.clone();
             Box::pin(async move {
-                let mut conns = connections.write().await;
-                handle_messages::handle(proto, &rp_conf, transport.as_ref(), &mut *conns, &routing_tx)
+                handle_messages::handle(proto, &rp_conf, transport.as_ref(), connections.as_ref(), &routing_tx)
                     .await
             })
         })
@@ -899,11 +926,14 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
             port_http: Port::try_from(conf.api_server.port_http).map_err(|e| e.to_string())?,
             port_admin_http: Port::try_from(conf.api_server.port_admin_http)
                 .map_err(|e| e.to_string())?,
+            port_grpc_external: Port::try_from(conf.api_server.port_grpc_external)
+                .map_err(|e| e.to_string())?,
             port_grpc_internal: Port::try_from(conf.api_server.port_grpc_internal)
                 .map_err(|e| e.to_string())?,
             grpc_max_recv_message_size: usize::try_from(conf.api_server.grpc_max_recv_message_size)
                 .map_err(|e| e.to_string())?,
             max_connection_idle: conf.api_server.max_connection_idle,
+            enable_reporting: conf.api_server.enable_reporting,
             protocol_server: None,
             status_provider: None,
         },

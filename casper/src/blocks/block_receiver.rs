@@ -79,76 +79,69 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
     }
 
     /// Storing of the block is done, waiting validation. Returns the updated state and the unseen
-    /// parent dependencies (port of `endStored`).
-    pub fn end_stored(&self, id: MId, parents: Vec<(MId, bool)>) -> (Self, BTreeSet<MId>) {
+    /// parent dependencies (port of `endStored`). The Scala `assert` is a `Result` error here so an
+    /// invariant violation is logged and the block skipped rather than panicking the task.
+    pub fn end_stored(&self, id: MId, parents: Vec<(MId, bool)>) -> Result<(Self, BTreeSet<MId>), String> {
         let cur_state_opt = self.receive_st.get(&id);
-        assert_eq!(
-            cur_state_opt,
-            Some(&RecvStatus::BeginStoreBlock),
-            "Received should be called only in begin received state, actual: {:?}, hash: {:?}",
-            cur_state_opt,
-            id
-        );
-        match cur_state_opt {
-            Some(RecvStatus::BeginStoreBlock) => {
-                // Update blocks state, keep unseen parents only.
-                let parents_not_stored: BTreeSet<MId> = parents
-                    .iter()
-                    .filter(|(_, not_stored)| *not_stored)
-                    .map(|(parent, _)| parent.clone())
-                    .collect();
-                let mut unseen_parents = parents_not_stored;
-                unseen_parents.retain(|parent| {
-                    !self.blocks_st.contains_key(parent)
-                        && !self.receive_st.contains_key(parent)
-                        && parent != &id
-                });
-                let mut new_blocks_st = self.blocks_st.clone();
-                new_blocks_st.insert(id.clone(), unseen_parents.clone());
-
-                // Update block status to received and set unseen parents to Requested.
-                let mut new_receive_st = self.receive_st.clone();
-                new_receive_st.insert(id.clone(), RecvStatus::EndStoreBlock);
-                for parent in &unseen_parents {
-                    new_receive_st.insert(parent.clone(), RecvStatus::Requested);
-                }
-
-                // Update children relations of the received block.
-                let mut new_child_relations = self.child_relations.clone();
-                for (parent, _) in &parents {
-                    new_child_relations
-                        .entry(parent.clone())
-                        .or_default()
-                        .insert(id.clone());
-                }
-
-                let new_state = BlockReceiverState {
-                    blocks_st: new_blocks_st,
-                    receive_st: new_receive_st,
-                    child_relations: new_child_relations,
-                };
-                (new_state, unseen_parents)
-            }
-            // TODO: this should never happen, protected by assert
-            //  (maybe we need helper function to wrap the whole pattern or return error to caller).
-            _ => (self.clone(), BTreeSet::new()),
+        if cur_state_opt != Some(&RecvStatus::BeginStoreBlock) {
+            return Err(format!(
+                "Received should be called only in begin received state, actual: {:?}, hash: {:?}",
+                cur_state_opt, id
+            ));
         }
+
+        // Update blocks state, keep unseen parents only.
+        let parents_not_stored: BTreeSet<MId> = parents
+            .iter()
+            .filter(|(_, not_stored)| *not_stored)
+            .map(|(parent, _)| parent.clone())
+            .collect();
+        let mut unseen_parents = parents_not_stored;
+        unseen_parents.retain(|parent| {
+            !self.blocks_st.contains_key(parent)
+                && !self.receive_st.contains_key(parent)
+                && parent != &id
+        });
+        let mut new_blocks_st = self.blocks_st.clone();
+        new_blocks_st.insert(id.clone(), unseen_parents.clone());
+
+        // Update block status to received and set unseen parents to Requested.
+        let mut new_receive_st = self.receive_st.clone();
+        new_receive_st.insert(id.clone(), RecvStatus::EndStoreBlock);
+        for parent in &unseen_parents {
+            new_receive_st.insert(parent.clone(), RecvStatus::Requested);
+        }
+
+        // Update children relations of the received block.
+        let mut new_child_relations = self.child_relations.clone();
+        for (parent, _) in &parents {
+            new_child_relations
+                .entry(parent.clone())
+                .or_default()
+                .insert(id.clone());
+        }
+
+        let new_state = BlockReceiverState {
+            blocks_st: new_blocks_st,
+            receive_st: new_receive_st,
+            child_relations: new_child_relations,
+        };
+        Ok((new_state, unseen_parents))
     }
 
     /// Finish block validation, updating state and returning the next blocks with validated
-    /// dependencies (port of `finished`).
-    pub fn finished(&self, id: MId, parents: BTreeSet<MId>) -> (Self, BTreeSet<MId>) {
+    /// dependencies (port of `finished`). The Scala `assert` is a `Result` error here so an
+    /// invariant violation is logged and the block skipped rather than panicking the task.
+    pub fn finished(&self, id: MId, parents: BTreeSet<MId>) -> Result<(Self, BTreeSet<MId>), String> {
         let parents_in_state = self.blocks_st.contains_key(&id);
         let is_received = matches!(
             self.receive_st.get(&id),
             Some(RecvStatus::EndStoreBlock) | Some(RecvStatus::PendingValidation)
         );
         // To finish a block it must be present in the state (parents relations and at least stored).
-        assert!(
-            parents_in_state && is_received,
-            "Calling finished on unexpected block hash {:?}.",
-            id
-        );
+        if !(parents_in_state && is_received) {
+            return Err(format!("Calling finished on unexpected block hash {:?}.", id));
+        }
 
         // Remove the finished block from its children's dependencies and from the blocks state.
         let childs: Vec<MId> = self
@@ -206,7 +199,7 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
             receive_st: new_receive_st,
             child_relations: new_child_relations,
         };
-        (new_state, deps_validated)
+        Ok((new_state, deps_validated))
     }
 }
 
@@ -377,9 +370,16 @@ async fn incoming_blocks(
 
         let pending_requests = {
             let mut guard = state.lock().await;
-            let (new_state, unseen) = guard.end_stored(block.block_hash, parents);
-            *guard = new_state;
-            unseen
+            match guard.end_stored(block.block_hash, parents) {
+                Ok((new_state, unseen)) => {
+                    *guard = new_state;
+                    unseen
+                }
+                Err(e) => {
+                    log.error(source, &e);
+                    continue;
+                }
+            }
         };
 
         block_retriever.ack_received(&block.block_hash).await;
@@ -414,14 +414,23 @@ async fn validated_blocks(
     mut finished_processing_rx: mpsc::UnboundedReceiver<BlockMessage>,
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     out_tx: mpsc::UnboundedSender<BlockHash>,
+    log: Arc<dyn Log>,
 ) {
+    let source = LogSource::new("casper.blocks.BlockReceiver");
     while let Some(block) = finished_processing_rx.recv().await {
         let parents: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
         let next = {
             let mut guard = state.lock().await;
-            let (new_state, next) = guard.finished(block.block_hash, parents);
-            *guard = new_state;
-            next
+            match guard.finished(block.block_hash, parents) {
+                Ok((new_state, next)) => {
+                    *guard = new_state;
+                    next
+                }
+                Err(e) => {
+                    log.error(source, &e);
+                    continue;
+                }
+            }
         };
         for hash in next {
             let _ = out_tx.send(hash);
@@ -453,9 +462,9 @@ pub fn apply(
         block_retriever,
         put_to_incoming_queue,
         out_tx.clone(),
-        log,
+        log.clone(),
     ));
-    tokio::spawn(validated_blocks(finished_processing_rx, state, out_tx));
+    tokio::spawn(validated_blocks(finished_processing_rx, state, out_tx, log));
 
     out_rx
 }
@@ -491,25 +500,28 @@ mod tests {
     #[test]
     fn begin_stored_true_if_requested() {
         let (st, _) = BlockReceiverState::<MId>::new().begin_stored("A2".to_string());
-        let (new_st, _) = st.end_stored("A2".to_string(), parents(&[("A1", true)]));
+        let (new_st, _) = st
+            .end_stored("A2".to_string(), parents(&[("A1", true)]))
+            .unwrap();
         // Unseen parent A1 now has Requested status.
         let (_, is_receiving) = new_st.begin_stored("A1".to_string());
         assert!(is_receiving);
     }
 
     #[test]
-    #[should_panic]
-    fn end_stored_panics_if_not_begin_store_block() {
+    fn end_stored_errors_if_not_begin_store_block() {
         let (st, _) = BlockReceiverState::<MId>::new().begin_stored("A1".to_string());
-        let (new_st, _) = st.end_stored("A1".to_string(), Vec::new());
+        let (new_st, _) = st.end_stored("A1".to_string(), Vec::new()).unwrap();
         // A1 is now EndStoreBlock but should be BeginStoreBlock.
-        let _ = new_st.end_stored("A1".to_string(), Vec::new());
+        assert!(new_st.end_stored("A1".to_string(), Vec::new()).is_err());
     }
 
     #[test]
     fn end_stored_updates_state_and_child_relations() {
         let (st, _) = BlockReceiverState::<MId>::new().begin_stored("A2".to_string());
-        let (new_st, unseen_parents) = st.end_stored("A2".to_string(), parents(&[("A1", true)]));
+        let (new_st, unseen_parents) = st
+            .end_stored("A2".to_string(), parents(&[("A1", true)]))
+            .unwrap();
 
         assert_eq!(st.receive_st.get("A2"), Some(&RecvStatus::BeginStoreBlock));
         assert_eq!(new_st.receive_st.get("A2"), Some(&RecvStatus::EndStoreBlock));
@@ -529,24 +541,26 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn finished_panics_if_block_not_in_state() {
-        let _ = BlockReceiverState::<MId>::new().finished("A1".to_string(), BTreeSet::new());
+    fn finished_errors_if_block_not_in_state() {
+        assert!(
+            BlockReceiverState::<MId>::new()
+                .finished("A1".to_string(), BTreeSet::new())
+                .is_err()
+        );
     }
 
     #[test]
-    #[should_panic]
-    fn finished_panics_if_block_not_received() {
+    fn finished_errors_if_block_not_received() {
         let (st, _) = BlockReceiverState::<MId>::new().begin_stored("A1".to_string());
-        let _ = st.finished("A1".to_string(), BTreeSet::new());
+        assert!(st.finished("A1".to_string(), BTreeSet::new()).is_err());
     }
 
     #[test]
     fn finished_returns_empty_state_if_all_processed() {
         let (st1, _) = BlockReceiverState::<MId>::new().begin_stored("A1".to_string());
-        let (st2, _) = st1.end_stored("A1".to_string(), Vec::new());
+        let (st2, _) = st1.end_stored("A1".to_string(), Vec::new()).unwrap();
         // A1 has no dependencies; finishing it removes it from the state.
-        let (st3, _) = st2.finished("A1".to_string(), BTreeSet::new());
+        let (st3, _) = st2.finished("A1".to_string(), BTreeSet::new()).unwrap();
         assert!(st3.blocks_st.is_empty());
         assert!(st3.receive_st.is_empty());
         assert!(st3.child_relations.is_empty());
@@ -557,7 +571,9 @@ mod tests {
         let (st1, _) = BlockReceiverState::<MId>::new().begin_stored("A2".to_string());
         assert_eq!(st1.receive_st.get("A2"), Some(&RecvStatus::BeginStoreBlock));
 
-        let (st2, a2_unseen) = st1.end_stored("A2".to_string(), parents(&[("A1", true)]));
+        let (st2, a2_unseen) = st1
+            .end_stored("A2".to_string(), parents(&[("A1", true)]))
+            .unwrap();
         assert_eq!(st2.blocks_st.get("A2"), Some(&BTreeSet::from(["A1".to_string()])));
         assert_eq!(st2.receive_st.get("A2"), Some(&RecvStatus::EndStoreBlock));
         assert_eq!(st2.receive_st.get("A1"), Some(&RecvStatus::Requested));
@@ -567,13 +583,13 @@ mod tests {
         let (st3, _) = st2.begin_stored("A1".to_string());
         assert_eq!(st3.receive_st.get("A1"), Some(&RecvStatus::BeginStoreBlock));
 
-        let (st4, a1_unseen) = st3.end_stored("A1".to_string(), Vec::new());
+        let (st4, a1_unseen) = st3.end_stored("A1".to_string(), Vec::new()).unwrap();
         assert_eq!(st4.blocks_st.get("A1"), Some(&BTreeSet::new()));
         assert_eq!(st4.receive_st.get("A1"), Some(&RecvStatus::EndStoreBlock));
         assert!(a1_unseen.is_empty());
 
         // Finishing A1 removes it from receive state; child A2 becomes PendingValidation.
-        let (st5, deps_validated) = st4.finished("A1".to_string(), BTreeSet::new());
+        let (st5, deps_validated) = st4.finished("A1".to_string(), BTreeSet::new()).unwrap();
         assert!(!st5.receive_st.contains_key("A1"));
         assert_eq!(st5.receive_st.get("A2"), Some(&RecvStatus::PendingValidation));
         assert_eq!(deps_validated, BTreeSet::from(["A2".to_string()]));

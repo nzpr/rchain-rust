@@ -54,6 +54,7 @@ pub struct HttpState {
     pub web_api: Arc<dyn WebApi>,
     pub block_report_api: Arc<BlockReportApi>,
     pub status_provider: Option<StatusProvider>,
+    pub enable_reporting: bool,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -233,6 +234,11 @@ async fn reporting_trace(
     State(state): State<HttpState>,
     Query(query): Query<ReportingQuery>,
 ) -> Response {
+    // Reporting is disabled by default (`api-server.enable-reporting = false`); the route answers
+    // 404 unless explicitly enabled (M6 — the flag was read but never enforced).
+    if !state.enable_reporting {
+        return (StatusCode::NOT_FOUND, ()).into_response();
+    }
     let hash = BlockHash::from_hex(&query.block_hash);
     let result = state
         .block_report_api
@@ -319,6 +325,7 @@ pub async fn acquire_http_server(
     block_report_api: Arc<BlockReportApi>,
     status_provider: Option<StatusProvider>,
     max_connection_idle: Duration,
+    enable_reporting: bool,
 ) -> Result<(), String> {
     let port = u16::from(port); // single discharge at the bind boundary
     let addr: SocketAddr = format!("{host}:{port}")
@@ -332,6 +339,7 @@ pub async fn acquire_http_server(
         web_api,
         block_report_api,
         status_provider,
+        enable_reporting,
     })
     .layer(TimeoutLayer::new(max_connection_idle));
     axum::serve(listener, app).await.map_err(|e| e.to_string())
@@ -507,6 +515,7 @@ mod tests {
             }),
             block_report_api: test_block_report_api(),
             status_provider: None,
+            enable_reporting: true,
         }
     }
 

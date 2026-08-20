@@ -19,12 +19,13 @@ Install Coq if needed: `opam install coq` (or `apt install coq`).
 
 ## Status
 
-Phase 0 skeleton: `Syntax.v` defines `Ground`/`Var`/`Proc`; `Sort.v` declares the score-tree total
-order and the canonicalization `sort` as **axioms** (`cmpPar`, `sortPar`, `sortPar_idempotent`,
-`sortPar_comm`) — it currently has **no proven lemmas**. This mirrors the 69 residual comparator-law
-`axiom`s in [`../Rchain/Sort.lean`](../Rchain/Sort.lean) (the Lean track also uses `axiom`, not
-`sorry`). The Law-1 theorems (`sort_idempotent`, `sort_par_comm`) are the Phase-1 proof obligations
-for both tracks.
+`Syntax.v` defines the flat `Par` ADT; `Sort.v` declares the canonical order as **axioms** (`cmpPar`,
+`sortPar`, `sortPar_idempotent`, `sortPar_comm`). `Laws.v` states Laws 2–6 (`alpha_equiv`, `substPar`
+with `subst_commutes_sort`, `reduce`, `spatial_matches` + `binds_at_most_once`, `closed` +
+`closed_decidable`) as **axioms** — Coq owns the *definitions* (capture-avoiding de Bruijn
+substitution, α-equivalence, Autosubst-style), which remain the Phase-1 obligations. This mirrors the
+Lean track: Law 1's 69 comparator-law `axiom`s in [`../Rchain/Sort.lean`](../Rchain/Sort.lean), and
+the stated-but-not-defined laws in `Rchain/{Subst,Reduce,Match,FreeVars}.lean`.
 
 ## Mapping to the Scala source of truth
 

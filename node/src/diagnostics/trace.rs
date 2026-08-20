@@ -2,8 +2,8 @@
 //!
 //! The pure data model behind the node's request tracing: a monotonically-increasing span id
 //! (`TraceId`), the span itself (`SourceTrace`), and the constructors (`Trace::source` /
-//! `Trace::next`). The kamon backend (`ks`/`mark`/`end`) and the effectful `span[F]` wrapper are
-//! deferred.
+//! `Trace::next`). The kamon span backend (`ks`/`mark`/`end`) and the effectful `span[F]` wrapper
+//! are out of scope (the data model is ported; kamon span instrumentation is not).
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -15,8 +15,8 @@ pub struct TraceId(pub i64);
 
 /// A concrete tracing span (port of `Trace.SourceTrace`).
 ///
-/// kamon's `KSpan` (`ks`), `mark`, and `end` are the deferred backend — only the data fields are
-/// ported.
+/// kamon's `KSpan` (`ks`), `mark`, and `end` are the out-of-scope backend — only the data fields
+/// are ported.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceTrace {
     pub s: Source,

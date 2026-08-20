@@ -205,7 +205,7 @@ async fn propose(
 /// Scala `MultiParentCasperFinalizationSpec`: four equal-stake validators, three proposers in
 /// round-robin; the finalized set advances as a super-majority attests to a common prefix.
 #[test]
-#[ignore = "blocked on validate.bondsCache: getBonds query (state.get(\"allBonds\") Map method) returns 0 results"]
+#[ignore = "blocked on validate.bondsCache: registry lookups (rho:rchain:pos etc.) return empty at genesis post-state"]
 fn round_robin_finalizes_common_prefix() {
     let rt = test_runtime();
     // The blessed genesis terms recurse deeper than the main test thread's stack allows, so run the

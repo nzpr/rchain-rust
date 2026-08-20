@@ -5,8 +5,9 @@
 //! store, and fork-choice-tip / finalized-fringe requests are served from the DAG. The
 //! `StoreItemsMessageRequest` handler is deferred pending `RSpaceStateManager`/`RSpaceExporter`.
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
@@ -73,7 +74,41 @@ pub async fn handle_has_block_message(
     }
 }
 
-/// Serve a peer's request for a block (port of `handleBlockRequest`).
+/// Per-peer block-request limit (requests/second). Generous enough for sync bursts while bounding
+/// the outbound bandwidth a single peer can pull.
+const DEFAULT_BLOCK_REQUEST_LIMIT_PER_SEC: u32 = 100;
+
+/// Per-peer fixed-window rate limiter for block requests (H4): bounds the outbound bandwidth a
+/// single peer can pull by requesting blocks. Documented Scala deviation: Scala serves every block
+/// request with no limit.
+pub struct PeerRateLimiter {
+    max_per_sec: u32,
+    state: Mutex<BTreeMap<Vec<u8>, (Instant, u32)>>,
+}
+
+impl PeerRateLimiter {
+    pub fn new(max_per_sec: u32) -> Self {
+        PeerRateLimiter {
+            max_per_sec,
+            state: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// Admit a request from `peer` if it is within the per-peer one-second window.
+    pub fn allow(&self, peer_key: &[u8]) -> bool {
+        let now = Instant::now();
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = state.entry(peer_key.to_vec()).or_insert((now, 0));
+        if now.duration_since(entry.0) >= Duration::from_secs(1) {
+            entry.0 = now;
+            entry.1 = 0;
+        }
+        entry.1 += 1;
+        entry.1 <= self.max_per_sec
+    }
+}
+
+/// Serve a peer's request for a block (port of `handleBlockRequest`), throttled per-peer.
 pub async fn handle_block_request(
     transport: &dyn TransportLayer,
     conf: &RPConf,
@@ -82,8 +117,19 @@ pub async fn handle_block_request(
     source: LogSource,
     peer: &PeerNode,
     br: &BlockRequest,
+    limiter: &PeerRateLimiter,
 ) {
     let hash = BlockHash::from_slice(&br.hash);
+    if !limiter.allow(peer.key()) {
+        log.info(
+            source,
+            &format!(
+                "Received request for block {} from {peer}. Dropped: per-peer block-request rate limit exceeded.",
+                hash.to_hex()
+            ),
+        );
+        return;
+    }
     let has_block = block_store
         .contains(&[hash])
         .await
@@ -207,6 +253,7 @@ pub struct NodeRunning {
     log_source: LogSource,
     validator_id: Option<ValidatorIdentity>,
     incoming_blocks: tokio::sync::mpsc::UnboundedSender<BlockMessage>,
+    block_request_limit: Arc<PeerRateLimiter>,
 }
 
 impl NodeRunning {
@@ -231,6 +278,7 @@ impl NodeRunning {
             log_source: LogSource::new("casper.engine.NodeRunning"),
             validator_id,
             incoming_blocks,
+            block_request_limit: Arc::new(PeerRateLimiter::new(DEFAULT_BLOCK_REQUEST_LIMIT_PER_SEC)),
         }
     }
 
@@ -302,6 +350,7 @@ impl NodeRunning {
                     self.log_source,
                     peer,
                     br,
+                    self.block_request_limit.as_ref(),
                 )
                 .await;
             }
@@ -525,6 +574,7 @@ mod tests {
             LogSource::new("test"),
             &remote,
             &BlockRequest { hash: h.as_bytes().to_vec() },
+            &PeerRateLimiter::new(100),
         )
         .await;
 
@@ -550,6 +600,7 @@ mod tests {
             LogSource::new("test"),
             &remote,
             &BlockRequest { hash: hash(1).as_bytes().to_vec() },
+            &PeerRateLimiter::new(100),
         )
         .await;
 

@@ -106,8 +106,16 @@ impl<A: Keyed + Clone> PeerTable<A> {
         if bucket.len() < self.k {
             bucket.push(PeerTableEntry::new(peer));
         } else if let Some(candidate) = bucket.iter_mut().find(|e| !e.pinging) {
-            // Oldest non-pinging entry is a ping candidate; the actual ping is deferred.
+            // Oldest non-pinging entry is a ping candidate; the actual ping is deferred to the
+            // Kademlia RPC layer.
             candidate.pinging = true;
+        } else {
+            // All entries are already pending a ping with no RPC to resolve them — evict the
+            // least-recently-seen entry so a full bucket can never saturate permanently (M5).
+            if !bucket.is_empty() {
+                bucket.remove(0);
+            }
+            bucket.push(PeerTableEntry::new(peer));
         }
     }
 
@@ -243,5 +251,27 @@ mod tests {
         table.update_last_seen(near.clone());
         let result = table.lookup(&[0u8; 32]);
         assert_eq!(result, vec![near, far]);
+    }
+
+    #[test]
+    fn full_bucket_evicts_oldest_when_all_pinging() {
+        // A small k=3 table; every peer uses a 0b01xxxxxx first byte so all share distance 1 and
+        // land in the same bucket.
+        let table: PeerTable<PeerNode> = PeerTable::new(vec![0u8; 32], 3);
+        let a = node(0x40);
+        let b = node(0x41);
+        let c = node(0x42);
+        let d = node(0x43);
+        table.update_last_seen(a.clone());
+        table.update_last_seen(b.clone());
+        table.update_last_seen(c.clone());
+        // Bucket full; each new peer marks the oldest non-pinging entry as pinging.
+        table.update_last_seen(node(0x48));
+        table.update_last_seen(node(0x49));
+        table.update_last_seen(node(0x4A));
+        // All entries now pinging; the next peer evicts the oldest (a) to make room.
+        table.update_last_seen(d.clone());
+        assert_eq!(table.find(a.key()), None);
+        assert_eq!(table.find(d.key()).as_ref(), Some(&d));
     }
 }

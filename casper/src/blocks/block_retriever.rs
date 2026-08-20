@@ -14,6 +14,12 @@ use rchain_shared::time::current_millis;
 
 use crate::protocol::comm_util::CommUtil;
 
+/// Maximum number of distinct hashes the retriever tracks at once (H5): bounds the `requested` map
+/// against a peer flooding `BlockHash`/`HasBlock` messages for bogus hashes.
+const MAX_REQUESTED_BLOCKS: usize = 10_000;
+/// Maximum waiting-list length per requested hash (H5).
+const MAX_WAITING_LIST_PER_HASH: usize = 32;
+
 /// Reason a hash was admitted (port of `AdmitHashReason`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdmitHashReason {
@@ -28,6 +34,8 @@ pub enum AdmitHashReason {
 pub enum AdmitHashStatus {
     NewSourcePeerAddedToRequest,
     NewRequestAdded,
+    /// The `requested` map is at capacity; the new hash was not admitted.
+    CapacityReached,
     Ignore,
 }
 
@@ -85,6 +93,9 @@ fn add_source_peer_to_request(
     match state.get(hash) {
         None => state.clone(),
         Some(request_state) => {
+            if request_state.waiting_list.len() >= MAX_WAITING_LIST_PER_HASH {
+                return state.clone();
+            }
             let mut updated = request_state.clone();
             updated.waiting_list.push(peer.clone());
             let mut new_state = state.clone();
@@ -103,6 +114,16 @@ pub fn admit_hash_state(
 ) -> (BTreeMap<BlockHash, RequestState>, AdmitHashResult) {
     let unknown_hash = !state.contains_key(hash);
     if unknown_hash {
+        if state.len() >= MAX_REQUESTED_BLOCKS {
+            return (
+                state.clone(),
+                AdmitHashResult {
+                    status: AdmitHashStatus::CapacityReached,
+                    broadcast_request: false,
+                    request_block: false,
+                },
+            );
+        }
         let new_state = add_new_request(state, hash, now, peer.cloned());
         let result = AdmitHashResult {
             status: AdmitHashStatus::NewRequestAdded,
@@ -200,6 +221,16 @@ impl BlockRetriever {
                         "Adding {} hash to RequestedBlocks because of {:?}.",
                         hash.to_hex(),
                         reason
+                    ),
+                );
+            }
+            AdmitHashStatus::CapacityReached => {
+                self.log.warn(
+                    self.log_source,
+                    &format!(
+                        "Dropping {} hash: block-retriever request map is at capacity ({}).",
+                        hash.to_hex(),
+                        MAX_REQUESTED_BLOCKS
                     ),
                 );
             }

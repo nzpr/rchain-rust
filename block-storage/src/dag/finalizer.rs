@@ -38,18 +38,19 @@ impl<M: Hash, S> Hash for Message<M, S> {
     }
 }
 
-/// Multi-parent finalization over a cache of all messages.
+/// Multi-parent finalization over a cache of all messages. The message map is borrowed (never
+/// cloned) — the finalizer only reads it, so a per-call full-map clone is unnecessary (H6).
 #[derive(Clone, Debug)]
-pub struct Finalizer<M, S> {
-    pub msg_map: BTreeMap<M, Message<M, S>>,
+pub struct Finalizer<'a, M, S> {
+    pub msg_map: &'a BTreeMap<M, Message<M, S>>,
 }
 
-impl<M, S> Finalizer<M, S>
+impl<'a, M, S> Finalizer<'a, M, S>
 where
     M: Ord + Clone + Eq + Hash,
     S: Ord + Clone + Eq + Hash,
 {
-    pub fn new(msg_map: BTreeMap<M, Message<M, S>>) -> Self {
+    pub fn new(msg_map: &'a BTreeMap<M, Message<M, S>>) -> Self {
         Self { msg_map }
     }
 
@@ -191,7 +192,7 @@ where
         justifications: &BTreeSet<Message<M, S>>,
         bonds_map: &BTreeMap<S, NonNegI64>,
     ) -> (BTreeSet<Message<M, S>>, Option<BTreeSet<Message<M, S>>>) {
-        let parent_fringe = message_map::latest_fringe(&self.msg_map, justifications);
+        let parent_fringe = message_map::latest_fringe(self.msg_map, justifications);
         let mut current = parent_fringe.clone();
         let mut new_fringe_opt: Option<BTreeSet<Message<M, S>>> = None;
         while let Some(nf) = self.next_fringe(justifications, bonds_map, &current) {
@@ -242,7 +243,8 @@ mod tests {
 
     #[test]
     fn law14_fringe_requires_supermajority() {
-        let finalizer: Finalizer<i32, i32> = Finalizer::new(BTreeMap::new());
+        let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
         let bonds = bonded();
         let bonded_senders: BTreeSet<i32> = bonds.keys().copied().collect();
 
@@ -255,7 +257,8 @@ mod tests {
 
     #[test]
     fn check_min_messages_needs_all_bonded_senders() {
-        let finalizer: Finalizer<i32, i32> = Finalizer::new(BTreeMap::new());
+        let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
         let bonds = bonded();
         assert!(finalizer.check_min_messages(&[msg(0, 0, 0, &[], &[]), msg(1, 1, 0, &[], &[]), msg(2, 2, 0, &[], &[])], &bonds));
         assert!(!finalizer.check_min_messages(&[msg(0, 0, 0, &[], &[])], &bonds));
@@ -268,11 +271,11 @@ mod tests {
         let m0 = msg(0, 0, 0, &[3], &[]);
         let m1 = msg(1, 1, 0, &[], &[]);
         let m2 = msg(2, 2, 0, &[], &[]);
-        let finalizer: Finalizer<i32, i32> = Finalizer::new(
+        let map: BTreeMap<i32, Message<i32, i32>> =
             [(0, m0.clone()), (1, m1.clone()), (2, m2.clone()), (3, m0_later.clone())]
                 .into_iter()
-                .collect(),
-        );
+                .collect();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
         let min_msgs = [m0, m1, m2];
         let next = finalizer.calculate_next_layer(&min_msgs);
         assert_eq!(next[&0].id, 3); // validator 0's later parent wins

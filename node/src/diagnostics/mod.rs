@@ -1,8 +1,9 @@
 //! Node diagnostics (port of `coop.rchain.node.diagnostics`).
 //!
 //! The metrics *export* side: a snapshot data model and the Prometheus/InfluxDB text-format
-//! encoders. The kamon-backed registry (`effects.metrics`) is ported as `effects`; only the kamon
-//! tracing backend (`span[F]`/`mark`/`end`) is deferred.
+//! encoders. The kamon metrics backend is replaced by the in-memory `effects::MetricsRegistry`; the
+//! kamon tracing backend (`span[F]`/`mark`/`end`) is out of scope (no kamon instrumentation in
+//! Rust).
 
 pub mod effects;
 pub mod influxdb;

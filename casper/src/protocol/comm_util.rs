@@ -30,6 +30,10 @@ use crate::protocol::casper_message_protocol::{
 /// A shared, mutable list of current connections (port of `ConnectionsCell[F]`).
 pub type ConnectionsCell = Arc<tokio::sync::RwLock<Vec<PeerNode>>>;
 
+/// Maximum number of retries for a bootstrap request before giving up (M8). Documented deviation:
+/// Scala's `keepOnRequestingTillRunning` retries forever.
+const MAX_BOOTSTRAP_RETRIES: u32 = 10;
+
 /// A standalone (bootstrap) node tried to send to the bootstrap node (port of
 /// `StandaloneNodeSendToBootstrapError`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +114,9 @@ impl CommUtil {
     }
 
     /// Retry sending `msg` to `peer` until it succeeds (port of `keepOnRequestingTillRunning`).
+    ///
+    /// Bounded to [`MAX_BOOTSTRAP_RETRIES`] attempts (M8): a dead/unreachable bootstrap must not
+    /// block node startup forever (documented deviation — Scala retries indefinitely).
     async fn keep_on_requesting_till_running(
         &self,
         peer: &PeerNode,
@@ -117,6 +124,7 @@ impl CommUtil {
         retry_after: Duration,
         msg_type_name: &str,
     ) {
+        let mut attempts = 0u32;
         loop {
             match self.transport.send(peer, msg.clone()).await {
                 Ok(_) => {
@@ -127,6 +135,16 @@ impl CommUtil {
                     break;
                 }
                 Err(error) => {
+                    attempts += 1;
+                    if attempts >= MAX_BOOTSTRAP_RETRIES {
+                        self.log.error(
+                            self.log_source,
+                            &format!(
+                                "Giving up sending {msg_type_name} to {peer} after {attempts} attempts (last error: {error:?})."
+                            ),
+                        );
+                        break;
+                    }
                     self.log.warn(
                         self.log_source,
                         &format!(
