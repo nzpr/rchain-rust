@@ -151,12 +151,13 @@ impl KeyValueStoreManager for LmdbStoreManager {
 /// Each `Db` is assigned an `LmdbEnvConfig` naming the environment (file) that holds it; databases
 /// sharing an environment name live in the same LMDB file. Environments are opened lazily on first
 /// access and cached, keyed by the environment name.
+#[derive(Clone)]
 pub struct LmdbDirStoreManager {
     dir_path: PathBuf,
     /// Database id → (database, environment config).
     db_mapping: BTreeMap<String, (Db, LmdbEnvConfig)>,
     /// Environment name → lazily-opened store manager.
-    managers: tokio::sync::Mutex<BTreeMap<String, Arc<LmdbStoreManager>>>,
+    managers: Arc<tokio::sync::Mutex<BTreeMap<String, Arc<LmdbStoreManager>>>>,
 }
 
 impl LmdbDirStoreManager {
@@ -170,7 +171,7 @@ impl LmdbDirStoreManager {
         LmdbDirStoreManager {
             dir_path: dir_path.as_ref().to_path_buf(),
             db_mapping,
-            managers: tokio::sync::Mutex::new(BTreeMap::new()),
+            managers: Arc::new(tokio::sync::Mutex::new(BTreeMap::new())),
         }
     }
 

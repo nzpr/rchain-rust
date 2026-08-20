@@ -23,6 +23,7 @@ use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_block_storage::syntax::put_block;
 use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus, ProposeFunction};
 use rchain_casper::api::block_report_api::BlockReportApi;
+use rchain_casper::block_random_seed::BlockRandomSeed;
 use rchain_casper::block_metadata_store::BlockMetadataStore;
 use rchain_casper::blocks::block_receiver::{self, BlockReceiverState};
 use rchain_casper::blocks::block_processor;
@@ -32,7 +33,7 @@ use rchain_casper::merging::BlockIndex;
 use rchain_casper::dag::BlockDagKeyValueStorage;
 use rchain_casper::engine::node_launch::{self, PeerMessage};
 use rchain_casper::protocol::comm_util::{CommUtil, ConnectionsCell};
-use rchain_casper::reporting::noop;
+use rchain_casper::reporting::{rho_reporter, ReportingCasper};
 use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::rnode_key_value_store_manager;
@@ -58,6 +59,7 @@ use rchain_models::comm::protocol::Protocol;
 use rchain_models::fringe_data::FringeData;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_rholang::merging::DeployMergeableDataCodec;
+use rchain_rholang::reporting_runtime::create_reporting_rspace;
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::storage::RhoMatch;
 use rchain_rspace::factory::create_history_repository;
@@ -88,6 +90,24 @@ impl TransactionApi for NoopTransactionApi {
     fn get_transaction(&self, _block_hash: &Blake2b256Hash) -> Vec<TransactionInfo> {
         Vec::new()
     }
+}
+
+/// Build the real block-reporting casper: each `trace` constructs a fresh, isolated reporting
+/// `ReplayRSpace` over the persistent store (the factory clones the store manager, which shares the
+/// underlying LMDB environments).
+fn reporting_casper(
+    store_manager: &LmdbDirStoreManager,
+    shard_id: &str,
+) -> impl ReportingCasper {
+    let store_manager = store_manager.clone();
+    let mergeable_tag_name = BlockRandomSeed::non_negative_mergeable_tag_name(shard_id);
+    rho_reporter(
+        move || {
+            let manager = store_manager.clone();
+            async move { create_reporting_rspace(&manager).await }
+        },
+        mergeable_tag_name,
+    )
 }
 
 /// The `BlockEventInfo` report-store codec (prost wire round-trip).
@@ -880,7 +900,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         runtime_manager.clone(),
         validator_opt.clone(),
         network_id,
-        shard_id,
+        shard_id.clone(),
         conf.casper.min_phlo_price,
         env!("CARGO_PKG_VERSION").to_string(),
         network_status,
@@ -904,7 +924,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
     );
     let block_report_api = Arc::new(BlockReportApi::new(
         block_store.clone(),
-        Arc::new(noop()),
+        Arc::new(reporting_casper(&store_manager, &shard_id)),
         report_store,
         validator_opt.clone(),
     ));

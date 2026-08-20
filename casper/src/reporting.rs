@@ -1,5 +1,7 @@
 //! Block replay reporting (port of `casper/reporting/ReportingCasper.scala`).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -131,27 +133,32 @@ impl ReportingTransformer<Par, BindPattern, ListParWithRandom, TaggedContinuatio
 }
 
 /// Build a reporting casper that replays blocks with event collection (port of
-/// `ReportingCasper.rhoReporter`). The space factory defers the store → `ReplayRSpace` construction
-/// (not yet ported); `mergeable_tag_name` is the shard's non-negative mergeable tag.
-pub fn rho_reporter<F>(create_space: F, mergeable_tag_name: Par) -> impl ReportingCasper
+/// `ReportingCasper.rhoReporter`). The space factory is async because building a `ReplayRSpace`
+/// requires store access; `mergeable_tag_name` is the shard's non-negative mergeable tag.
+pub fn rho_reporter<F, Fut>(create_space: F, mergeable_tag_name: Par) -> impl ReportingCasper
 where
-    F: Fn() -> Arc<RhoReportingRspace> + Send + Sync + 'static,
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Arc<RhoReportingRspace>, String>> + Send + 'static,
 {
     RhoReporter {
-        create_space: Box::new(create_space),
+        create_space: Box::new(move || Box::pin(create_space())),
         mergeable_tag_name,
     }
 }
 
 struct RhoReporter {
-    create_space: Box<dyn Fn() -> Arc<RhoReportingRspace> + Send + Sync>,
+    create_space: Box<
+        dyn Fn() -> Pin<Box<dyn Future<Output = Result<Arc<RhoReportingRspace>, String>> + Send>>
+            + Send
+            + Sync,
+    >,
     mergeable_tag_name: Par,
 }
 
 #[async_trait]
 impl ReportingCasper for RhoReporter {
     async fn trace(&self, block: BlockMessage) -> Result<ReplayResult, String> {
-        let space = (self.create_space)();
+        let space = (self.create_space)().await?;
         let runtime = ReportingRuntime::create(space, self.mergeable_tag_name.clone())
             .await
             .map_err(|e| e.to_string())?;
