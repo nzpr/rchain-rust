@@ -318,10 +318,11 @@ impl BlockIndex {
         let usr_count = usr_processed_deploys.len();
         let deploy_count = usr_count + sys_processed_deploys.len();
         let mrg_count = mergeable_chan_data.len();
-        assert_eq!(
-            deploy_count, mrg_count,
-            "Cache of mergeable channels ({mrg_count}) doesn't match deploys count ({deploy_count})."
-        );
+        if deploy_count != mrg_count {
+            return Err(format!(
+                "Cache of mergeable channels ({mrg_count}) doesn't match deploys count ({deploy_count})."
+            ));
+        }
 
         let (usr_mergeable, sys_mergeable) = mergeable_chan_data.split_at(usr_count);
 
@@ -455,6 +456,21 @@ impl BlockIndex {
 
         cache.lock().unwrap_or_else(|p| p.into_inner()).insert(block_hash, index.clone());
         Ok(index)
+    }
+
+    /// Remove cached block indices for `hashes` (port of `BlockIndex.cache.remove` in `pruneDiff`).
+    ///
+    /// The cache is advisory: a pruned entry is simply recomputed on the next `get_block_index`, so
+    /// pruning is always safe (it never affects correctness, only recomputation cost). This bounds
+    /// the otherwise-unbounded in-memory cache as the fringe finalizes.
+    pub fn prune_cache(hashes: &[BlockHash]) {
+        let Some(cache) = BLOCK_INDEX_CACHE.get() else {
+            return;
+        };
+        let mut guard = cache.lock().unwrap_or_else(|p| p.into_inner());
+        for h in hashes {
+            guard.remove(h);
+        }
     }
 }
 

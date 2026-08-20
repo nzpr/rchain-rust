@@ -218,7 +218,7 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
 
         // Apply radix-history actions and commit the new root.
         let new_history = self.current_history.process(&history_actions).await?;
-        self.roots_repository.commit(new_history.root()).await;
+        self.roots_repository.commit(new_history.root()).await?;
 
         Ok(Arc::new(HistoryRepository {
             current_history: new_history,

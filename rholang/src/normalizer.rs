@@ -1106,7 +1106,11 @@ fn normalize_input(
         }
         return normalize_proc(&proc, input);
     }
-    let receipt = &receipts[0];
+    // Defense-in-depth: the parser rejects `for()` with zero receipts, but a hand-built
+    // `PInput(vec![], …)` must not panic here.
+    let receipt = receipts
+        .first()
+        .ok_or_else(|| RholangError::SyntaxError("input requires at least one receipt".to_string()))?;
 
     // Desugar complex input sources (`for(x <- y?)` / `for(x <- y!(z))`) into a `new` of sends +
     // a simple-source receive (port of `PInputNormalizer`, complex-source branch).

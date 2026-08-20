@@ -74,17 +74,26 @@ pub fn path_pretty(path: &(Blake2b256Hash, Option<u8>)) -> String {
 }
 
 /// Decode the last-exported prefix from its 5-hash encoding (port of `createLastPrefix`).
-fn create_last_prefix(prefix_seq: &[Blake2b256Hash]) -> Option<KeySegment> {
+///
+/// The input is a peer-supplied resume path, so malformed shapes are an `Err`, not a panic.
+fn create_last_prefix(prefix_seq: &[Blake2b256Hash]) -> Result<Option<KeySegment>, String> {
     if prefix_seq.is_empty() {
-        return None;
+        return Ok(None);
     }
-    assert!(prefix_seq.len() >= 5, "Invalid path during export.");
+    if prefix_seq.len() < 5 {
+        return Err("Invalid path during export: expected 5 prefix hashes.".to_string());
+    }
     let size_prefix = prefix_seq[0].as_bytes()[0] as usize;
+    if size_prefix > 128 {
+        return Err(format!(
+            "Invalid path during export: prefix size {size_prefix} exceeds 128."
+        ));
+    }
     let mut prefix128 = Vec::with_capacity(128);
     for i in 0..4 {
         prefix128.extend_from_slice(prefix_seq[1 + i].as_bytes());
     }
-    Some(KeySegment::new(prefix128[..size_prefix].to_vec()))
+    Ok(Some(KeySegment::new(prefix128[..size_prefix].to_vec())))
 }
 
 /// Build leaf/history `TrieNode`s from their hashes (port of `constructNodes`).
@@ -177,7 +186,7 @@ pub fn traverse_history(
 
     let path_seq: Vec<Blake2b256Hash> = start_path.iter().map(|(h, _)| *h).collect();
     let root_hash = path_seq[0];
-    let last_prefix = create_last_prefix(&path_seq[1..]);
+    let last_prefix = create_last_prefix(&path_seq[1..])?;
 
     let (data, new_last_prefix_opt) =
         sequential_export(root_hash, last_prefix, skip, take, get_from_history, &settings)?;

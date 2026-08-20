@@ -286,10 +286,17 @@ impl NodeProgram {
         });
 
         let admin = tokio::spawn({
-            let host = host.clone();
             async move {
-                acquire_admin_http_server(&host, port_admin_http, admin_web_api, max_connection_idle)
-                    .await
+                // The admin HTTP server hosts the unauthenticated `/api/propose`. Bind it to
+                // loopback only (mirroring the gRPC internal server) so block production cannot be
+                // triggered from the network (H-3, documented deviation from Scala's `0.0.0.0`).
+                acquire_admin_http_server(
+                    "127.0.0.1",
+                    port_admin_http,
+                    admin_web_api,
+                    max_connection_idle,
+                )
+                .await
             }
         });
 

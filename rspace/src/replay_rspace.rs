@@ -316,10 +316,9 @@ where
                     let comm_ref = Comm::apply(&data_candidates, consume_ref, peeks, |ps| {
                         self.space.produce_counters(ps)
                     });
-                    assert!(
-                        comms.contains(&comm_ref),
-                        "COMM Event was not contained in the trace"
-                    );
+                    if !comms.contains(&comm_ref) {
+                        return Err(crate::errors::RSpaceError::ReplayCommNotInTrace);
+                    }
                     self.space.store_persistent_data(&data_candidates).await?;
                     self.remove_bindings_for(&comm_ref);
                     self.space.wrap_result(channels, &wk, &data_candidates)
@@ -376,10 +375,9 @@ where
         let comm_ref = Comm::apply(&data_candidates, consume_ref, wk.peeks.clone(), |ps| {
             self.space.produce_counters(ps)
         });
-        assert!(
-            comms.contains(&comm_ref),
-            "COMM Event was not contained in the trace"
-        );
+        if !comms.contains(&comm_ref) {
+            return Err(crate::errors::RSpaceError::ReplayCommNotInTrace);
+        }
         if !wk.persist {
             let store = self.space.current_store();
             store

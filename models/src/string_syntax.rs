@@ -73,7 +73,7 @@ mod tests {
     fn string_hex_decode() {
         assert_eq!("0f".decode_hex(), Some(vec![0x0f]));
         assert_eq!("zz".decode_hex(), None);
-        assert_eq!("f".decode_hex(), Some(vec![0x0f]));
+        assert_eq!("f".decode_hex(), None);
         assert_eq!("z1z2z".unsafe_decode_hex(), vec![0x12]);
     }
 

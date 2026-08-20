@@ -192,8 +192,9 @@ impl BlockApiImpl {
             .collect();
         event_log.iter().any(|ev| match ev {
             REvent::Produce(p) => {
-                assert_eq!(sorted_names.len(), 1, "Produce can have only one channel");
-                p.channels_hash == hash_channel(&sorted_names[0])
+                // A produce has exactly one channel; a query name with a different arity simply
+                // does not match (must not panic on a user-supplied `Par`).
+                sorted_names.len() == 1 && p.channels_hash == hash_channel(&sorted_names[0])
             }
             REvent::Consume(c) => {
                 let mut c_hashes = c.channels_hashes.clone();

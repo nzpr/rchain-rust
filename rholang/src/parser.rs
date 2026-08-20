@@ -349,6 +349,13 @@ impl Parser {
                     break;
                 }
             }
+            // A `for()` with zero receipts would desugar to `PInput(vec![], …)`, which the
+            // normalizer indexes at `receipts[0]` (panic). Reject it here instead.
+            if receipts.is_empty() {
+                return Err(RholangError::SyntaxError(
+                    "for(...) requires at least one receive".to_string(),
+                ));
+            }
             self.expect(Tok::RParen)?;
             self.expect(Tok::LBrace)?;
             let body = self.parse_proc()?;

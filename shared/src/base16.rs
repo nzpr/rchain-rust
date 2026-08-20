@@ -7,9 +7,15 @@ pub fn encode(input: &[u8]) -> String {
     input.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Decode a hex string, failing on any non-hex character (odd-length input is left-padded with `0`).
+/// Decode a hex string, failing on any non-hex character or odd-length input.
+///
+/// Odd-length input is rejected rather than left-padded, so a truncated hash can never silently
+/// decode to a different (valid-looking) value.
 pub fn decode(input: &str) -> Option<Vec<u8>> {
     if input.chars().any(|c| !c.is_ascii_hexdigit()) {
+        return None;
+    }
+    if input.len() % 2 != 0 {
         return None;
     }
     parse_hex_padded(input)
@@ -72,9 +78,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_left_pads_odd_length() {
-        assert_eq!(decode("f").unwrap(), vec![0x0f]);
-        assert_eq!(decode("abc").unwrap(), vec![0x0a, 0xbc]);
+    fn decode_rejects_odd_length() {
+        assert!(decode("f").is_none());
+        assert!(decode("abc").is_none());
     }
 
     #[test]

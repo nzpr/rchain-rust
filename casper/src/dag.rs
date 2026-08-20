@@ -19,6 +19,7 @@ use rchain_models::validator::Validator;
 use rchain_shared::typed_store::KeyValueTypedStore;
 
 use crate::block_metadata_store::BlockMetadataStore;
+use crate::merging::BlockIndex;
 
 /// Build a `Message` from a `BlockMetadata` given the current message map (port of
 /// `BlockDagKeyValueStorage.messageFromBlockMetadata`). Returns `None` when a justification is
@@ -110,6 +111,25 @@ impl BlockDagKeyValueStorage {
             deploy_store,
         })
     }
+
+    /// Expire deploys from the pool whose `valid_after_block_number` is older than the deploy
+    /// lifespan (port of `removeExpiredFromPool`). Without this the pool grows without bound and
+    /// stale deploys are re-proposed.
+    async fn expire_deploys(&self, latest_block_number: i64) -> Result<(), String> {
+        let pooled = self.deploy_store.to_map().await?;
+        let expired: Vec<DeployId> = pooled
+            .iter()
+            .filter(|(_, d)| {
+                latest_block_number - d.data.valid_after_block_number
+                    > crate::multi_parent_casper::DEPLOY_LIFESPAN
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !expired.is_empty() {
+            self.deploy_store.delete(&expired).await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -122,6 +142,22 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         let _guard = self.lock.lock().await;
         if self.block_metadata_store.contains(&block_metadata.block_hash).await {
             return Ok(());
+        }
+
+        // H-1: equivocation detection — a second, distinct block by the same sender reusing a
+        // `seq_num`. Reject it before any partial write so an equivocating validator can neither
+        // enter the DAG nor stall finalization.
+        {
+            let repr = self.representation.read().await;
+            let equivocating = repr.dag_message_state.msg_map.values().any(|m| {
+                m.sender == block_metadata.sender && m.sender_seq == block_metadata.seq_num
+            });
+            if equivocating {
+                return Err(
+                    "equivocation detected: sender produced two blocks with the same sequence number"
+                        .to_string(),
+                );
+            }
         }
 
         // Add block metadata to the index.
@@ -195,18 +231,39 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         let dag_set = self.block_metadata_store.dag_set().await;
         let child_map = self.block_metadata_store.child_map_data().await;
         let height_map = self.block_metadata_store.height_map().await;
+        let mut prune_cache_ids: Vec<BlockHash> = Vec::new();
+        let latest_block_number: i64;
         {
             let mut repr = self.representation.write().await;
             let msg = message_from_block_metadata(&block_metadata, &repr.dag_message_state.msg_map)
                 .ok_or_else(|| "justification not present in message map".to_string())?;
-            repr.dag_message_state = repr.dag_message_state.insert_msg(&msg);
+            // H-2: a validation-failed block is recorded in the map (for `neglectedInvalidBlock`
+            // and justification-regression) but must not become the sender's latest message.
+            repr.dag_message_state = if block_metadata.validation_failed {
+                repr.dag_message_state.insert_msg_without_latest(&msg)
+            } else {
+                repr.dag_message_state.insert_msg(&msg)
+            };
             repr.fringe_states.insert(msg.fringe.clone(), fringe_data);
             repr.dag_set = dag_set;
             repr.child_map = child_map;
             repr.height_map = height_map;
+
+            // H-4: when finalization advanced, collect the block-index cache entries prunable
+            // below the newly-finalized fringe.
+            if !fringe_diff.is_empty() {
+                let msg_map = &repr.dag_message_state.msg_map;
+                let latest_msgs = &repr.dag_message_state.latest_msgs;
+                let lowest = message_map::lowest_fringe(msg_map, latest_msgs);
+                let lowest_ids: BTreeSet<BlockHash> = lowest.iter().map(|m| m.id).collect();
+                let prunable = message_map::prune_fringe(msg_map, &lowest_ids, &repr.child_map);
+                prune_cache_ids = prunable.iter().map(|m| m.id).collect();
+            }
+            latest_block_number = repr.latest_block_number();
         }
 
-        // TODO: fringe pruning (BlockIndex cache) and deploy-pool expiry are deferred.
+        BlockIndex::prune_cache(&prune_cache_ids);
+        self.expire_deploys(latest_block_number).await?;
         Ok(())
     }
 

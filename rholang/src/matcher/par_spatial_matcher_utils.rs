@@ -2,7 +2,18 @@
 
 use rchain_models::ast::{Expr, Par, Sort, Var};
 
+use crate::errors::RholangError;
 use crate::matcher::par_count::ParCount;
+
+/// Cap on the number of items in a single subset-enumeration dimension. A connective pattern
+/// matched against a datum with `n` top-level processes enumerates up to 2ⁿ (subset, complement)
+/// splits; beyond this bound the enumeration is a denial-of-service, so it is rejected rather than
+/// materialized (C-2, defense-in-depth).
+pub const MAX_SUBSET_ITEMS: usize = 20;
+
+/// Cap on the total number of split combinations produced by `sub_pars` (the 7-way Cartesian
+/// product of the per-dimension subsets).
+pub const MAX_SPLIT_COMBINATIONS: u64 = 1_000_000;
 
 /// Remove free-variable/wildcard exprs from a `Par` (port of `noFrees`).
 pub fn no_frees<S: Sort>(par: &Par<S>) -> Par<S> {
@@ -26,11 +37,24 @@ pub fn no_frees_exprs(exprs: &[Expr]) -> Vec<Expr> {
 
 /// Generate every (subset, complement) pair whose subset size is in `[minSize, maxSize]` (port of
 /// `minMaxSubsets`).
-pub fn min_max_subsets<A: Clone>(items: &[A], min_size: i32, max_size: i32) -> Vec<(Vec<A>, Vec<A>)> {
-    worker(items, min_size, max_size)
+///
+/// Rejects (rather than materializes) enumerations whose input exceeds [`MAX_SUBSET_ITEMS`], so a
+/// connective pattern cannot force exponential work.
+pub fn min_max_subsets<A: Clone>(
+    items: &[A],
+    min_size: i32,
+    max_size: i32,
+) -> Result<Vec<(Vec<A>, Vec<A>)>, RholangError> {
+    if items.len() > MAX_SUBSET_ITEMS {
+        return Err(RholangError::ReduceError(format!(
+            "spatial match subset enumeration too large: {} items exceeds limit {MAX_SUBSET_ITEMS}",
+            items.len()
+        )));
+    }
+    Ok(worker(items, min_size, max_size)
         .into_iter()
         .map(|(sub, comp, _)| (sub, comp))
-        .collect()
+        .collect())
 }
 
 fn counted_max_subsets<A: Clone>(items: &[A], max_size: i32) -> Vec<(Vec<A>, Vec<A>, i32)> {
@@ -101,13 +125,17 @@ fn worker<A: Clone>(items: &[A], min_size: i32, max_size: i32) -> Vec<(Vec<A>, V
 
 /// Split `par` into every (matched sub-`Par`, remainder) pair consistent with the min/max bounds
 /// (port of `subPars`).
+///
+/// The 7-way Cartesian product of the per-dimension subset lists is the exponential blowup a
+/// connective pattern can trigger; the total number of splits is capped at
+/// [`MAX_SPLIT_COMBINATIONS`] (and each dimension at [`MAX_SUBSET_ITEMS`]).
 pub fn sub_pars<S: Sort>(
     par: &Par<S>,
     min: &ParCount,
     max: &ParCount,
     min_prune: &ParCount,
     max_prune: &ParCount,
-) -> Vec<(Par<S>, Par<S>)> {
+) -> Result<Vec<(Par<S>, Par<S>)>, RholangError> {
     let send_max = i32::min(max.sends, par.sends.len() as i32 - min_prune.sends);
     let receive_max = i32::min(max.receives, par.receives.len() as i32 - min_prune.receives);
     let news_max = i32::min(max.news, par.news.len() as i32 - min_prune.news);
@@ -130,13 +158,29 @@ pub fn sub_pars<S: Sort>(
     );
     let bundle_min = i32::max(min.bundles, par.bundles.len() as i32 - max_prune.bundles);
 
-    let sub_sends = min_max_subsets(&par.sends, send_min, send_max);
-    let sub_receives = min_max_subsets(&par.receives, receive_min, receive_max);
-    let sub_news = min_max_subsets(&par.news, news_min, news_max);
-    let sub_exprs = min_max_subsets(&par.exprs, expr_min, expr_max);
-    let sub_matches = min_max_subsets(&par.matches, match_min, match_max);
-    let sub_unfs = min_max_subsets(&par.unforgeables, unf_min, unf_max);
-    let sub_bundles = min_max_subsets(&par.bundles, bundle_min, bundle_max);
+    let sub_sends = min_max_subsets(&par.sends, send_min, send_max)?;
+    let sub_receives = min_max_subsets(&par.receives, receive_min, receive_max)?;
+    let sub_news = min_max_subsets(&par.news, news_min, news_max)?;
+    let sub_exprs = min_max_subsets(&par.exprs, expr_min, expr_max)?;
+    let sub_matches = min_max_subsets(&par.matches, match_min, match_max)?;
+    let sub_unfs = min_max_subsets(&par.unforgeables, unf_min, unf_max)?;
+    let sub_bundles = min_max_subsets(&par.bundles, bundle_min, bundle_max)?;
+
+    // Second layer of defense-in-depth: bound the Cartesian product itself, so a pattern with
+    // many connective dimensions cannot multiply several large-but-under-limit subset lists into
+    // an enormous split count.
+    let total = (sub_sends.len() as u64)
+        .saturating_mul(sub_receives.len() as u64)
+        .saturating_mul(sub_news.len() as u64)
+        .saturating_mul(sub_exprs.len() as u64)
+        .saturating_mul(sub_matches.len() as u64)
+        .saturating_mul(sub_unfs.len() as u64)
+        .saturating_mul(sub_bundles.len() as u64);
+    if total > MAX_SPLIT_COMBINATIONS {
+        return Err(RholangError::ReduceError(format!(
+            "spatial match split too large: {total} combinations exceeds limit {MAX_SPLIT_COMBINATIONS}"
+        )));
+    }
 
     let mut out = Vec::new();
     for ss in &sub_sends {
@@ -174,5 +218,24 @@ pub fn sub_pars<S: Sort>(
             }
         }
     }
-    out
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn min_max_subsets_rejects_oversized_input() {
+        let items: Vec<i32> = (0..(MAX_SUBSET_ITEMS as i32 + 1)).collect();
+        assert!(min_max_subsets(&items, 0, items.len() as i32).is_err());
+    }
+
+    #[test]
+    fn min_max_subsets_enumerates_small_input() {
+        let items = vec![1, 2, 3];
+        // min=0, max=3: every subset of the 3 items (2^3 = 8).
+        let subs = min_max_subsets(&items, 0, 3).unwrap();
+        assert_eq!(subs.len(), 8);
+    }
 }

@@ -394,6 +394,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v2 = eval_expr(p2, env, cost)?;
             let sv1 = substitute_par(&v1, 0, env)?;
             let sv2 = substitute_par(&v2, 0, env)?;
+            cost.charge(Costs::comparison_cost())?;
             Ok(Expr::GBool(sv1 == sv2))
         }
         Expr::ENeq(p1, p2) => {
@@ -401,6 +402,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v2 = eval_expr(p2, env, cost)?;
             let sv1 = substitute_par(&v1, 0, env)?;
             let sv2 = substitute_par(&v2, 0, env)?;
+            cost.charge(Costs::comparison_cost())?;
             Ok(Expr::GBool(sv1 != sv2))
         }
         Expr::EAnd(p1, p2) => {
@@ -480,6 +482,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
                     Ok(Expr::GByteArray(out))
                 }
                 (Expr::EList(l), Expr::EList(r)) => {
+                    cost.charge(Costs::list_append_cost((l.ps.len() + r.ps.len()) as i64))?;
                     let mut ps = l.ps.clone();
                     ps.extend(r.ps.clone());
                     Ok(Expr::EList(EList {
@@ -859,13 +862,14 @@ fn eval_method(
             check_arity("delete", 1, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
             let element = eval_expr(&args[0], env, cost)?;
-            cost.charge(Costs::remove_cost())?;
-            match base {
+            match &base {
                 Expr::ESet(b) => {
+                    cost.charge(Costs::remove_cost().mul(b.ps.len() as i64))?;
                     let ps: Vec<Par> = b.ps.iter().filter(|p| *p != &element).cloned().collect();
                     Ok(from_expr(Expr::ESet(par_set(ps))))
                 }
                 Expr::EMap(b) => {
+                    cost.charge(Costs::remove_cost().mul(b.kvs.len() as i64))?;
                     let kvs: Vec<(Par, Par)> = b
                         .kvs
                         .iter()
@@ -874,35 +878,40 @@ fn eval_method(
                         .collect();
                     Ok(from_expr(Expr::EMap(par_map(kvs))))
                 }
-                other => Err(method_not_defined("delete", &other)),
+                other => Err(method_not_defined("delete", other)),
             }
         }
         "contains" => {
             check_arity("contains", 1, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
             let element = eval_expr(&args[0], env, cost)?;
-            cost.charge(Costs::lookup_cost())?;
-            match base {
-                Expr::ESet(b) => Ok(from_expr(Expr::GBool(b.ps.contains(&element)))),
-                Expr::EMap(b) => Ok(from_expr(Expr::GBool(
-                    b.kvs.iter().any(|(k, _)| k == &element),
-                ))),
-                other => Err(method_not_defined("contains", &other)),
+            match &base {
+                Expr::ESet(b) => {
+                    cost.charge(Costs::lookup_cost().mul(b.ps.len() as i64))?;
+                    Ok(from_expr(Expr::GBool(b.ps.contains(&element))))
+                }
+                Expr::EMap(b) => {
+                    cost.charge(Costs::lookup_cost().mul(b.kvs.len() as i64))?;
+                    Ok(from_expr(Expr::GBool(b.kvs.iter().any(|(k, _)| k == &element))))
+                }
+                other => Err(method_not_defined("contains", other)),
             }
         }
         "get" => {
             check_arity("get", 1, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
             let key = eval_expr(&args[0], env, cost)?;
-            cost.charge(Costs::lookup_cost())?;
-            match base {
-                Expr::EMap(b) => Ok(b
-                    .kvs
-                    .iter()
-                    .find(|(k, _)| k == &key)
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or_default()),
-                other => Err(method_not_defined("get", &other)),
+            match &base {
+                Expr::EMap(b) => {
+                    cost.charge(Costs::lookup_cost().mul(b.kvs.len() as i64))?;
+                    Ok(b
+                        .kvs
+                        .iter()
+                        .find(|(k, _)| k == &key)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default())
+                }
+                other => Err(method_not_defined("get", other)),
             }
         }
         "getOrElse" => {
@@ -910,15 +919,17 @@ fn eval_method(
             let base = eval_single_expr(target, env, cost)?;
             let key = eval_expr(&args[0], env, cost)?;
             let default = eval_expr(&args[1], env, cost)?;
-            cost.charge(Costs::lookup_cost())?;
-            match base {
-                Expr::EMap(b) => Ok(b
-                    .kvs
-                    .iter()
-                    .find(|(k, _)| k == &key)
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or(default)),
-                other => Err(method_not_defined("getOrElse", &other)),
+            match &base {
+                Expr::EMap(b) => {
+                    cost.charge(Costs::lookup_cost().mul(b.kvs.len() as i64))?;
+                    Ok(b
+                        .kvs
+                        .iter()
+                        .find(|(k, _)| k == &key)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or(default))
+                }
+                other => Err(method_not_defined("getOrElse", other)),
             }
         }
         "set" => {
@@ -978,19 +989,26 @@ fn eval_method(
         "slice" => {
             check_arity("slice", 2, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
-            let from = restrict_to_int(eval_to_long(&args[0], env, cost)?)?;
-            let until = restrict_to_int(eval_to_long(&args[1], env, cost)?)?;
-            cost.charge(Costs::slice_cost(until as i64))?;
+            let from_i = eval_to_long(&args[0], env, cost)?;
+            let until_i = eval_to_long(&args[1], env, cost)?;
+            // Scala `slice` clamps `from` to [0, len) and returns empty when `from >= until`.
+            // `restrict_to_int` wraps a negative index to a huge `usize`, which would make
+            // `until - from` underflow — so clamp in `i64` first.
+            let from = from_i.max(0);
+            let until = until_i.max(0);
+            let len = if until > from { (until - from) as usize } else { 0 };
+            cost.charge(Costs::slice_cost(len as i64))?;
+            let from = from as usize;
             match base {
                 Expr::GString(s) => Ok(from_expr(Expr::GString(
-                    s.chars().skip(from).take(until - from).collect(),
+                    s.chars().skip(from).take(len).collect(),
                 ))),
                 Expr::GByteArray(b) => Ok(from_expr(Expr::GByteArray(
-                    b.into_iter().skip(from).take(until - from).collect(),
+                    b.into_iter().skip(from).take(len).collect(),
                 ))),
                 Expr::EList(EList { ps, locally_free, connective_used, remainder }) => {
                     Ok(from_expr(Expr::EList(EList {
-                        ps: ps.into_iter().skip(from).take(until - from).collect(),
+                        ps: ps.into_iter().skip(from).take(len).collect(),
                         locally_free,
                         connective_used,
                         remainder,
@@ -1002,7 +1020,10 @@ fn eval_method(
         "take" => {
             check_arity("take", 1, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
-            let n = restrict_to_int(eval_to_long(&args[0], env, cost)?)?;
+            let n_i = eval_to_long(&args[0], env, cost)?;
+            // Scala `List.take(n)` returns empty for `n <= 0`. `restrict_to_int` wraps a negative
+            // index to a huge `usize`, which would return the whole list (and mint a negative cost).
+            let n = if n_i <= 0 { 0 } else { n_i as usize };
             cost.charge(Costs::take_cost(n as i64))?;
             match base {
                 Expr::EList(EList { ps, locally_free, connective_used, remainder }) => {

@@ -204,7 +204,7 @@ pub fn spatial_match<S: Sort>(target: &Par<S>, pattern: &Par<S>, fm: &FreeMap) -
         let (min_prune, max_prune) = &remainder_bounds[i];
         let mut next: Vec<(Par<S>, FreeMap)> = Vec::new();
         for (rem, fm_state) in states {
-            for (sub, comp) in sub_pars(&rem, min_b, max_b, min_prune, max_prune) {
+            for (sub, comp) in sub_pars(&rem, min_b, max_b, min_prune, max_prune)? {
                 for fm_match in spatial_match_connective(&sub, con, &fm_state)? {
                     next.push((comp.clone(), fm_match));
                 }

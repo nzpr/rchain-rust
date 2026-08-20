@@ -35,6 +35,7 @@ pub const DEFAULT_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_
 pub struct GrpcTransportClient {
     network_id: Arc<String>,
     packet_chunk_size: usize,
+    max_message_size: usize,
     tls: Arc<rustls::ClientConfig>,
     channels: Arc<tokio::sync::Mutex<HashMap<PeerNode, Channel>>>,
 }
@@ -44,7 +45,7 @@ impl GrpcTransportClient {
         network_id: String,
         cert_pem: &str,
         key_pem: &str,
-        _max_message_size: usize,
+        max_message_size: usize,
         packet_chunk_size: usize,
         _client_queue_size: usize,
     ) -> Result<Self, String> {
@@ -52,6 +53,7 @@ impl GrpcTransportClient {
         Ok(GrpcTransportClient {
             network_id: Arc::new(network_id),
             packet_chunk_size,
+            max_message_size,
             tls,
             channels: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
@@ -99,7 +101,8 @@ impl GrpcTransportClient {
 impl TransportLayer for GrpcTransportClient {
     async fn send(&self, peer: &PeerNode, msg: Protocol) -> CommErr<()> {
         let channel = self.get_channel(peer).await?;
-        let mut client = TransportLayerClient::new(channel);
+        let mut client = TransportLayerClient::new(channel)
+            .max_decoding_message_size(self.max_message_size);
         tokio::time::timeout(DEFAULT_SEND_TIMEOUT, grpc_transport::send(&mut client, peer, msg))
             .await
             .map_err(|_| CommError::TimeOut)?
@@ -125,7 +128,8 @@ impl TransportLayer for GrpcTransportClient {
                         Ok(c) => c,
                         Err(_) => return,
                     };
-                    let mut client = TransportLayerClient::new(channel);
+                    let mut client = TransportLayerClient::new(channel)
+                        .max_decoding_message_size(this.max_message_size);
                     let _ = grpc_transport::stream(
                         &mut client,
                         &peer,

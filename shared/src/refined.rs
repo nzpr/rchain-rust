@@ -109,8 +109,10 @@ impl std::fmt::Display for BlockHeight {
 impl std::ops::Add<NonNegI64> for BlockHeight {
     type Output = BlockHeight;
     fn add(self, rhs: NonNegI64) -> BlockHeight {
-        // Sum of two non-negative values stays non-negative (the invariant is preserved).
-        BlockHeight(self.0 + i64::from(rhs))
+        // Saturating add: heights are bounded by parent+1 so overflow is unreachable in practice,
+        // but saturating (rather than wrapping) preserves the non-negative invariant even under a
+        // hypothetical i64 overflow — a wrap would silently produce a negative "non-negative" value.
+        BlockHeight(self.0.saturating_add(i64::from(rhs)))
     }
 }
 
@@ -165,8 +167,10 @@ impl std::fmt::Display for SeqNum {
 impl std::ops::Add<NonNegI64> for SeqNum {
     type Output = SeqNum;
     fn add(self, rhs: NonNegI64) -> SeqNum {
-        // Sum of two non-negative values stays non-negative (the invariant is preserved).
-        SeqNum(self.0 + i64::from(rhs))
+        // Saturating add: sequence numbers are bounded by creator-latest+1 so overflow is
+        // unreachable in practice, but saturating preserves the non-negative invariant under a
+        // hypothetical i64 overflow (a wrap would produce a negative "non-negative" value).
+        SeqNum(self.0.saturating_add(i64::from(rhs)))
     }
 }
 

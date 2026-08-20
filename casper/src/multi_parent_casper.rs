@@ -14,6 +14,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
+use rchain_models::normalizer_env::NormalizerEnv;
 use rchain_models::validator::Validator;
 
 use crate::block_status::BlockStatus;
@@ -68,14 +69,14 @@ pub async fn add_deploy(
 }
 
 /// Parse-check a deploy term, then add the deploy to the pool (port of `deploy`).
-///
-/// The Scala normalizes with `NormalizerEnv(deploy)` (deployer id / return channels); here the term
-/// is normalized against an empty environment (the full `NormalizerEnv` is deferred).
 pub async fn deploy(
     dag: &dyn BlockDagStorage,
     deploy: &SignedDeployData,
 ) -> Result<DeployId, ParsingError> {
-    rchain_rholang::normalizer::source_to_adt_with_env(&deploy.data.term, &BTreeMap::new())
+    // Normalize against the deploy's environment (deployer id / deploy id), so a term that
+    // references `rho:rchain:deployerId`/`deployId` parses the same way it will when processed.
+    let normalizer_env = NormalizerEnv::new(deploy);
+    rchain_rholang::normalizer::source_to_adt_with_env(&deploy.data.term, normalizer_env.to_env())
         .map_err(|e| parsing_error(format!("Error in parsing term: \n{e}")))?;
     add_deploy(dag, deploy)
         .await
@@ -101,10 +102,12 @@ where
     F: Fn(BlockHash) -> Fut,
     Fut: std::future::Future<Output = Result<BlockIndex, String>>,
 {
-    assert!(
-        !parent_hashes.is_empty(),
-        "Parents must not be empty to calculate pre-state. Genesis block pre-state is loaded from config."
-    );
+    if parent_hashes.is_empty() {
+        return Err(
+            "Parents must not be empty to calculate pre-state. Genesis block pre-state is loaded from config."
+                .to_string(),
+        );
+    }
 
     let dag_repr = dag.get_representation().await;
     let msg_map = &dag_repr.dag_message_state.msg_map;
@@ -145,10 +148,17 @@ where
 
     // Bonds map: from the latest justification for an empty fringe, else from the PoS contract.
     let bonds_map = if prev_fringe.is_empty() {
-        justifications
-            .first()
-            .map(|j| j.bonds_map.clone())
-            .unwrap_or_default()
+        // When the fringe is empty (genesis), the bonds map is taken from the justifications.
+        // They must all agree — a forged or disagreeing bonds map would otherwise be silently
+        // picked from an arbitrary justification (M-1).
+        let mut iter = justifications.iter().map(|j| j.bonds_map.clone());
+        let first = iter.next().unwrap_or_default();
+        for other in iter {
+            if other != first {
+                return Err("justifications disagree on the bonds map".to_string());
+            }
+        }
+        first
     } else {
         let state_hash = StateHash::from_slice(prev_fringe_state.as_bytes());
         runtime.compute_bonds(&state_hash).await?

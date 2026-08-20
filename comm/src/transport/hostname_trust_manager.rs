@@ -29,6 +29,18 @@ fn ring_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
+/// Check that the certificate is currently valid (`not_before <= now <= not_after`). The custom
+/// verifier replaces rustls' default path, so the validity window (which the default verifier
+/// checks) must be enforced explicitly.
+fn cert_valid_at(cert: &CertificateDer<'_>, now: UnixTime) -> bool {
+    let Ok((_, parsed)) = x509_parser::parse_x509_certificate(cert.as_ref()) else {
+        return false;
+    };
+    let validity = parsed.validity();
+    let now_secs = now.as_secs() as i64;
+    now_secs >= validity.not_before.timestamp() && now_secs <= validity.not_after.timestamp()
+}
+
 /// Client-side verifier: the server cert's public address must equal the DNS server name (peer id).
 #[derive(Debug)]
 pub struct NodeIdServerVerifier {
@@ -50,8 +62,11 @@ impl ServerCertVerifier for NodeIdServerVerifier {
         _intermediates: &[CertificateDer<'_>],
         server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: UnixTime,
+        now: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
+        if !cert_valid_at(end_entity, now) {
+            return Err(Error::General("certificate is not currently valid".into()));
+        }
         let expected = match server_name {
             ServerName::DnsName(dns) => dns.as_ref().as_bytes(),
             _ => return Err(Error::General("expected a DNS server name (peer id)".into())),
@@ -122,8 +137,11 @@ impl ClientCertVerifier for NodeIdClientVerifier {
         &self,
         end_entity: &CertificateDer<'_>,
         _intermediates: &[CertificateDer<'_>],
-        _now: UnixTime,
+        now: UnixTime,
     ) -> Result<ClientCertVerified, Error> {
+        if !cert_valid_at(end_entity, now) {
+            return Err(Error::General("certificate is not currently valid".into()));
+        }
         public_address_of_cert(end_entity)
             .map(|_| ClientCertVerified::assertion())
             .ok_or_else(|| Error::General("certificate's public key has the wrong algorithm".into()))

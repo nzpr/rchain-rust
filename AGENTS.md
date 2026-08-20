@@ -19,6 +19,7 @@ IV.
 | The ρ-calculus core spec (grammar, sorts, operations, refinements) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
 | The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
+| How Rust made the Scala fragility explicit (bugs caught, production-readiness) | [`spec/RUST-VS-SCALA.md`](spec/RUST-VS-SCALA.md) |
 | Machine-checked Lean/Coq definitions & proofs | [`spec/`](spec/) |
 | Why the rewrite + layer map / module status (port appendix) | [`docs/src/contributor/why-rust.md`](docs/src/contributor/why-rust.md), [`docs/src/contributor/architecture.md`](docs/src/contributor/architecture.md) |
 

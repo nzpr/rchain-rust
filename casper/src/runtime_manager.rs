@@ -181,6 +181,14 @@ impl RuntimeManager {
         // Bind `rho:rchain:deployerId` (and `rho:rchain:deployId`) so the deploy's free URI names
         // resolve during normalization (port of `NormalizerEnv(deploy).toEnv`).
         let normalizer_env = NormalizerEnv::new(deploy);
+        // Enforce the deploy's declared phlo budget (port of Scala `set(phloLimit)`). The cost
+        // balance is otherwise a single i32::MAX pool shared across the runtime's lifetime; seeding
+        // it here both caps this deploy at `phlo_limit` and resets it between deploys, so one deploy
+        // can no longer drain the pool and brick every subsequent deploy until restart.
+        self.runtime.cost().set(rchain_rholang::accounting::Cost::new(
+            deploy.data.phlo_limit,
+            "deploy",
+        ));
         let eval_result = self
             .runtime
             .evaluate_with_env(&deploy.data.term, normalizer_env.to_env(), rand)

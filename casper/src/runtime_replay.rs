@@ -19,6 +19,7 @@ use rchain_models::casper::protocol::casper_message::{
 use rchain_models::par_ops::from_expr;
 use rchain_models::rholang::RhoType::RhoNumber;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_rholang::accounting::{Cost, CostAccounting};
 use rchain_rholang::evaluate_result::EvaluateResult;
 use rchain_rholang::errors::RholangError;
 use rchain_rholang::reporting_runtime::ReportingRuntime;
@@ -47,6 +48,8 @@ const REFUND_SPLIT_INDEX: u8 = 2;
 #[async_trait]
 pub trait ReplayRuntime {
     fn set_block_data(&self, block_data: BlockData);
+
+    fn cost(&self) -> &CostAccounting;
 
     async fn reset(&self, root: Blake2b256Hash) -> Result<(), String>;
 
@@ -258,6 +261,13 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
     ) -> Result<EvaluateResult, ReplayFailure> {
         // Soft transaction: revert the deploy's effects if it failed.
         let fallback = self.runtime.create_soft_checkpoint().await;
+        // Enforce the same per-deploy phlo budget as the play path (see `process_deploy`), so a
+        // replayed deploy that exceeds its recorded cost can't spuriously OOG against the shared
+        // replay pool and fail the `recorded_cost != result.cost.value` check below.
+        self.runtime.cost().set(Cost::new(
+            processed_deploy.deploy.data.phlo_limit,
+            "deploy-replay",
+        ));
         let result = self
             .runtime
             .evaluate(&processed_deploy.deploy.data.term, &rand)
@@ -482,6 +492,10 @@ impl ReplayRuntime for ReplayRhoRuntime {
         ReplayRhoRuntime::set_block_data(self, block_data);
     }
 
+    fn cost(&self) -> &CostAccounting {
+        ReplayRhoRuntime::cost(self)
+    }
+
     async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
         ReplayRhoRuntime::reset(self, root).await
     }
@@ -541,6 +555,10 @@ impl ReplayRuntime for ReplayRhoRuntime {
 impl ReplayRuntime for ReportingRuntime {
     fn set_block_data(&self, block_data: BlockData) {
         ReportingRuntime::set_block_data(self, block_data);
+    }
+
+    fn cost(&self) -> &CostAccounting {
+        ReportingRuntime::cost(self)
     }
 
     async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {

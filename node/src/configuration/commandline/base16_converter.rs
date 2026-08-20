@@ -30,7 +30,7 @@ mod tests {
             "", "0", "ff", "abc", "0123456789abcdefABCDEF", "xyz", "12z4", "0x12", " ", "GG",
         ];
         for s in samples {
-            let has_invalid = s.chars().any(|c| !c.is_ascii_hexdigit());
+            let has_invalid = s.chars().any(|c| !c.is_ascii_hexdigit()) || s.len() % 2 != 0;
             let result = parse(&[("".to_string(), vec![s.to_string()])]);
             assert_eq!(result.is_err(), has_invalid, "input: {s:?}");
         }

@@ -25,6 +25,9 @@ pub enum RSpaceError {
     EmptyPrefix,
     /// Replay data was expected to be empty at checkpoint.
     ReplayDataNotEmpty,
+    /// A recomputed COMM event was not present in the recorded replay trace (a peer-supplied
+    /// event log is self-inconsistent — the block is invalid, not a reason to panic).
+    ReplayCommNotInTrace,
 }
 
 impl fmt::Display for RSpaceError {
@@ -38,6 +41,7 @@ impl fmt::Display for RSpaceError {
             RSpaceError::CachedKeyMissing => write!(f, "cached key must be present"),
             RSpaceError::EmptyPrefix => write!(f, "prefix must be non-empty"),
             RSpaceError::ReplayDataNotEmpty => write!(f, "replay data must be empty at checkpoint"),
+            RSpaceError::ReplayCommNotInTrace => write!(f, "COMM event was not contained in the trace"),
         }
     }
 }

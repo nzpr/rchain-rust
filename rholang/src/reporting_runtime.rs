@@ -76,6 +76,11 @@ impl ReportingRuntime {
         self.space.get_report()
     }
 
+    /// The cost-accounting cell (exposed so replay can seed the per-deploy phlo budget).
+    pub fn cost(&self) -> &CostAccounting {
+        self.cost.as_ref()
+    }
+
     pub fn set_block_data(&self, block_data: BlockData) {
         *self.block_data.lock().unwrap_or_else(|p| p.into_inner()) = block_data;
     }

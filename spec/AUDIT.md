@@ -6,6 +6,9 @@ commitment in [`TYPE-SYSTEM.md`](TYPE-SYSTEM.md) and the invariant catalog in
 was assessed faithful, and what remains**, including every deliberate deviation from the Scala
 oracle.
 
+The companion page [`RUST-VS-SCALA.md`](RUST-VS-SCALA.md) explains how the Rust rewrite made these
+fragile patterns explicit and why it surpasses the Scala original for production readiness.
+
 Audit dimensions (in the order applied):
 
 1. **Type-system conformance — rules** (partiality, casting, raw bytes, untyped numbers) — machine-gated.

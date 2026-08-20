@@ -99,6 +99,24 @@ where
         }
     }
 
+    /// Insert a message into the map **without** promoting it to the sender's latest message.
+    ///
+    /// Used for validation-failed blocks: they must be recorded in the map (so
+    /// `neglectedInvalidBlock` and justification-regression can see them) but must not become a
+    /// proposer's parent, otherwise a single failed block would wedge block production (H-2).
+    pub fn insert_msg_without_latest(&self, msg: &Message<M, S>) -> Self {
+        if self.msg_map.contains_key(&msg.id) {
+            return self.clone();
+        }
+        let mut new_msg_map = self.msg_map.clone();
+        new_msg_map.insert(msg.id.clone(), msg.clone());
+
+        Self {
+            latest_msgs: self.latest_msgs.clone(),
+            msg_map: new_msg_map,
+        }
+    }
+
     /// Create a new message for `creator` and insert it.
     pub fn create_msg_and_update_sender<F>(
         &self,
