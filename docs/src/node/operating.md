@@ -77,7 +77,7 @@ thin-client model — not on the REPL client.
 
 `tools/docker-network.sh` builds the `rnode` image and boots a local network of **1–5 nodes** on a
 Docker bridge, then lets the CLI drive it. The image is built from
-[`docker/rnode/Dockerfile`](../../docker/rnode/Dockerfile).
+[`docker/rnode/Dockerfile`](../../../docker/rnode/Dockerfile).
 
 ### Prereqs
 

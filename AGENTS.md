@@ -6,23 +6,44 @@ code, and treat its statements as binding constraints, not suggestions.
 
 ## Documentation map
 
-Single sources of truth (do not duplicate these):
+Single sources of truth (do not duplicate these). The curated book is `docs/src/` (built with
+`mdbook build docs`); the **software** documentation is Parts I–III, the **port** documentation is Part
+IV.
 
 | Content | Canonical location |
 |---|---|
-| Why the rewrite (memory safety + λ → π → ρ → CoC) | [`docs/src/why-rust.md`](docs/src/why-rust.md) |
-| Layer map, module status, rewrite order, remaining work | [`docs/src/architecture.md`](docs/src/architecture.md) |
-| The ρ-calculus core (grammar, sorts, operations, refinements, Rust realization) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
+| The rholang language & the ρ-calculus (the software) | [`docs/src/rholang/`](docs/src/rholang/) (book Part I) |
+| The ρ-calculus, formally — grammar, sorts, the 19-law mapping | [`docs/src/formal/`](docs/src/formal/) (book Part II) |
+| The node — consensus, RSpace, storage, operation | [`docs/src/node/`](docs/src/node/) (book Part III) |
+| Reader/agent navigation map (goal-indexed) | [`docs/src/ai-entrypoint.md`](docs/src/ai-entrypoint.md) |
+| The ρ-calculus core spec (grammar, sorts, operations, refinements) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
 | The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
 | Machine-checked Lean/Coq definitions & proofs | [`spec/`](spec/) |
+| Why the rewrite + layer map / module status (port appendix) | [`docs/src/contributor/why-rust.md`](docs/src/contributor/why-rust.md), [`docs/src/contributor/architecture.md`](docs/src/contributor/architecture.md) |
+
+### Learning rholang (AI navigation)
+
+For an agent that needs to *understand the language* (rather than port code), the shortest path is:
+
+1. [`docs/src/rholang/why-rholang.md`](docs/src/rholang/why-rholang.md) → the model and why it fits a
+   blockchain.
+2. [`docs/src/rholang/processes-names.md`](docs/src/rholang/processes-names.md) →
+   [`docs/src/rholang/unforgeable-names.md`](docs/src/rholang/unforgeable-names.md) → the core
+   constructs.
+3. [`docs/src/formal/grammar-sorts.md`](docs/src/formal/grammar-sorts.md) +
+   [`docs/src/formal/the-19-laws.md`](docs/src/formal/the-19-laws.md) → the precise semantics.
+4. [`docs/src/ai-entrypoint.md`](docs/src/ai-entrypoint.md) → any other goal (consensus, capabilities,
+   the port).
+
+The formal oracle is `spec/`; the book explains it, it does not duplicate it.
 
 ## Intent
 
 The RChain node runs Rholang natively. We are rewriting it in **Rust**, absorbing both the Scala/JVM
 code and the C++ Rosette VM. The motivation — memory safety and the calculus-native expression of the
 node (λ → π → ρ → Calculus of Constructions) — is laid out in
-[`docs/src/why-rust.md`](docs/src/why-rust.md).
+[`docs/src/contributor/why-rust.md`](docs/src/contributor/why-rust.md).
 
 **Prime directive:** the Scala/JVM + Rosette *port* is complete; the node is now a **faithful
 implementation of the ρ-calculus**. The oracle is the mathematical specification — the 19 laws in
@@ -126,7 +147,7 @@ inductive invariant.
 - **Crypto** (`crypto/`) — Blake2b256, `Blake2b512Random`, secp256k1, Curve25519.
 
 Per-layer Scala source-of-truth files are listed in
-[`docs/src/architecture.md`](docs/src/architecture.md).
+[`docs/src/contributor/architecture.md`](docs/src/contributor/architecture.md).
 
 ## Translation contract (spec → Rust)
 
@@ -162,7 +183,7 @@ The rewrite order is dependency-driven and easiest-first; it deliberately differ
 *formalization* phases above (which rank by invariant value). Both run in parallel: laws are proven
 in phase order while code is ported in dependency order. The per-module LOC/difficulty/person-day
 ratings, the full bottom-up order, and the workspace layout live in
-[`docs/src/architecture.md`](docs/src/architecture.md).
+[`docs/src/contributor/architecture.md`](docs/src/contributor/architecture.md).
 
 Bottom-up order: `sdk` (and `regex`, in parallel) → `shared` → `crypto` + `graphz` → `models` →
 `block-storage` + `rspace` + `comm` → `rholang` → `casper` → `node` → `rspace-bench`. **Defer**

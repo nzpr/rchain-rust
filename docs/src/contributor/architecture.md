@@ -2,8 +2,8 @@
 
 The port is a Cargo workspace at the repo root — one crate per original sbt module, mirroring the sbt
 dependency graph. This chapter consolidates the layer map, per-crate status, rewrite order, and
-remaining work (folded from [`AGENTS.md`](../../AGENTS.md) and the project
-[`README.md`](../../README.md)).
+remaining work (folded from [`AGENTS.md`](../../../AGENTS.md) and the project
+[`README.md`](../../../README.md)).
 
 ## Layer map
 
@@ -27,7 +27,7 @@ remaining work (folded from [`AGENTS.md`](../../AGENTS.md) and the project
 ## Module status
 
 Ported in dependency-respecting order (easiest/leaf modules first). Each crate mirrors one upstream
-Scala module (now under [`legacy/`](../../legacy/)):
+Scala module (now under [`legacy/`](../../../legacy/)):
 
 | Crate | Status |
 |-------|--------|
@@ -51,7 +51,7 @@ Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rose
 
 The 15 components were scoped for a faithful Rust port and rated by difficulty and time. The
 **rewrite order is dependency-driven and easiest-first**; it deliberately differs from the
-*formalization* phases (which rank by invariant value — see [`AGENTS.md`](../../AGENTS.md)). Both run
+*formalization* phases (which rank by invariant value — see [`AGENTS.md`](../../../AGENTS.md)). Both run
 in parallel: laws are proven in phase order while code is ported in dependency order.
 
 ### Ratings (main LOC → difficulty → est. person-days)
@@ -104,10 +104,10 @@ Remaining:
   precise signatures (`Subst`/`Reduce`/`Match`/`FreeVars`/`RSpace/*`/`Casper/*`/`Crypto/*`), and Law
   19's crypto primitives are axiomatized by design. Law 1's 69 comparator `axiom`s remain to discharge
   (blocked on a mutual-recursion refactor). Laws 12–13 (Rosette) are **orphaned** (the VM is out of
-  scope). See [`spec/README.md`](../../spec/README.md) and
-  [`spec/INVENTORY.md`](../../spec/INVENTORY.md).
+  scope). See [`spec/README.md`](../../../spec/README.md) and
+  [`spec/INVENTORY.md`](../../../spec/INVENTORY.md).
 - **Cast / raw-byte remediation** — the ~284 `as`-cast + 21 lax + raw-byte sites are the remaining
-  checklist from the adversarial audit (see [`spec/AUDIT.md`](../../spec/AUDIT.md)). The
+  checklist from the adversarial audit (see [`spec/AUDIT.md`](../../../spec/AUDIT.md)). The
   *safe-by-construction type system* itself is done: the sort-indexed `Par<S>` (compile-time
   Name/Proc) plus the load-bearing `Closed`/`WellScoped`/`BindsAtMostOnce` refinements
-  ([`spec/RHO-CALCULUS.md`](../../spec/RHO-CALCULUS.md)).
+  ([`spec/RHO-CALCULUS.md`](../../../spec/RHO-CALCULUS.md)).

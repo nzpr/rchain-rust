@@ -4,6 +4,24 @@ A faithful Rust rewrite of the [RChain](https://rchain.coop) node. The Rust impl
 Cargo workspace at the top level (one crate per original sbt module); the entire upstream Scala
 fork is preserved for reference under [`legacy/`](legacy/).
 
+## Documentation
+
+The documentation is served as a book (`mdbook serve docs`). It is organized software-first:
+
+- **Part I — Rholang & the ρ-calculus** ([`docs/src/rholang/`](docs/src/rholang/)) — the language:
+  what it is, why it fits a blockchain, and from processes and names through object-capability smart
+  contracts.
+- **Part II — The ρ-calculus, formally** ([`docs/src/formal/`](docs/src/formal/)) — the grammar, the
+  sorts, and the 19 laws, mapped to their machine-checked proofs.
+- **Part III — The node** ([`docs/src/node/`](docs/src/node/)) — consensus, the tuple space, storage,
+  and operation.
+- **Part IV — Contributor / port** ([`docs/src/contributor/`](docs/src/contributor/)) — why Rust, and
+  the per-module status.
+
+The entry point for the book is [`docs/src/introduction.md`](docs/src/introduction.md); the
+goal-indexed map for readers and AI agents is
+[`docs/src/ai-entrypoint.md`](docs/src/ai-entrypoint.md).
+
 ## Why Rust
 
 Two reasons drive the rewrite.
@@ -19,8 +37,8 @@ a quoted process, expressed here as the sortable `Par` value). The port's type d
 the base sort of a Calculus of Constructions, constructible and provable in Lean 4 and Coq.
 
 The full argument — with a Rust → calculus → formalization correspondence table — is in
-[docs/src/why-rust.md](docs/src/why-rust.md). The prose documentation is also served as a book:
-`mdbook serve docs`.
+[docs/src/contributor/why-rust.md](docs/src/contributor/why-rust.md). The prose documentation is also
+served as a book: `mdbook serve docs`.
 
 ## Governance
 
@@ -34,7 +52,7 @@ port reference.
 
 Twelve crates mirror the original sbt modules, ported in dependency order. The per-crate status, the
 layer map, the rewrite order, and the remaining work are consolidated in
-[docs/src/architecture.md](docs/src/architecture.md).
+[docs/src/contributor/architecture.md](docs/src/contributor/architecture.md).
 
 ## Build & test
 
@@ -88,7 +106,7 @@ from it over the TLS transport (`rnode://<id>@bootstrap?protocol=40400&discovery
 `cli <node> <subcommand...>` helper runs the Rust client inside the network against that node.
 
 The full operation guide (commands, ports, the genesis ceremony, and the multi-node topology) is in
-[docs/src/operating.md](docs/src/operating.md).
+[docs/src/node/operating.md](docs/src/node/operating.md).
 
 ## Where the Scala went
 

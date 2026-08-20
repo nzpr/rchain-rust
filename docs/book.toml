@@ -1,5 +1,5 @@
 [book]
-title = "RChain → Rust rewrite"
+title = "RChain"
 authors = ["RChain-Rust contributors"]
 language = "en"
 src = "src"

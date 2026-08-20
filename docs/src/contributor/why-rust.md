@@ -2,7 +2,7 @@
 
 The RChain node executes Rholang, a concurrent message-passing language formally modeled by the
 ρ-calculus — a *reflective, higher-order extension of the π-calculus*. The original node was written
-in Scala on the JVM, with a C++ actor VM ([Rosette](../../legacy/rosette/)) underneath. This
+in Scala on the JVM, with a C++ actor VM ([Rosette](../../../legacy/rosette/)) underneath. This
 repository rewrites it in Rust.
 
 Two reasons drive the rewrite.
@@ -12,8 +12,8 @@ Two reasons drive the rewrite.
 The Scala/JVM node leaked memory and paused for garbage collection. These were not theoretical
 concerns: the node shipped a `diagnostics` service that reported JVM `Memory`, `MemoryPool`, and
 `GarbageCollector` metrics to its operators (see
-[`legacy/docs/rnode-api/index.md`](../../legacy/docs/rnode-api/index.md)), and the build needed an
-enlarged heap and thread stack just to run (see [`legacy/DEVELOPER.md`](../../legacy/DEVELOPER.md)):
+[`legacy/docs/rnode-api/index.md`](../../../legacy/docs/rnode-api/index.md)), and the build needed an
+enlarged heap and thread stack just to run (see [`legacy/DEVELOPER.md`](../../../legacy/DEVELOPER.md)):
 
 ```sh
 export SBT_OPTS="-Xmx4g -Xss2m -Dsbt.supershell=false"
@@ -41,7 +41,7 @@ Rust expresses each rung natively:
 
 - **λ** — closures (`fn`, `Fn`/`FnMut`/`FnOnce`) are exactly λ-abstraction and application.
   Higher-order functions are pervasive, e.g. `SyncVar::update(f: impl FnOnce(A) -> A)` in
-  [`shared/src/sync_var.rs`](../../shared/src/sync_var.rs).
+  [`shared/src/sync_var.rs`](../../../shared/src/sync_var.rs).
 - **π** — Rust's concurrency primitives — `std::sync::mpsc`/`tokio::sync::mpsc` channels,
   `Arc` + `Mutex`/`Condvar`, and the `Send`/`Sync` marker traits — are channels and name passing. A
   cell such as `SyncVar`/`MaybeCell` is a degenerate channel.
@@ -52,7 +52,7 @@ Rust expresses each rung natively:
   discipline embeds ρ as the base sort of a Calculus of Constructions and proves its fundamentals.
 
 The correspondence table below maps each Rust construct to the calculus concept it expresses and to
-the file in [`spec/`](../../spec/) where that concept is formalized.
+the file in [`spec/`](../../../spec/) where that concept is formalized.
 
 ## Correspondence
 
@@ -61,26 +61,26 @@ the file in [`spec/`](../../spec/) where that concept is formalized.
 | `fn` / `impl Fn` / closures | λ-abstraction and application | — |
 | `std::sync::mpsc` / `tokio::sync::mpsc` channel | π-calculus channel (name) | — |
 | `Arc` + `Mutex`/`Condvar`, `Send`/`Sync` | π name mobility (passing a channel) | — |
-| `Par` / `GUnforgeable` value (sorted, hashed) | ρ quoted process / name | [`spec/Rchain/Par.lean`](../../spec/Rchain/Par.lean), [`Sort.lean`](../../spec/Rchain/Sort.lean) |
-| `classify : Par → PSort`, `HasSort` | ρ base sort (process vs name) | [`spec/Rchain/Ty.lean`](../../spec/Rchain/Ty.lean) |
-| `Closed`, `Subst`, `Reduce` | α-equivalence, substitution, COMM (Laws 2–6) | [`spec/Rchain/Rho.lean`](../../spec/Rchain/Rho.lean), [`Ty.lean`](../../spec/Rchain/Ty.lean) |
-| `TotalOn f := ∀ p, Closed p → Closed (f p)` | "no `.unwrap()`" totality | [`spec/TYPE-SYSTEM.md`](../../spec/TYPE-SYSTEM.md) (F6) |
-| Lean CIC / Coq CIC | Calculus of Constructions | [`spec/lakefile.toml`](../../spec/lakefile.toml), [`spec/coq/_CoqProject`](../../spec/coq/_CoqProject) |
+| `Par` / `GUnforgeable` value (sorted, hashed) | ρ quoted process / name | [`spec/Rchain/Par.lean`](../../../spec/Rchain/Par.lean), [`Sort.lean`](../../../spec/Rchain/Sort.lean) |
+| `classify : Par → PSort`, `HasSort` | ρ base sort (process vs name) | [`spec/Rchain/Ty.lean`](../../../spec/Rchain/Ty.lean) |
+| `Closed`, `Subst`, `Reduce` | α-equivalence, substitution, COMM (Laws 2–6) | [`spec/Rchain/Rho.lean`](../../../spec/Rchain/Rho.lean), [`Ty.lean`](../../../spec/Rchain/Ty.lean) |
+| `TotalOn f := ∀ p, Closed p → Closed (f p)` | "no `.unwrap()`" totality | [`spec/TYPE-SYSTEM.md`](../../../spec/TYPE-SYSTEM.md) (F6) |
+| Lean CIC / Coq CIC | Calculus of Constructions | [`spec/lakefile.toml`](../../../spec/lakefile.toml), [`spec/coq/_CoqProject`](../../../spec/coq/_CoqProject) |
 
 ## From calculus to proof
 
 Because the hierarchy bottoms out in the Calculus of Constructions, the port's invariants can be
-*constructed and proven* rather than merely asserted. This is what [`spec/`](../../spec/) does:
+*constructed and proven* rather than merely asserted. This is what [`spec/`](../../../spec/) does:
 
-- [`spec/TYPE-SYSTEM.md`](../../spec/TYPE-SYSTEM.md) embeds the ρ-calculus as the base sort of a
+- [`spec/TYPE-SYSTEM.md`](../../../spec/TYPE-SYSTEM.md) embeds the ρ-calculus as the base sort of a
   Calculus of Constructions and proves six fundamentals (F1–F6) in Lean 4 — sort classification is
   functional and decidable, structural congruence is an equivalence, substitution preserves sort,
   reduction preserves sort and closedness, canonicalization commutes with typing, and totality is
   compositional.
-- [`spec/INVENTORY.md`](../../spec/INVENTORY.md) is the **19-law invariant catalog** — one law per
+- [`spec/INVENTORY.md`](../../../spec/INVENTORY.md) is the **19-law invariant catalog** — one law per
   Rholang / RSpace / Rosette / Casper / Storage / Crypto invariant, each with a Scala source-of-truth
   pointer and a Lean/Coq formalization target.
-- [`spec/Rchain/`](../../spec/Rchain/) (Lean 4) and [`spec/coq/`](../../spec/coq/) (Coq) hold the
+- [`spec/Rchain/`](../../../spec/Rchain/) (Lean 4) and [`spec/coq/`](../../../spec/coq/) (Coq) hold the
   machine-checked definitions and theorems.
 
 The claim "every fundamental property of expressing the node is contained within Rust *as-is*" is the
@@ -90,7 +90,7 @@ intuition; `spec/` is its machine-checked realization.
 
 - Meredith & Radestock, *A Reflective Higher-Order Calculus* (2005) — the ρ-calculus.
 - Meredith, *Higher Category Models of the π-Calculus* — the categorical semantics.
-- The in-repo Rholang reference ([`legacy/rholang/reference_doc/`](../../legacy/rholang/reference_doc/))
+- The in-repo Rholang reference ([`legacy/rholang/reference_doc/`](../../../legacy/rholang/reference_doc/))
   documents the tuplespace model, quoting of processes into names, normalization (de Bruijn
   α-equivalence and the canonical `|` sort), and the ρ/λ/π relationship.
 
@@ -98,8 +98,8 @@ intuition; `spec/` is its machine-checked realization.
 
 The port is complete; the node is now a *faithful implementation of the ρ-calculus*. The motivation is
 memory safety and calculus-native expression, **not** a correctness repair of consensus behavior. The
-binding constraint is stated in [`AGENTS.md`](../../AGENTS.md): the 19 laws in
-[`spec/INVENTORY.md`](../../spec/INVENTORY.md) and the ρ→CoC type discipline in
-[`spec/TYPE-SYSTEM.md`](../../spec/TYPE-SYSTEM.md) are the oracle. Rust carries those invariants
+binding constraint is stated in [`AGENTS.md`](../../../AGENTS.md): the 19 laws in
+[`spec/INVENTORY.md`](../../../spec/INVENTORY.md) and the ρ→CoC type discipline in
+[`spec/TYPE-SYSTEM.md`](../../../spec/TYPE-SYSTEM.md) are the oracle. Rust carries those invariants
 structurally (refinement types, no silent partiality) rather than reproducing the JVM's patterns —
 including its latent bugs.
