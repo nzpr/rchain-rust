@@ -816,7 +816,7 @@ fn normalize_contr(
 
     let receive = Receive {
         binds: vec![ReceiveBind {
-            patterns: formal_pars.into_iter().map(|p| p.quote()).collect(),
+            patterns: formal_pars.into_iter().rev().map(|p| p.quote()).collect(),
             source: Box::new(name_result.par.clone().quote()),
             remainder: remainder_var.map(Box::new),
             free_count: FreeCount::from_nonneg(bound_count),
