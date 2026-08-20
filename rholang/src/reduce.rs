@@ -784,6 +784,16 @@ fn eval_method(
                 other => Err(method_not_defined("toUtf8Bytes", &other)),
             }
         }
+        "toByteArray" => {
+            // Serialize the substituted `Par` to its protobuf wire form (port of the Scala
+            // `toByteArray` = `Serialize[Par].encode`, where `Serialize[Par]` is
+            // `mkProtobufInstance(Par)` — the protobuf serialization, not UTF-8).
+            check_arity("toByteArray", 0, args.len())?;
+            let substituted = substitute_par(target, 0, env)?;
+            let bytes =
+                <Par as rchain_shared::serialize::Serialize<Par>>::encode(&substituted);
+            Ok(from_expr(Expr::GByteArray(bytes)))
+        }
         "union" => {
             check_arity("union", 1, args.len())?;
             let base = eval_single_expr(target, env, cost)?;
