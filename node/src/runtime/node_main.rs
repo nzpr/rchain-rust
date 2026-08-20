@@ -41,7 +41,13 @@ pub async fn run_cli(options: &Options) -> Result<(), Vec<String>> {
                 .await
                 .map_err(|e| vec![e])?;
             tokio::task::spawn_blocking(move || {
-                let mut console = RustylineConsole::new();
+                let mut console = match RustylineConsole::new() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Failed to initialize the REPL console: {e}");
+                        return;
+                    }
+                };
                 ReplRuntime.repl_program(&mut console, &client);
             })
             .await

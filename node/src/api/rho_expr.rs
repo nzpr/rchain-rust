@@ -134,36 +134,52 @@ fn key_to_string(key: &RhoExpr) -> Option<String> {
     }
 }
 
-/// Convert a `RhoExpr` back to a `Par` (port of `rhoExprToParProto`).
-pub fn rho_expr_to_par(exp: &RhoExpr) -> Par {
+/// Convert a `RhoExpr` back to a `Par` (port of `rhoExprToParProto`). Hex-encoded leaves are
+/// validated (failing on non-hex input) rather than silently corrupted.
+pub fn rho_expr_to_par(exp: &RhoExpr) -> Result<Par, String> {
     match exp {
-        RhoExpr::ExprPar(data) => data
-            .iter()
-            .map(rho_expr_to_par)
-            .fold(Par::default(), |acc, p| acc.par_merge(&p)),
-        RhoExpr::ExprTuple(data) => RhoTupleN::apply(data.iter().map(rho_expr_to_par).collect()),
-        RhoExpr::ExprList(data) => RhoList::apply(data.iter().map(rho_expr_to_par).collect()),
-        RhoExpr::ExprSet(data) => RhoSet::apply(data.iter().map(rho_expr_to_par).collect()),
-        RhoExpr::ExprMap(data) => RhoMap::apply(
-            data.iter()
-                .map(|(k, v)| (RhoString::apply(k.clone()), rho_expr_to_par(v)))
-                .collect(),
-        ),
-        RhoExpr::ExprBool(b) => RhoBoolean::apply(*b),
-        RhoExpr::ExprInt(i) => RhoNumber::apply(*i),
-        RhoExpr::ExprString(s) => RhoString::apply(s.clone()),
-        RhoExpr::ExprUri(u) => RhoUri::apply(u.clone()),
-        RhoExpr::ExprBytes(hex) => RhoByteArray::apply(base16::unsafe_decode(hex)),
+        RhoExpr::ExprPar(data) => {
+            let pars: Result<Vec<Par>, String> = data.iter().map(rho_expr_to_par).collect();
+            Ok(pars?.into_iter().fold(Par::default(), |acc, p| acc.par_merge(&p)))
+        }
+        RhoExpr::ExprTuple(data) => {
+            let pars: Result<Vec<Par>, String> = data.iter().map(rho_expr_to_par).collect();
+            Ok(RhoTupleN::apply(pars?))
+        }
+        RhoExpr::ExprList(data) => {
+            let pars: Result<Vec<Par>, String> = data.iter().map(rho_expr_to_par).collect();
+            Ok(RhoList::apply(pars?))
+        }
+        RhoExpr::ExprSet(data) => {
+            let pars: Result<Vec<Par>, String> = data.iter().map(rho_expr_to_par).collect();
+            Ok(RhoSet::apply(pars?))
+        }
+        RhoExpr::ExprMap(data) => {
+            let kvs: Result<Vec<(String, Par)>, String> = data
+                .iter()
+                .map(|(k, v)| rho_expr_to_par(v).map(|p| (k.clone(), p)))
+                .collect();
+            Ok(RhoMap::apply(
+                kvs?.into_iter()
+                    .map(|(k, v)| (RhoString::apply(k), v))
+                    .collect(),
+            ))
+        }
+        RhoExpr::ExprBool(b) => Ok(RhoBoolean::apply(*b)),
+        RhoExpr::ExprInt(i) => Ok(RhoNumber::apply(*i)),
+        RhoExpr::ExprString(s) => Ok(RhoString::apply(s.clone())),
+        RhoExpr::ExprUri(u) => Ok(RhoUri::apply(u.clone())),
+        RhoExpr::ExprBytes(hex) => Ok(RhoByteArray::apply(base16::try_decode(hex)?)),
         RhoExpr::ExprUnforg(u) => unforg_to_par(u),
     }
 }
 
-/// Convert a `RhoUnforg` to a `Par` (port of `unforgToParProto`).
-pub fn unforg_to_par(unforg: &RhoUnforg) -> Par {
+/// Convert a `RhoUnforg` to a `Par` (port of `unforgToParProto`), validating the hex-encoded name.
+pub fn unforg_to_par(unforg: &RhoUnforg) -> Result<Par, String> {
     match unforg {
-        RhoUnforg::UnforgPrivate(name) => RhoName::apply_bytes(base16::unsafe_decode(name)),
-        RhoUnforg::UnforgDeploy(name) => RhoDeployId::apply(base16::unsafe_decode(name)),
-        RhoUnforg::UnforgDeployer(name) => RhoDeployerId::apply(base16::unsafe_decode(name)),
+        RhoUnforg::UnforgPrivate(name) => Ok(RhoName::apply_bytes(base16::try_decode(name)?)),
+        RhoUnforg::UnforgDeploy(name) => Ok(RhoDeployId::apply(base16::try_decode(name)?)),
+        RhoUnforg::UnforgDeployer(name) => Ok(RhoDeployerId::apply(base16::try_decode(name)?)),
     }
 }
 
@@ -172,7 +188,7 @@ mod tests {
     use super::*;
 
     fn round_trip(e: &RhoExpr) {
-        assert_eq!(expr_from_par(&rho_expr_to_par(e)), Some(e.clone()));
+        assert_eq!(expr_from_par(&rho_expr_to_par(e).unwrap()), Some(e.clone()));
     }
 
     #[test]

@@ -77,7 +77,7 @@ impl WebApi for WebApiImpl {
         &self,
         request: &DataAtNameRequest,
     ) -> Result<DataAtNameResponse, BlockApiException> {
-        let par = unforg_to_par(&request.name);
+        let par = unforg_to_par(&request.name).map_err(BlockApiException)?;
         let (dbs, length) = self
             .block_api
             .get_listening_name_data_response(request.depth, &par)
@@ -90,7 +90,7 @@ impl WebApi for WebApiImpl {
         &self,
         request: &DataAtNameByBlockHashRequest,
     ) -> Result<RhoDataResponse, BlockApiException> {
-        let par = rho_expr_to_par(&request.name);
+        let par = rho_expr_to_par(&request.name).map_err(BlockApiException)?;
         let (pars, block) = self
             .block_api
             .get_data_at_par(&par, &request.block_hash, request.use_pre_state_hash)

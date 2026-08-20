@@ -126,10 +126,10 @@ pub struct RustylineConsole {
 }
 
 impl RustylineConsole {
-    pub fn new() -> Self {
-        let mut editor = Editor::<ReplHelper, DefaultHistory>::new().expect("rustyline editor");
+    pub fn new() -> Result<Self, String> {
+        let mut editor = Editor::<ReplHelper, DefaultHistory>::new().map_err(|e| e.to_string())?;
         editor.set_helper(Some(ReplHelper::new(Vec::new())));
-        RustylineConsole { editor }
+        Ok(RustylineConsole { editor })
     }
 }
 

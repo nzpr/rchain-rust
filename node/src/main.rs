@@ -13,11 +13,17 @@ fn main() {
     // The rholang parser + reducer recurse through deeply-nested contract sources (the genesis
     // blessed terms in particular); a 2 MiB worker stack overflows. Give the runtime a larger
     // per-worker stack (the JVM node runs these paths on a much larger native stack).
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .thread_stack_size(32 * 1024 * 1024)
         .enable_all()
         .build()
-        .expect("failed to build tokio runtime");
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("Failed to build the tokio runtime: {e}");
+            std::process::exit(1);
+        }
+    };
     runtime.block_on(async_main());
 }
 

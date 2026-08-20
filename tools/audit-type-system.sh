@@ -122,7 +122,11 @@ run_class() {
   esac
 }
 
-classes=("${@:-panic unsafe silent cast lax get}")
+if [ "$#" -eq 0 ]; then
+  classes=(panic unsafe silent cast lax get)
+else
+  classes=("$@")
+fi
 for cls in "${classes[@]}"; do
   run_class "$cls"
 done
