@@ -946,7 +946,7 @@ impl Parser {
     }
 
     fn parse_receipt(&mut self) -> Result<Receipt, RholangError> {
-        // Distinguish the arrow: linear "<-", peek "<<-" (repeated "<=" is deferred).
+        // Distinguish the arrow: linear "<-", peek "<<-", repeated "<=".
         let (names, remainder) = self.parse_bind_head()?;
         match self.peek() {
             Tok::LArrow => {
@@ -975,15 +975,28 @@ impl Parser {
                 }
                 Ok(Receipt::ReceiptPeek(ReceiptPeekImpl::PeekSimple(binds)))
             }
+            Tok::Lte => {
+                self.next();
+                let source = self.parse_name()?;
+                let mut binds = vec![RepeatedBind(names, remainder, source)];
+                while self.peek() == &Tok::Amp {
+                    self.next();
+                    let (n, r) = self.parse_bind_head()?;
+                    self.expect(Tok::Lte)?;
+                    let s = self.parse_name()?;
+                    binds.push(RepeatedBind(n, r, s));
+                }
+                Ok(Receipt::ReceiptRepeated(ReceiptRepeatedImpl::RepeatedSimple(binds)))
+            }
             t => Err(RholangError::SyntaxError(format!(
-                "expected <- or <<-, got {t:?}"
+                "expected <-, <<-, or <=, got {t:?}"
             ))),
         }
     }
 
     fn parse_bind_head(&mut self) -> Result<(Vec<Name>, NameRemainder), RholangError> {
         let mut names = Vec::new();
-        while !matches!(self.peek(), Tok::LArrow | Tok::LLArrow | Tok::Ellipsis) {
+        while !matches!(self.peek(), Tok::LArrow | Tok::LLArrow | Tok::Lte | Tok::Ellipsis) {
             names.push(self.parse_name()?);
             if self.peek() == &Tok::Comma {
                 self.next();

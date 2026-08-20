@@ -513,9 +513,11 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v1 = eval_single_expr(p1, env, cost)?;
             let v2 = eval_single_expr(p2, env, cost)?;
             match (&v1, &v2) {
-                (Expr::ESet(_), Expr::ESet(_)) => Err(RholangError::ReduceError(
-                    "set difference (--) is not yet ported".to_string(),
-                )),
+                (Expr::ESet(b), Expr::ESet(o)) => {
+                    cost.charge(Costs::diff_cost(o.ps.len() as i64))?;
+                    let ps: Vec<Par> = b.ps.iter().filter(|p| !o.ps.contains(p)).cloned().collect();
+                    Ok(Expr::ESet(par_set(ps)))
+                }
                 (Expr::ESet(_), o) => Err(RholangError::OperatorExpectedError {
                     op: "--".to_string(),
                     expected: "Set".to_string(),
@@ -1712,6 +1714,28 @@ mod tests {
         let result = eval_method("union", &s1, &[s2], &e, &cost).unwrap();
         match single_expr(&result).unwrap() {
             Expr::ESet(set) => assert_eq!(set.ps.len(), 3),
+            _ => panic!("expected a set"),
+        }
+    }
+
+    #[test]
+    fn set_difference_operator() {
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let e = Env::new();
+        let s1 = from_expr(Expr::ESet(par_set(vec![
+            from_expr(Expr::GInt(1)),
+            from_expr(Expr::GInt(2)),
+        ])));
+        let s2 = from_expr(Expr::ESet(par_set(vec![
+            from_expr(Expr::GInt(2)),
+            from_expr(Expr::GInt(3)),
+        ])));
+        let diff = eval_expr_to_expr(&Expr::EMinusMinus(Box::new(s1), Box::new(s2)), &e, &cost).unwrap();
+        match diff {
+            Expr::ESet(set) => {
+                assert_eq!(set.ps.len(), 1);
+                assert_eq!(set.ps[0], from_expr(Expr::GInt(1)));
+            }
             _ => panic!("expected a set"),
         }
     }

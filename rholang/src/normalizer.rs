@@ -241,7 +241,21 @@ pub fn normalize_proc(p: &Proc, input: ProcVisitInputs) -> Result<ProcVisitOutpu
         }
         Proc::PInput(receipts, body) => normalize_input(receipts, body, input),
         Proc::PLet(decl, decls, body) => normalize_let(decl, decls, body, input),
-        _ => Err(defer("process")),
+        Proc::PChoice(branches) => {
+            // `select { pat <- ch => body; ... }` (nondeterministic receive choice) has no Scala
+            // normalizer (the Scala oracle also leaves `PChoice` unimplemented). Desugar each branch
+            // to a `for` receive and compose them in parallel; the RSpace COMM then fires a receive
+            // per matching datum (the flat model's representation of choice).
+            let mut procs: Vec<Proc> = branches
+                .iter()
+                .map(|b| Proc::PInput(vec![Receipt::ReceiptLinear(b.0.clone())], b.1.clone()))
+                .collect();
+            let mut par = procs.pop().unwrap_or(Proc::PNil);
+            while let Some(p) = procs.pop() {
+                par = Proc::PPar(Box::new(p), Box::new(par));
+            }
+            normalize_proc(&par, input)
+        }
     }
 }
 
@@ -1094,6 +1108,68 @@ fn normalize_input(
     }
     let receipt = &receipts[0];
 
+    // Desugar complex input sources (`for(x <- y?)` / `for(x <- y!(z))`) into a `new` of sends +
+    // a simple-source receive (port of `PInputNormalizer`, complex-source branch).
+    if let Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(binds)) = receipt {
+        if binds.iter().any(|lb| !matches!(lb.2, NameSource::SimpleSource(_))) {
+            let mut sends: Vec<Proc> = Vec::new();
+            let mut continuation = body.clone();
+            let mut new_binds: Vec<LinearBind> = Vec::new();
+            let mut name_decls: Vec<NameDecl> = Vec::new();
+            for lb in binds {
+                match &lb.2 {
+                    NameSource::SimpleSource(_) => new_binds.push(lb.clone()),
+                    NameSource::ReceiveSendSource(name) => {
+                        let id = fresh_identifier();
+                        let mut names = vec![Name::NameVar(id.clone())];
+                        names.extend(lb.0.clone());
+                        new_binds.push(LinearBind(
+                            names,
+                            lb.1.clone(),
+                            NameSource::SimpleSource(name.clone()),
+                        ));
+                        continuation = Proc::PPar(
+                            Box::new(Proc::PSend(
+                                Name::NameVar(id),
+                                SendKind::SendSingle,
+                                Vec::new(),
+                            )),
+                            Box::new(continuation),
+                        );
+                    }
+                    NameSource::SendReceiveSource(name, procs) => {
+                        let id = fresh_identifier();
+                        new_binds.push(LinearBind(
+                            lb.0.clone(),
+                            lb.1.clone(),
+                            NameSource::SimpleSource(Name::NameVar(id.clone())),
+                        ));
+                        name_decls.push(NameDecl::NameDeclSimpl(id.clone()));
+                        let mut send_data = vec![Proc::PEval(Name::NameVar(id))];
+                        send_data.extend(procs.clone());
+                        sends.push(Proc::PSend(
+                            name.clone(),
+                            SendKind::SendSingle,
+                            send_data,
+                        ));
+                    }
+                }
+            }
+            let receipt = Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(new_binds));
+            let pinput = Proc::PInput(vec![receipt], Box::new(continuation));
+            let mut par = pinput;
+            for s in sends.into_iter().rev() {
+                par = Proc::PPar(Box::new(s), Box::new(par));
+            }
+            let result = if name_decls.is_empty() {
+                par
+            } else {
+                Proc::PNew(name_decls, Box::new(par))
+            };
+            return normalize_proc(&result, input);
+        }
+    }
+
     // Extract (patterns, sources, persistent, peek).
     let (patterns, sources, persistent, peek): (Vec<(Vec<Name>, NameRemainder)>, Vec<Name>, bool, bool) =
         match receipt {
@@ -1262,7 +1338,39 @@ fn normalize_let(
                 )
             }
         }
-        Decls::ConcDeclsImpl(_) => return Err(defer("concurrent let")),
+        Decls::ConcDeclsImpl(conc_decls) => {
+            // Concurrent `let` desugars to `new r1, r2, ... in { r1!(p1) | r2!(p2) | ... |
+            // for(pat1 <- r1 & pat2 <- r2 & ...) { body } }` (port of `PLetNormalizer`, `ConcDeclsImpl`).
+            let mut all_decls: Vec<&Decl> = vec![decl];
+            for cd in conc_decls {
+                all_decls.push(&cd.0);
+            }
+            let identifiers: Vec<String> = (0..all_decls.len()).map(|_| fresh_identifier()).collect();
+            let mut sends: Vec<Proc> = Vec::new();
+            let mut binds: Vec<LinearBind> = Vec::new();
+            let mut name_decls: Vec<NameDecl> = Vec::new();
+            for (id, d) in identifiers.iter().zip(&all_decls) {
+                sends.push(Proc::PSend(
+                    Name::NameVar(id.clone()),
+                    SendKind::SendSingle,
+                    d.2.clone(),
+                ));
+                binds.push(LinearBind(
+                    d.0.clone(),
+                    d.1.clone(),
+                    NameSource::SimpleSource(Name::NameVar(id.clone())),
+                ));
+                name_decls.push(NameDecl::NameDeclSimpl(id.clone()));
+            }
+            let receipt = Receipt::ReceiptLinear(ReceiptLinearImpl::LinearSimple(binds));
+            let receive = Proc::PInput(vec![receipt], Box::new(body.clone()));
+            let mut par = receive;
+            for s in sends.into_iter().rev() {
+                par = Proc::PPar(Box::new(s), Box::new(par));
+            }
+            let pnew = Proc::PNew(name_decls, Box::new(par));
+            return normalize_proc(&pnew, input);
+        }
     };
 
     // Build the value EList from the RHS procs.
@@ -1672,5 +1780,25 @@ mod tests {
             source_to_adt("x!(1)"),
             Err(RholangError::TopLevelFreeVariablesNotAllowedError(_))
         ));
+    }
+
+    #[test]
+    fn compiler_normalizes_concurrent_let() {
+        assert!(source_to_adt("let x <- 1 & y <- 2 in { Nil }").is_ok());
+    }
+
+    #[test]
+    fn compiler_normalizes_select() {
+        assert!(source_to_adt("new ch in { select { x <- ch => Nil } }").is_ok());
+    }
+
+    #[test]
+    fn compiler_normalizes_repeated_receive() {
+        assert!(source_to_adt("new ch in { for(x <= ch) { Nil } }").is_ok());
+    }
+
+    #[test]
+    fn compiler_normalizes_complex_input_source() {
+        assert!(source_to_adt("new ch in { for(x <- ch?) { Nil } }").is_ok());
     }
 }
