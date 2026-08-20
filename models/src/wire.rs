@@ -736,4 +736,28 @@ mod differential {
         let bytes = <a::Par as Serialize<a::Par>>::encode(&a::Par::default());
         assert_eq!(hex(&bytes), load("par_empty"));
     }
+
+    #[test]
+    fn par_with_g_string_serializes_to_proto() {
+        // `Par { exprs: [GString("foo")] }` -> `2a 05 (1a 03 "foo")` (field 5 exprs, field 3 g_string).
+        let par = a::Par {
+            exprs: vec![a::Expr::GString("foo".to_string())],
+            ..Default::default()
+        };
+        let bytes = <a::Par as Serialize<a::Par>>::encode(&par);
+        assert_eq!(hex(&bytes), "2a051a03666f6f");
+    }
+
+    #[test]
+    fn par_with_g_private_serializes_to_proto() {
+        // `Par { unforgeables: [GPrivate([0x01; 32])] }` -> `3a 24 (0a 22 (0a 20 <32x01>))`
+        // (field 7 unforgeables, field 1 g_private_body, field 1 id).
+        let par = a::Par {
+            unforgeables: vec![a::GUnforgeable::GPrivate(a::GPrivate { id: vec![0x01; 32] })],
+            ..Default::default()
+        };
+        let bytes = <a::Par as Serialize<a::Par>>::encode(&par);
+        let expected = format!("3a240a220a20{}", "01".repeat(32));
+        assert_eq!(hex(&bytes), expected);
+    }
 }
