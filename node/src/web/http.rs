@@ -21,7 +21,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::protocol::comm_util::ConnectionsCell;
-use rchain_comm::peer_node::PeerNode;
+use rchain_comm::discovery::NodeDiscovery;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_models::block_hash::BlockHash;
 use rchain_shared::refined::Port;
@@ -38,12 +38,12 @@ use crate::web::status_info;
 use crate::web::version_info;
 
 /// Comm state needed by `GET /status` (port of the `ConnectionsCell`/`NodeDiscovery`/`RPConfAsk`
-/// arguments of `StatusInfo.service`). The discovered-peers (Kademlia routing table) source is wired
-/// with the discovery service (deferred); until then `discovered` is empty so `nodes` is 0.
+/// arguments of `StatusInfo.service`).
 #[derive(Clone)]
 pub struct StatusProvider {
     pub connections: ConnectionsCell,
     pub rp_conf: RPConf,
+    pub discovery: Arc<dyn NodeDiscovery>,
 }
 
 /// State shared by the public HTTP server (port of the `webApi` + `prometheusReporter` +
@@ -79,7 +79,7 @@ pub async fn status(State(state): State<HttpState>) -> Response {
     match &state.status_provider {
         Some(provider) => {
             let connections = provider.connections.read().await;
-            let discovered: Vec<PeerNode> = Vec::new();
+            let discovered = provider.discovery.peers();
             let version = version_info::get(env!("CARGO_PKG_VERSION"), None);
             let status = status_info::status(&version, &connections, &discovered, &provider.rp_conf);
             (StatusCode::OK, Json(status)).into_response()
@@ -375,7 +375,7 @@ mod tests {
     use axum::body::to_bytes;
     use rchain_block_storage::dag::codecs::{BlockHashCodec, BlockMessageCodec};
     use rchain_casper::reporting::noop;
-    use rchain_comm::peer_node::NodeIdentifier;
+    use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
     use rchain_comm::rp::rp_conf::ClearConnectionsConf;
     use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo};
     use rchain_models::casper::protocol::report::BlockEventInfo;
@@ -384,6 +384,15 @@ mod tests {
     use std::marker::PhantomData;
 
     struct JsonCodec<T>(PhantomData<T>);
+
+    struct NoopDiscovery;
+    #[async_trait]
+    impl NodeDiscovery for NoopDiscovery {
+        async fn discover(&self) {}
+        fn peers(&self) -> Vec<PeerNode> {
+            Vec::new()
+        }
+    }
 
     impl<T: Serialize + serde::de::DeserializeOwned + Send + Sync> Codec<T> for JsonCodec<T> {
         fn encode(&self, value: &T) -> Vec<u8> {
@@ -567,6 +576,7 @@ mod tests {
                     num_of_connections_pinged: 10,
                 },
             },
+            discovery: Arc::new(NoopDiscovery),
         }
     }
 

@@ -38,7 +38,16 @@ use rchain_casper::runtime_manager::RuntimeManager;
 use rchain_casper::state::ProposerState;
 use rchain_casper::storage::rnode_key_value_store_manager;
 use rchain_casper::validator_identity::ValidatorIdentity;
+use rchain_comm::discovery::grpc_kademlia_rpc::GrpcKademliaRpc;
+use rchain_comm::discovery::grpc_kademlia_rpc_server::{
+    serve as kademlia_serve, GrpcKademliaRpcServer,
+};
+use rchain_comm::discovery::kademlia_handle_rpc::{handle_lookup, handle_ping};
+use rchain_comm::discovery::kademlia_store::table as kademlia_table;
+use rchain_comm::discovery::node_discovery::KademliaNodeDiscovery;
+use rchain_comm::discovery::{KademliaRpc, NodeDiscovery};
 use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
+use rchain_comm::rp::connect::{add_conn, find_and_connect};
 use rchain_comm::rp::handle_messages::{self, RoutingMessage};
 use rchain_comm::rp::rp_conf::{ClearConnectionsConf, RPConf};
 use rchain_comm::transport::chunker::Blob;
@@ -124,8 +133,7 @@ impl Codec<BlockEventInfo> for BlockEventInfoCodec {
     }
 }
 
-/// The assembled comm/discovery state (port of the `NodeRuntime` transport/comm-state setup; the
-/// Kademlia discovery service is deferred).
+/// The assembled comm/discovery state (port of the `NodeRuntime` transport/comm-state setup).
 pub struct CommState {
     pub transport: Arc<dyn TransportLayer>,
     pub connections: ConnectionsCell,
@@ -133,6 +141,7 @@ pub struct CommState {
     pub comm_util: Arc<CommUtil>,
     pub block_retriever: Arc<BlockRetriever>,
     pub local_peer: PeerNode,
+    pub discovery: Arc<dyn NodeDiscovery>,
 }
 
 /// Create the comm/discovery state (port of `NodeRuntime.main`'s transport + comm-state setup).
@@ -203,6 +212,73 @@ pub async fn create_comm_state(
     ));
     let block_retriever = Arc::new(BlockRetriever::new(comm_util.clone(), log.clone()));
 
+    // Kademlia discovery: routing-table store + gRPC RPC client + RPC server + iterative loop.
+    let kademlia_store = kademlia_table(id);
+    let kademlia_rpc: Arc<dyn KademliaRpc> = Arc::new(GrpcKademliaRpc::new(
+        local_peer.clone(),
+        conf.protocol_client.network_id.clone(),
+        conf.protocol_client.network_timeout,
+    ));
+
+    let discovery_addr: std::net::SocketAddr = format!("0.0.0.0:{}", u16::from(discovery_port))
+        .parse::<std::net::SocketAddr>()
+        .map_err(|e| e.to_string())?;
+    {
+        let store_ping = kademlia_store.clone();
+        let store_lookup = kademlia_store.clone();
+        let ping_handler = move |peer: PeerNode| -> BoxFuture<()> {
+            let store = store_ping.clone();
+            Box::pin(async move { handle_ping(store.as_ref(), peer) })
+        };
+        let lookup_handler = move |peer: PeerNode, key: Vec<u8>| -> BoxFuture<Vec<PeerNode>> {
+            let store = store_lookup.clone();
+            Box::pin(async move { handle_lookup(store.as_ref(), peer, &key) })
+        };
+        let server = GrpcKademliaRpcServer::new(
+            conf.protocol_client.network_id.clone(),
+            ping_handler,
+            lookup_handler,
+        );
+        tokio::spawn(async move {
+            if let Err(e) = kademlia_serve(discovery_addr, server).await {
+                log.error(source, &format!("Kademlia RPC server failed: {e}"));
+            }
+        });
+    }
+
+    // Seed the bootstrap peer into the routing table.
+    if let Some(bootstrap) = &rp_conf.bootstrap {
+        kademlia_store.update_last_seen(bootstrap.clone());
+    }
+
+    let discovery: Arc<dyn NodeDiscovery> = Arc::new(KademliaNodeDiscovery::new(
+        id.clone(),
+        kademlia_store,
+        kademlia_rpc,
+    ));
+
+    // Periodic discovery + connect loop: discover peers, then connect to the newly-found ones.
+    {
+        let discovery = discovery.clone();
+        let transport = transport.clone();
+        let rp_conf = rp_conf.clone();
+        let connections = connections.clone();
+        let interval = conf.peers_discovery.lookup_interval;
+        tokio::spawn(async move {
+            loop {
+                discovery.discover().await;
+                let current = connections.read().await.clone();
+                let new_peers =
+                    find_and_connect(discovery.as_ref(), &rp_conf, transport.as_ref(), &current).await;
+                if !new_peers.is_empty() {
+                    let mut guard = connections.write().await;
+                    *guard = add_conn(&guard, &new_peers);
+                }
+                tokio::time::sleep(interval).await;
+            }
+        });
+    }
+
     Ok(CommState {
         transport,
         connections,
@@ -210,6 +286,7 @@ pub async fn create_comm_state(
         comm_util,
         block_retriever,
         local_peer,
+        discovery,
     })
 }
 
@@ -643,6 +720,7 @@ pub async fn setup_node_program(
     program.status_provider = Some(StatusProvider {
         connections: comm_state.connections.clone(),
         rp_conf: comm_state.rp_conf.clone(),
+        discovery: comm_state.discovery.clone(),
     });
 
     // Node launch mode dispatch (genesis → syncing → running over the peer-message stream).
