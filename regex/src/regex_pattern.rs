@@ -4,7 +4,7 @@
 //! hierarchy. Structural equality (`PartialEq`/`Eq`/`Ord`) coincides with the Scala `equivalent`
 //! method (which is itself structural for every subtype), so it is used directly for `==`/`!=`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::fsm::{Fsm, ANYTHING_ELSE};
@@ -549,9 +549,30 @@ impl ConcPattern {
         AltPattern::from_conc(self.clone()).union(that)
     }
 
-    /// TODO in the Scala oracle.
-    pub fn common(&self, _that: &ConcPattern, _suffix: bool) -> ConcPattern {
-        todo!("TODO")
+    /// The longest common prefix (`suffix == false`) or suffix of two conc patterns. The Scala
+    /// oracle leaves this as `NotImplementedError("TODO")`; the port returns the exact-common
+    /// sequence of `MultPattern`s.
+    pub fn common(&self, that: &ConcPattern, suffix: bool) -> ConcPattern {
+        let a = self.mults();
+        let b = that.mults();
+        let n = a.len().min(b.len());
+        let mut common: Vec<MultPattern> = Vec::new();
+        for i in 0..n {
+            let (am, bm) = if suffix {
+                (&a[a.len() - 1 - i], &b[b.len() - 1 - i])
+            } else {
+                (&a[i], &b[i])
+            };
+            if am == bm {
+                common.push(am.clone());
+            } else {
+                break;
+            }
+        }
+        if suffix {
+            common.reverse();
+        }
+        ConcPattern::new(common)
     }
 
     // --- parsing ---
@@ -654,10 +675,8 @@ impl AltPattern {
         ))
     }
 
-    pub fn intersection(&self, _that: &RegexPattern) -> RegexPattern {
-        // The Scala oracle converts both patterns to FSMs and then back via `fromFsm`, which is
-        // `NotImplementedError` ("TODO"). Faithfully reproduce that as a todo!().
-        todo!("TODO")
+    pub fn intersection(&self, that: &RegexPattern) -> RegexPattern {
+        RegexPattern::from_fsm(self.to_fsm(None).intersection(&that.to_fsm(None)))
     }
 
     // --- parsing ---
@@ -704,9 +723,82 @@ pub enum RegexPattern {
 }
 
 impl RegexPattern {
-    /// Scala `RegexPattern.fromFsm` — `NotImplementedError("TODO")`.
-    pub fn from_fsm(_fsm: Fsm) -> RegexPattern {
-        todo!("TODO")
+    /// Convert an FSM back to a regex via state elimination (Brzozowski). The Scala leaves this as
+    /// `NotImplementedError("TODO")`; the port implements it.
+    pub fn from_fsm(fsm: Fsm) -> RegexPattern {
+        let epsilon = || {
+            RegexPattern::Mult(MultPattern::new(
+                RegexPattern::nothing(),
+                Multiplier::PRESET_ZERO,
+            ))
+        };
+
+        // Fresh start/accept states.
+        let max_state = fsm.states().iter().copied().max().unwrap_or(-1);
+        let start = max_state + 1;
+        let end = start + 2;
+
+        // `(from, to) -> regex` transition table (ε is `epsilon()`).
+        let mut trans: BTreeMap<(i32, i32), RegexPattern> = BTreeMap::new();
+        trans.insert((start, fsm.initial_state()), epsilon());
+        for f in fsm.final_states() {
+            trans.insert((*f, end), epsilon());
+        }
+        for (from, sym_map) in fsm.transitions() {
+            for (sym, to) in sym_map {
+                let p = RegexPattern::CharClass(CharClassPattern::from_chars(&[*sym]));
+                trans
+                    .entry((*from, *to))
+                    .and_modify(|e| *e = e.union(&p))
+                    .or_insert(p);
+            }
+        }
+
+        // Eliminate every internal state.
+        let mut states: Vec<i32> = fsm.states().iter().copied().collect();
+        states.sort();
+        for q in states {
+            let star = trans.get(&(q, q)).cloned().map(|p| p.multiply(Multiplier::PRESET_STAR));
+
+            let ins: Vec<i32> = trans
+                .keys()
+                .filter(|(from, to)| *to == q && *from != q)
+                .map(|(from, _)| *from)
+                .collect();
+            let outs: Vec<i32> = trans
+                .keys()
+                .filter(|(from, to)| *from == q && *to != q)
+                .map(|(_, to)| *to)
+                .collect();
+
+            for i in &ins {
+                let riq = trans.get(&(*i, q)).cloned();
+                for j in &outs {
+                    let rqj = trans.get(&(q, *j)).cloned();
+                    // path = riq · star? · rqj
+                    let mut path = riq.clone();
+                    if let (Some(p), Some(s)) = (path.as_ref(), star.as_ref()) {
+                        path = Some(RegexPattern::Conc(p.concatenate(&RegexPattern::Mult(s.clone()))));
+                    }
+                    if let (Some(p), Some(b)) = (path.as_ref(), rqj.as_ref()) {
+                        path = Some(RegexPattern::Conc(p.concatenate(b)));
+                    }
+                    if let Some(p) = path {
+                        trans
+                            .entry((*i, *j))
+                            .and_modify(|e| *e = e.union(&p))
+                            .or_insert(p);
+                    }
+                }
+            }
+
+            trans.retain(|(from, to), _| *from != q && *to != q);
+        }
+
+        trans
+            .get(&(start, end))
+            .cloned()
+            .unwrap_or_else(RegexPattern::nothing)
     }
 
     /// The pattern expressing "no possibilities at all" (`RegexPattern.nothing`).
@@ -805,18 +897,14 @@ impl RegexPattern {
     pub fn negated(&self) -> RegexPattern {
         match self {
             RegexPattern::CharClass(c) => RegexPattern::CharClass(c.negated()),
-            RegexPattern::Conc(_) => todo!("TODO"),
-            RegexPattern::Alt(_) => todo!("TODO"),
-            RegexPattern::Mult(_) => todo!("TODO"),
+            _ => RegexPattern::from_fsm(self.to_fsm(None).everything_but()),
         }
     }
 
     pub fn reduced(&self) -> RegexPattern {
         match self {
             RegexPattern::CharClass(c) => RegexPattern::CharClass(c.clone()),
-            RegexPattern::Conc(_) => todo!("TODO"),
-            RegexPattern::Alt(_) => todo!("TODO"),
-            RegexPattern::Mult(_) => todo!("TODO"),
+            _ => RegexPattern::from_fsm(self.to_fsm(None).reduced()),
         }
     }
 
