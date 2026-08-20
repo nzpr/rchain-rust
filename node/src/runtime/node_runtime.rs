@@ -47,7 +47,7 @@ use rchain_comm::discovery::kademlia_store::table as kademlia_table;
 use rchain_comm::discovery::node_discovery::KademliaNodeDiscovery;
 use rchain_comm::discovery::{KademliaRpc, NodeDiscovery};
 use rchain_comm::peer_node::{NodeIdentifier, PeerNode};
-use rchain_comm::rp::connect::{add_conn, find_and_connect};
+use rchain_comm::rp::connect::{add_conn, clear_connections, find_and_connect, remove_conn};
 use rchain_comm::rp::handle_messages::{self, RoutingMessage};
 use rchain_comm::rp::rp_conf::{ClearConnectionsConf, RPConf};
 use rchain_comm::transport::chunker::Blob;
@@ -273,6 +273,28 @@ pub async fn create_comm_state(
                 if !new_peers.is_empty() {
                     let mut guard = connections.write().await;
                     *guard = add_conn(&guard, &new_peers);
+                }
+                tokio::time::sleep(interval).await;
+            }
+        });
+    }
+
+    // Periodic clear-connections loop: ping the oldest peers and drop non-responders. The pings run
+    // over a snapshot; the mutation applies to the current connections under a brief write lock.
+    {
+        let transport = transport.clone();
+        let rp_conf = rp_conf.clone();
+        let connections = connections.clone();
+        let interval = conf.peers_discovery.cleanup_interval;
+        tokio::spawn(async move {
+            loop {
+                let snapshot = connections.read().await.clone();
+                let (to_ping, successful, _failed) =
+                    clear_connections(transport.as_ref(), &rp_conf, &snapshot).await;
+                {
+                    let mut guard = connections.write().await;
+                    let rest = remove_conn(&guard, &to_ping);
+                    *guard = add_conn(&rest, &successful);
                 }
                 tokio::time::sleep(interval).await;
             }

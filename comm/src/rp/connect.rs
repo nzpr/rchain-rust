@@ -70,13 +70,16 @@ pub async fn connect<T: TransportLayer + ?Sized>(
     transport.send(peer, ph).await
 }
 
-/// Ping the first `num_of_connections_pinged` peers, dropping non-responders and re-appending
-/// responders at the end. Returns the number removed (port of `clearConnections`).
+/// Ping the first `num_of_connections_pinged` peers (over the read-only snapshot), returning
+/// `(to_ping, successful, failed)`. The caller applies `removeConn(toPing).addConn(successful)` to
+/// the *current* connections under a brief write lock, so the outbound sends never hold the
+/// connection write-lock (port of `clearConnections`; the Scala `ConnectionsCell.update` is the
+/// brief mutation step).
 pub async fn clear_connections<T: TransportLayer + ?Sized>(
     transport: &T,
     conf: &RPConf,
-    connections: &mut Vec<PeerNode>,
-) -> usize {
+    connections: &[PeerNode],
+) -> (Vec<PeerNode>, Vec<PeerNode>, usize) {
     let num = conf.clear_connections.num_of_connections_pinged;
     let to_ping: Vec<PeerNode> = connections.iter().take(num).cloned().collect();
     let mut successful = Vec::new();
@@ -88,9 +91,7 @@ pub async fn clear_connections<T: TransportLayer + ?Sized>(
             Err(_) => failed += 1,
         }
     }
-    let rest = remove_conn(connections, &to_ping);
-    *connections = add_conn(&rest, &successful);
-    failed
+    (to_ping, successful, failed)
 }
 
 /// Discover peers, connect to those not already connected, and return the successful ones (port of
