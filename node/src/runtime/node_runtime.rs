@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use prost::Message;
 use tokio::sync::mpsc;
@@ -212,6 +213,7 @@ pub struct NodeProgram {
     port_admin_http: Port,
     port_grpc_internal: Port,
     grpc_max_recv_message_size: usize,
+    max_connection_idle: Duration,
     protocol_server: Option<ProtocolServer>,
     status_provider: Option<StatusProvider>,
 }
@@ -230,6 +232,7 @@ impl NodeProgram {
             port_admin_http,
             port_grpc_internal,
             grpc_max_recv_message_size,
+            max_connection_idle,
             protocol_server,
             status_provider,
         } = self;
@@ -250,6 +253,7 @@ impl NodeProgram {
                     web_api,
                     block_report_api,
                     status_provider,
+                    max_connection_idle,
                 )
                 .await
             }
@@ -257,7 +261,10 @@ impl NodeProgram {
 
         let admin = tokio::spawn({
             let host = host.clone();
-            async move { acquire_admin_http_server(&host, port_admin_http, admin_web_api).await }
+            async move {
+                acquire_admin_http_server(&host, port_admin_http, admin_web_api, max_connection_idle)
+                    .await
+            }
         });
 
         if let Some(protocol) = protocol_server {
@@ -896,6 +903,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
                 .map_err(|e| e.to_string())?,
             grpc_max_recv_message_size: usize::try_from(conf.api_server.grpc_max_recv_message_size)
                 .map_err(|e| e.to_string())?,
+            max_connection_idle: conf.api_server.max_connection_idle,
             protocol_server: None,
             status_provider: None,
         },

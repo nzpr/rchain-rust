@@ -1,13 +1,14 @@
 //! HTTP server routes (port of the http4s `service` methods in the `web` package and
 //! `NewPrometheusReporter.service`).
 //!
-//! The public server mounts `/version`, `/metrics`, and the `/api` JSON routes (port of
-//! `WebApiRoutes`). The admin server mounts the `/api` admin routes (port of `AdminWebApiRoutes`).
-//! The `/status` route (which needs the comm status builder), the `/api/v1` OpenAPI routes, and the
-//! reporting routes are deferred.
+//! The public server mounts `/version`, `/metrics`, `/status`, the `/api` + `/api/v1` JSON routes,
+//! the `/api/v1/openapi.json` OpenAPI document, and the reporting routes (`/reporting/trace` +
+//! `/api/trace`). The admin server mounts the `/api`/`/api/v1` admin routes (propose) and its own
+//! OpenAPI document. CORS and a per-request timeout are applied to both servers.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -15,6 +16,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use tower_http::cors::CorsLayer;
+use tower_http::timeout::TimeoutLayer;
 
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::protocol::comm_util::ConnectionsCell;
@@ -35,7 +38,8 @@ use crate::web::status_info;
 use crate::web::version_info;
 
 /// Comm state needed by `GET /status` (port of the `ConnectionsCell`/`NodeDiscovery`/`RPConfAsk`
-/// arguments of `StatusInfo.service`; the discovered-peers source is deferred, so `nodes` is 0).
+/// arguments of `StatusInfo.service`). The discovered-peers (Kademlia routing table) source is wired
+/// with the discovery service (deferred); until then `discovered` is empty so `nodes` is 0.
 #[derive(Clone)]
 pub struct StatusProvider {
     pub connections: ConnectionsCell,
@@ -191,6 +195,30 @@ async fn api_v1_deploy_status(
     json_result(state.web_api.deploy_status(&deploy_signature).await)
 }
 
+/// `GET /api/v1/openapi.json` — the OpenAPI 3.0 document describing the v1 API (a hand-written
+/// static document; the Scala derives it from the endpoints4s algebra, so we serve an equivalent).
+const OPENAPI_JSON: &str = r#"{
+  "openapi": "3.0.0",
+  "info": { "title": "RNode API", "version": "1.0" },
+  "paths": {
+    "/status": { "get": { "summary": "Node status" } },
+    "/deploy": { "post": { "summary": "Deploy a signed rholang term" } },
+    "/deploy-status/{deploySignature}": { "get": { "summary": "Deploy execution status" } },
+    "/explore-deploy": { "post": { "summary": "Run an exploratory deploy" } },
+    "/explore-deploy-by-block-hash": { "post": { "summary": "Exploratory deploy at a block hash" } },
+    "/data-at-name-by-block-hash": { "post": { "summary": "Data at a name, at a block hash" } },
+    "/blocks": { "get": { "summary": "Recent blocks" } },
+    "/block/{hash}": { "get": { "summary": "A block by hash" } },
+    "/propose": { "post": { "summary": "Propose a block" } }
+  }
+}"#;
+
+async fn api_v1_openapi() -> Response {
+    let doc: serde_json::Value = serde_json::from_str(OPENAPI_JSON)
+        .unwrap_or_else(|_| serde_json::Value::Null);
+    (StatusCode::OK, Json(doc)).into_response()
+}
+
 // --- Reporting routes (port of `ReportingRoutes.service`) ---
 
 /// `GET /reporting/trace` query params (`blockHash` + optional `forceReplay`).
@@ -220,14 +248,15 @@ async fn admin_propose(State(state): State<AdminState>) -> Response {
 }
 
 /// Build the public HTTP routes (port of `acquireHttpServer`'s route map: `/version`, `/metrics`,
-/// the `/api` JSON routes, `/reporting`, and the `/api/v1` routes). The `/status` route and the
-/// `/api/v1` OpenAPI schema route are deferred.
+/// `/status`, the `/api` JSON routes, `/reporting` + `/api/trace`, the `/api/v1` routes, and the
+/// `/api/v1/openapi.json` OpenAPI document).
 pub fn router(state: HttpState) -> Router {
     Router::new()
         .route("/version", get(version))
         .route("/metrics", get(metrics))
         .route("/status", get(status))
         .route("/reporting/trace", get(reporting_trace))
+        .route("/api/trace", get(reporting_trace))
         .route("/api/status", get(api_status))
         .route("/api/deploy", post(api_deploy))
         .route("/api/explore-deploy", post(api_explore_deploy))
@@ -265,6 +294,8 @@ pub fn router(state: HttpState) -> Router {
         )
         .route("/api/v1/blocks", get(api_get_blocks))
         .route("/api/v1/block/:hash", get(api_get_block))
+        .route("/api/v1/openapi.json", get(api_v1_openapi))
+        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
@@ -273,11 +304,13 @@ pub fn admin_router(state: AdminState) -> Router {
     Router::new()
         .route("/api/propose", post(admin_propose))
         .route("/api/v1/propose", get(admin_propose))
+        .route("/api/v1/openapi.json", get(api_v1_openapi))
+        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
-/// Bind and serve the public HTTP routes (port of `web/acquireHttpServer`; the `/status`,
-/// `/api/v1`, and the CORS/connection-timeout configuration are deferred).
+/// Bind and serve the public HTTP routes (port of `web/acquireHttpServer`), with a CORS layer and a
+/// per-request timeout (`api-server.max-connection-idle`).
 pub async fn acquire_http_server(
     host: &str,
     port: Port,
@@ -285,6 +318,7 @@ pub async fn acquire_http_server(
     web_api: Arc<dyn WebApi>,
     block_report_api: Arc<BlockReportApi>,
     status_provider: Option<StatusProvider>,
+    max_connection_idle: Duration,
 ) -> Result<(), String> {
     let port = u16::from(port); // single discharge at the bind boundary
     let addr: SocketAddr = format!("{host}:{port}")
@@ -293,17 +327,14 @@ pub async fn acquire_http_server(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| e.to_string())?;
-    axum::serve(
-        listener,
-        router(HttpState {
-            reporter,
-            web_api,
-            block_report_api,
-            status_provider,
-        }),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let app = router(HttpState {
+        reporter,
+        web_api,
+        block_report_api,
+        status_provider,
+    })
+    .layer(TimeoutLayer::new(max_connection_idle));
+    axum::serve(listener, app).await.map_err(|e| e.to_string())
 }
 
 /// Bind and serve the admin HTTP routes (port of `web/acquireAdminHttpServer`).
@@ -311,6 +342,7 @@ pub async fn acquire_admin_http_server(
     host: &str,
     port: Port,
     admin_web_api: Arc<dyn AdminWebApi>,
+    max_connection_idle: Duration,
 ) -> Result<(), String> {
     let port = u16::from(port); // single discharge at the bind boundary
     let addr: SocketAddr = format!("{host}:{port}")
@@ -319,9 +351,8 @@ pub async fn acquire_admin_http_server(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| e.to_string())?;
-    axum::serve(listener, admin_router(AdminState { admin_web_api }))
-        .await
-        .map_err(|e| e.to_string())
+    let app = admin_router(AdminState { admin_web_api }).layer(TimeoutLayer::new(max_connection_idle));
+    axum::serve(listener, app).await.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
