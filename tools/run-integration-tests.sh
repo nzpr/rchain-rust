@@ -39,6 +39,6 @@ Scenario checklist (mirrors legacy/integration-tests/):
   [ ] deploy semantics (invalid rholang / min-phlo / insufficient phlo)
   [ ] REV transfers (wallets)
   [ ] multi-node finalization / fault-tolerance / merge / bonding / slashing
-  [ ] REPL (rnode repl) [staged]
-  [ ] Dockerisation e2e [staged]
+  [x] REPL (rnode repl)
+  [x] Dockerisation e2e (tools/docker-network.sh, 1-5 nodes)
 EOF

@@ -49,6 +49,47 @@ Build and serve the documentation book:
 mdbook serve docs   # or: mdbook build docs
 ```
 
+## REPL
+
+The `rnode` binary doubles as a thin gRPC client. Run the interactive rholang REPL against a node:
+
+```sh
+# Start a local standalone node (creates genesis), then in another terminal:
+cargo run --release -p rchain-node --bin rnode -- run -s
+
+# Interactive REPL (prompt `rholang $ `, history, tab-completion):
+cargo run --release -p rchain-node --bin rnode -- repl
+
+# …or point the client at a remote node (all gRPC services are on port 40402):
+rnode --grpc-host <host> --grpc-port 40402 repl
+```
+
+Each term is parsed, normalized (an `Evaluating:` line is echoed on the node console), evaluated
+against the node's isolated `eval-*` store, and printed as `Deployment cost:` + `Storage Contents:`.
+`:q` quits. Evaluate files non-interactively with `rnode eval <file>...`.
+
+## Docker multi-node network
+
+A scripted pipeline builds the `rnode` image and boots a local **1–5 node** network on a Docker
+bridge, then drives it from the CLI:
+
+```sh
+tools/docker-network.sh build            # build the rnode image
+tools/docker-network.sh up 3             # bootstrap + 2 peers (any N in 1..5)
+tools/docker-network.sh status           # docker ps for the network
+tools/docker-network.sh cli bootstrap status
+tools/docker-network.sh cli bootstrap repl
+tools/docker-network.sh cli peer1 status
+tools/docker-network.sh down             # stop (add -v to also drop the data volumes)
+```
+
+The bootstrap node runs standalone, creates genesis, and is bonded as a validator; peers bootstrap
+from it over the TLS transport (`rnode://<id>@bootstrap?protocol=40400&discovery=40404`). The
+`cli <node> <subcommand...>` helper runs the Rust client inside the network against that node.
+
+The full operation guide (commands, ports, the genesis ceremony, and the multi-node topology) is in
+[docs/src/operating.md](docs/src/operating.md).
+
 ## Where the Scala went
 
 The upstream Scala fork — the sbt modules (`node/`, `sdk/`, `shared/`, `crypto/`, `models/`,

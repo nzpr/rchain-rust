@@ -42,7 +42,7 @@ Scala module (now under [`legacy/`](../../legacy/)):
 | `comm` | **done** (PeerNode/PeerTable + Kademlia gRPC discovery, gRPC/TLS transport client/server/receiver, buffers/PacketOps/StreamHandler, rp Connect/HandleMessages, WhoAmI external-IP discovery + UPnP port-forwarding orchestration + weupnp SSDP/SOAP gateway discovery) |
 | `rholang` | **done** (Env + de Bruijn substitution + accounting + spatial matcher + Reduce/dispatch + normalizer/compiler + full parser — map-vs-block disambiguation, `_` wildcard, `bundle+/-/0`, peek `<<-`, method calls, n-ary `par`, multi-receipt `for` — so the 9 blessed genesis contracts parse; system processes + PrettyPrinter/StoragePrinter + RhoRuntime/ReplayRhoRuntime/ReportingRuntime + `par_ops` in `models`) |
 | `casper` | **done** (validate effectful checks, RuntimeManager, merge index/merging, BlockApi/BlockApiImpl, BlockReportApi, GraphGenerator, reporting/rhoReporter, multi-parent Casper, genesis (StandardDeploys + `createGenesisBlock`), protocol/engine/storage, comm/discovery wiring: CommUtil/BlockReceiverState+not_validated/BlockRetriever/NodeRunning handlers, engine state machines: LfsState/LfsTupleSpaceState/LfsBlockRequester/LfsTupleSpaceRequester/NodeSyncing/NodeRunning/BlockReceiver.apply + NodeLaunch genesis helpers) |
-| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`, `/status` route, `/api/v1` JSON routes, node runtime wiring (`setupNodeProgram`: `RSpaceImporterStore` factory, block receiver/processor streams, transport/protocol server + peer-message stream, `NodeLaunch.apply`, request-dependencies loop, proposer stream + `BlockApiImpl` propose trigger + autopropose tap)); the genesis ceremony boots end-to-end under a 32 MiB worker stack (deep contract recursion), verified by the node-level integration tests (`genesis_boot_exposes_block_over_http`, `http_surface_without_genesis`); the `/api/v1` OpenAPI schema route deferred |
+| `node` | **done** (configuration, diagnostics, api incl. Deploy/Propose/Repl gRPC adapters + WebApi/AdminWebApi + DTOs, tonic gRPC + axum HTTP `/api` transport binding, NodeRuntime/Setup assembly + `rnode` binary, web routes/status/version/transaction, effects/runtime REPL, dag, instances incl. ProposerInstance, revvaultexport, CLI subcommands (`runCLI` thin-client: deploy/deploy-status/find-deploy/propose/show-block/show-blocks/vdag/mvdag/listen-*/last-finalized/is-finalized/bond-status/status/keygen/repl/eval) backed by tonic gRPC clients, `/reporting` trace route over `BlockReportApi`, `/status` route, `/api/v1` JSON routes, node runtime wiring (`setupNodeProgram`: `RSpaceImporterStore` factory, block receiver/processor streams, transport/protocol server + peer-message stream, `NodeLaunch.apply`, request-dependencies loop, proposer stream + `BlockApiImpl` propose trigger + autopropose tap)); the genesis ceremony boots end-to-end under a 32 MiB worker stack (deep contract recursion), verified by the node-level integration tests (`genesis_boot_exposes_block_over_http`, `http_surface_without_genesis`); the interactive REPL has a rustyline prompt/history/tab-completion + an isolated `eval-*` store; a scripted Docker multi-node pipeline (`docker/rnode/Dockerfile` + `tools/docker-network.sh`) boots a 1–5 node network; the `/api/v1` OpenAPI schema route deferred |
 | `rspace-bench` | gated |
 
 Deferred (orphaned, not wired into `build.sbt`): `legacy/roscala/`, `legacy/rosette/` (C++ VM).
@@ -97,15 +97,16 @@ repl/eval/listen over tonic gRPC clients), the comm/discovery engine wiring (`Co
 The node runtime wiring (`setupNodeProgram`) is also ported: the `RSpaceImporterStore` factory, the
 block receiver/processor streams, the transport/protocol server + peer-message stream,
 `NodeLaunch.apply`, and the request-dependencies loop.
-Remaining (Phase 4):
+Remaining:
 
 - **node HTTP routes** — the `/api/v1` OpenAPI schema route (needs endpoints4s) remains deferred; the
   `/reporting` trace route, `/status`, and the `/api/v1` JSON routes are ported.
 - **Formalization** — Laws 2–18 statements exist in Lean (`spec/Rchain/`); proofs are residual
   obligations (Laws 14–18 = Casper/storage/crypto, Phases 4–5 per
   [`spec/INVENTORY.md`](../../spec/INVENTORY.md)).
-- **Safe-by-construction type system** — the ρ-calculus core
-  ([`spec/RHO-CALCULUS.md`](../../spec/RHO-CALCULUS.md)) is being realized as a sort-indexed `Par<S>`
-  (compile-time Name/Proc) plus the `Closed`/`WellScoped`/`BindsAtMostOnce` refinements, with the
-  ~284-cast / raw-byte remediation (see [`spec/AUDIT.md`](../../spec/AUDIT.md)).
+- **Cast / raw-byte remediation** — the ~284 `as`-cast + 21 lax + raw-byte sites are the remaining
+  checklist from the adversarial audit (see [`spec/AUDIT.md`](../../spec/AUDIT.md)). The
+  *safe-by-construction type system* itself is done: the sort-indexed `Par<S>` (compile-time
+  Name/Proc) plus the load-bearing `Closed`/`WellScoped`/`BindsAtMostOnce` refinements
+  ([`spec/RHO-CALCULUS.md`](../../spec/RHO-CALCULUS.md)).
 - **`rspace-bench`** — gated.
