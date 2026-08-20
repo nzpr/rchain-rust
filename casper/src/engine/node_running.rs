@@ -15,18 +15,21 @@ use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_comm::transport::transport_layer_syntax;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::{
     BlockMessage, BlockRequest, CasperMessage, FinalizedFringe, HasBlock, HasBlockRequest,
+    StoreItemsMessage, StoreItemsMessageRequest,
 };
 use rchain_models::casper::protocol::packet_type_tag::ToPacket;
+use rchain_rspace::state::RSpaceExporter;
 use rchain_shared::log::{Log, LogSource};
 
 use crate::blocks::block_receiver::not_validated;
 use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::protocol::casper_message_protocol::{
-    BlockMessageSerde, FinalizedFringeSerde, HasBlockSerde,
+    BlockMessageSerde, FinalizedFringeSerde, HasBlockSerde, StoreItemsMessageSerde,
 };
 use crate::validator_identity::ValidatorIdentity;
 
@@ -243,7 +246,7 @@ pub async fn handle_finalized_fringe_request(
 
 /// The running-state engine (port of the `NodeRunning` class). The `apply` streaming loop that
 /// consumes `incoming_blocks` is deferred; the message handling is fully ported.
-pub struct NodeRunning {
+pub struct NodeRunning<E: RSpaceExporter> {
     transport: Arc<dyn TransportLayer>,
     conf: RPConf,
     block_store: BlockStore,
@@ -254,9 +257,10 @@ pub struct NodeRunning {
     validator_id: Option<ValidatorIdentity>,
     incoming_blocks: tokio::sync::mpsc::UnboundedSender<BlockMessage>,
     block_request_limit: Arc<PeerRateLimiter>,
+    exporter: E,
 }
 
-impl NodeRunning {
+impl<E: RSpaceExporter> NodeRunning<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         transport: Arc<dyn TransportLayer>,
@@ -267,6 +271,7 @@ impl NodeRunning {
         log: Arc<dyn Log>,
         validator_id: Option<ValidatorIdentity>,
         incoming_blocks: tokio::sync::mpsc::UnboundedSender<BlockMessage>,
+        exporter: E,
     ) -> Self {
         NodeRunning {
             transport,
@@ -279,7 +284,50 @@ impl NodeRunning {
             validator_id,
             incoming_blocks,
             block_request_limit: Arc::new(PeerRateLimiter::new(DEFAULT_BLOCK_REQUEST_LIMIT_PER_SEC)),
+            exporter,
         }
+    }
+
+    /// Serve a peer's store-items (state-sync) request from the exporter (port of
+    /// `handleStoreItemsRequest`).
+    async fn handle_store_items_request(&self, peer: &PeerNode, req: &StoreItemsMessageRequest) {
+        let nodes = self
+            .exporter
+            .get_nodes(&req.start_path, req.skip as usize, req.take as usize);
+        let history_keys: Vec<Blake2b256Hash> =
+            nodes.iter().filter(|n| !n.is_leaf).map(|n| n.hash).collect();
+        let data_keys: Vec<Blake2b256Hash> =
+            nodes.iter().filter(|n| n.is_leaf).map(|n| n.hash).collect();
+        let history_items = self
+            .exporter
+            .get_history_items(&history_keys, |b: &[u8]| b.to_vec());
+        let data_items = self
+            .exporter
+            .get_data_items(&data_keys, |b: &[u8]| b.to_vec());
+        let last_path = nodes.last().map(|n| n.path.clone()).unwrap_or_default();
+
+        let response = StoreItemsMessage {
+            start_path: req.start_path.clone(),
+            last_path,
+            history_items,
+            data_items,
+        };
+        self.log.info(
+            self.log_source,
+            &format!(
+                "Sending {} history and {} data store items to {}",
+                response.history_items.len(),
+                response.data_items.len(),
+                peer.endpoint.host
+            ),
+        );
+        transport_layer_syntax::send_to_peer(
+            self.transport.as_ref(),
+            &self.conf,
+            peer,
+            StoreItemsMessageSerde.mk_packet(&response),
+        )
+        .await;
     }
 
     /// Handle an incoming casper message from a peer (port of `handle`).
@@ -439,13 +487,8 @@ impl NodeRunning {
                     );
                 }
             }
-            CasperMessage::StoreItemsMessageRequest(_) => {
-                // Deferred: responding to store-items requests requires RSpaceStateManager and
-                // RSpaceExporter, both deferred.
-                self.log.info(
-                    self.log_source,
-                    &format!("Received StoreItemsMessage request but the node does not respond to StoreItemsMessage, from {peer}."),
-                );
+            CasperMessage::StoreItemsMessageRequest(req) => {
+                self.handle_store_items_request(peer, req).await;
             }
             CasperMessage::StoreItemsMessage(_) => {}
             CasperMessage::FinalizedFringe(_) => {}

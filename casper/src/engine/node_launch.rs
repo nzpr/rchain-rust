@@ -19,7 +19,7 @@ use rchain_models::casper::protocol::casper_message::{
     BlockMessage, CasperMessage, FinalizedFringe,
 };
 use rchain_models::casper::protocol::packet_type_tag::ToPacket;
-use rchain_rspace::state::RSpaceImporter;
+use rchain_rspace::state::{RSpaceExporter, RSpaceImporter};
 use rchain_shared::log::{Log, LogSource};
 use tokio::sync::mpsc;
 
@@ -180,13 +180,13 @@ async fn create_store_broadcast_genesis(
 
 /// The node launch mode dispatch (port of `NodeLaunch.apply`).
 #[allow(clippy::too_many_arguments)]
-pub async fn apply<I: RSpaceImporter>(
+pub async fn apply<I: RSpaceImporter, E: RSpaceExporter>(
     mut packet_rx: mpsc::Receiver<PeerMessage>,
     incoming_blocks: mpsc::UnboundedSender<BlockMessage>,
     conf: CasperConf,
     trim_state: bool,
-    // The store-items response (which would honor `disable_state_exporter`) is deferred, so this
-    // parameter is not yet used.
+    // The store-items response is served unconditionally; `disable_state_exporter` would gate it,
+    // but the config flag is not yet threaded through, so it is accepted and ignored for now.
     _disable_state_exporter: bool,
     validator_identity_opt: Option<ValidatorIdentity>,
     standalone: bool,
@@ -200,6 +200,7 @@ pub async fn apply<I: RSpaceImporter>(
     approved_store: ApprovedStore,
     dag: Arc<dyn BlockDagStorage>,
     importer: I,
+    exporter: E,
     log: Arc<dyn Log>,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeLaunch");
@@ -268,6 +269,7 @@ pub async fn apply<I: RSpaceImporter>(
         log.clone(),
         validator_identity_opt,
         incoming_blocks,
+        exporter,
     );
     log.info(source, "Making a transition to Running state.");
     wait_for_first_connection(&connections, log.as_ref()).await;

@@ -65,7 +65,7 @@ use rchain_rholang::storage::RhoMatch;
 use rchain_rspace::factory::create_history_repository;
 use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::rspace::RSpace;
-use rchain_rspace::state::instances::RSpaceImporterStore;
+use rchain_rspace::state::instances::{RSpaceExporterStore, RSpaceImporterStore};
 use rchain_shared::lmdb::LmdbDirStoreManager;
 use rchain_shared::log::{Log, LogSource};
 use rchain_shared::refined::Port;
@@ -484,6 +484,21 @@ async fn create_rspace_importer(
     ))
 }
 
+/// Build the RSpace exporter over the on-chain state stores (port of
+/// `RSpaceExporterStore(history, cold, roots)`).
+async fn create_rspace_exporter(
+    store_manager: &LmdbDirStoreManager,
+) -> Result<RSpaceExporterStore, String> {
+    let history_store = store_manager.store_sync("rspace-history").await?;
+    let value_store = store_manager.store_sync("rspace-cold").await?;
+    let roots_store = store_manager.store_sync("rspace-roots").await?;
+    Ok(RSpaceExporterStore::new(
+        history_store,
+        value_store,
+        roots_store,
+    ))
+}
+
 /// Parse routing messages into peer messages for `NodeLaunch.apply` (port of the
 /// `peerMessageStream` in `Setup.setupNodeProgram`).
 fn spawn_peer_message_stream(
@@ -580,6 +595,7 @@ pub async fn setup_node_program(
     let (mut program, mut parts) = setup(conf, id).await?;
     let comm_state = create_comm_state(conf, id, log.clone()).await?;
     let importer = create_rspace_importer(&parts.store_manager).await?;
+    let exporter = create_rspace_exporter(&parts.store_manager).await?;
 
     let shard_id = conf.casper.shard_name.clone();
     let min_phlo_price = conf.casper.min_phlo_price;
@@ -648,6 +664,7 @@ pub async fn setup_node_program(
         parts.approved_store.clone(),
         parts.dag.clone(),
         importer,
+        exporter,
         log.clone(),
     );
     let node_launch_log = log.clone();
