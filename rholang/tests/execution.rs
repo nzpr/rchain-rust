@@ -95,3 +95,44 @@ async fn failing_deploy_is_captured_not_propagated() {
     // The post-state is still checkpointable.
     rt.create_checkpoint().await.expect("checkpoint after failed deploy");
 }
+
+#[tokio::test]
+async fn peek_and_persistent_work() {
+    let (rt, _) = build_runtime_pair().await;
+    let rand = fixed_rand();
+
+    // Peek (`<<-`): read without consuming.
+    rt.evaluate(r#"new c in { c!(42) | for (@x <<- c) { @"peek"!(x) } }"#, &rand)
+        .await
+        .unwrap();
+    assert_eq!(
+        rt.get_data_par(&chan("peek")).await.unwrap(),
+        vec![from_expr(Expr::GInt(42))]
+    );
+
+    // Persistent send (`!!`): datum stays across two consumes.
+    rt.evaluate(r#"new c in { c!!(42) | for (@x <- c) { @"p1"!(x) } | for (@y <- c) { @"p2"!(y) } }"#, &rand)
+        .await
+        .unwrap();
+    assert_eq!(rt.get_data_par(&chan("p1")).await.unwrap(), vec![from_expr(Expr::GInt(42))]);
+    assert_eq!(rt.get_data_par(&chan("p2")).await.unwrap(), vec![from_expr(Expr::GInt(42))]);
+}
+
+#[tokio::test]
+#[ignore = "list-as-channel hash/equality bug: @[node, *storeToken] (node bound) does not match @[\"key\", *storeToken] (literal)"]
+async fn list_channel_matches() {
+    let (rt, _) = build_runtime_pair().await;
+    let rand = fixed_rand();
+
+    // The blessed `MakeNode` shape: a contract binds `@node` (a PROC var) and sends on the
+    // list-as-channel `@[node, *storeToken]`; a receive on `@["key", *storeToken]` must see it.
+    let r = rt
+        .evaluate(r#"new storeToken, Make in { contract Make(@initVal, @node) = { @[node, *storeToken]!(initVal) } | Make!(7, "key") | for (@x <- @["key", *storeToken]) { @"listch"!(x) } }"#, &rand)
+        .await
+        .unwrap();
+    assert!(r.succeeded(), "list-as-channel term errors: {:?}", r.errors);
+    assert_eq!(
+        rt.get_data_par(&chan("listch")).await.unwrap(),
+        vec![from_expr(Expr::GInt(7))]
+    );
+}
