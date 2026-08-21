@@ -955,6 +955,23 @@ impl SystemProcesses {
                         native.set_vault_balance(to, new_to);
                         cc.produce(&rand, &[RhoNil::apply()], ret).await
                     }
+                    "findOrCreate" => {
+                        let [addr, ret] = rest else {
+                            return Err(illegal_arg("findOrCreate expects an address and return channel"));
+                        };
+                        let addr = RhoString::unapply(addr)
+                            .ok_or_else(|| illegal_arg("findOrCreate expects a string address"))?;
+                        native
+                            .find_or_create_vault(addr)
+                            .await
+                            .map_err(|e| illegal_arg(&e))?;
+                        // In the simplified address-keyed model the vault identifier is the address.
+                        let out = RhoTupleN::apply(vec![
+                            RhoBoolean::apply(true),
+                            RhoString::apply(addr.to_string()),
+                        ]);
+                        cc.produce(&rand, &[out], ret).await
+                    }
                     _ => Err(illegal_arg(&format!("revVault: unknown method {op}"))),
                 }
             })

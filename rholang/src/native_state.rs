@@ -129,6 +129,16 @@ impl NativeSystemState {
         );
     }
 
+    /// Ensure a vault exists for `address`, creating it with a zero balance if absent (port of the
+    /// RevVault `findOrCreate` behavior, simplified: the vault is keyed by REV address, so the
+    /// unforgeable-name capability is not modeled).
+    pub async fn find_or_create_vault(&self, address: &str) -> Result<(), String> {
+        if self.vault_balance(address).await?.is_none() {
+            self.set_vault_balance(address, NonNegI64::zero());
+        }
+        Ok(())
+    }
+
     // --- Registry ------------------------------------------------------------
 
     /// Look up a registered `Par` by URI.
@@ -369,6 +379,27 @@ mod tests {
         assert_eq!(
             i64::from(native.vault_balance(&addr).await.unwrap().unwrap()),
             100
+        );
+    }
+
+    #[tokio::test]
+    async fn find_or_create_vault_creates_zero_balance_once() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let addr = "someRevAddress".to_string();
+
+        // First call creates the vault with a zero balance.
+        native.find_or_create_vault(&addr).await.unwrap();
+        assert_eq!(
+            native.vault_balance(&addr).await.unwrap(),
+            Some(NonNegI64::zero())
+        );
+
+        // A subsequent call must not reset an existing balance.
+        native.set_vault_balance(&addr, NonNegI64::try_from(42).unwrap());
+        native.find_or_create_vault(&addr).await.unwrap();
+        assert_eq!(
+            i64::from(native.vault_balance(&addr).await.unwrap().unwrap()),
+            42
         );
     }
 }

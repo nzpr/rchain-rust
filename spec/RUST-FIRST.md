@@ -60,15 +60,17 @@ The native `rho:*` protocol is installed as ordinary system-process `Definition`
   registry map.
 - `rho:rchain:pos` — `getBonds` → `RhoMap`, `getActiveValidators` → `RhoSet`, `bond`/`withdraw`
   (validator lifecycle; simplified — see below) via a `remainder` install pattern.
-- `rho:rchain:revVault` / `multiSigRevVault` — `getBalance` / `deposit` / `transfer` over the vault
-  balance map.
+- `rho:rchain:revVault` / `multiSigRevVault` — `getBalance` / `deposit` / `transfer` / `findOrCreate`
+  over the vault balance map.
 
 The `bond` (deduct the deployer's REV vault and add `(validator, stake)` to the bonds map, rejecting
-already-bonded keys) and `withdraw` (remove from the bonds map and refund the stake to the REV vault)
-methods are implemented natively, returning the `(Bool, Either)` result the PoS contract expects.
-**Deferred (simplified balance-map model):** minimum/maximum-bond validation, the epoch/quarantine
-bookkeeping, reward computation, the Coop slashing vault, and vault `create`/`findOrCreate`
-unforgeable-name generation.
+already-bonded keys), `withdraw` (remove from the bonds map and refund the stake to the REV vault), and
+vault `findOrCreate` (ensure a vault exists, creating a zero balance if absent) methods are implemented
+natively, returning the `(Bool, Either)` result the PoS/vault contracts expect. **Deferred (simplified
+balance-map model):** minimum/maximum-bond validation, the epoch/quarantine bookkeeping, reward
+computation, the Coop slashing vault, and the vault **unforgeable-name capability** (the simplified
+model keys vaults by REV address, so `findOrCreate` returns the address rather than a fresh
+unforgeable).
 
 `default_blessed_terms` now returns an empty list; the PoS bonds are installed natively in
 `compute_genesis`, and `compute_bonds`/`get_active_validators` read the bonds leaf directly (no
