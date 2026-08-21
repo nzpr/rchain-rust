@@ -204,7 +204,7 @@ async fn api_get_transaction(
     json_result(state.web_api.get_transaction(&hash).await)
 }
 
-// --- Web API v1 routes (port of `WebApiRoutesV1`; the OpenAPI schema route is deferred) ---
+// --- Web API v1 routes (port of `WebApiRoutesV1`; the OpenAPI schema is served below) ---
 
 async fn api_v1_deploy_status(
     State(state): State<HttpState>,

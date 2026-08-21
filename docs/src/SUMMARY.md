@@ -36,6 +36,7 @@
 
 - [Why Rust](contributor/why-rust.md)
 - [Architecture & port status](contributor/architecture.md)
+- [The 19 laws → Rust code](contributor/laws-to-rust.md)
 - [Formal specification & audit](contributor/spec.md)
 
 ---

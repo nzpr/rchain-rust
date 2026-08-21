@@ -114,7 +114,7 @@ value through the whole domain.
   result may leave the invariant (e.g. a height *difference*), the operator's output is the raw
   **signed** type, so the signedness is again visible in the type.
 
-Concrete newtypes live in [`shared/src/refined.rs`](../../shared/src/refined.rs) (`Port`, `Cost`,
+Concrete newtypes live in [`../shared/src/refined.rs`](../shared/src/refined.rs) (`Port`, `Cost`,
 `BlockHeight`, `SeqNum`, `WireLen`/`ShortLen`/`ByteLen`, `NonNegI64`/`NonNegI32`); domain-specific
 serialized refinements (`SerializedNode`, `SerializedRandom`) live with their deserializers. The Lean
 spelling is `def Refined α P := { a : α // P a }` with `totalOn_lifts_to_refined`

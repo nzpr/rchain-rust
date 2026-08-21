@@ -7,7 +7,7 @@ written against: every law here maps to a Rust property/differential test in lat
 ## Why
 
 The full motivation — memory safety and the calculus-native expression of the node (λ → π → ρ →
-Calculus of Constructions) — is in [`../docs/src/why-rust.md`](../docs/src/why-rust.md). The node
+Calculus of Constructions) — is in [`../docs/src/contributor/why-rust.md`](../docs/src/contributor/why-rust.md). The node
 (Scala + a C++ Rosette VM) is broadly sound, so the rewrite is not a correctness repair. This spec's
 job is therefore **preservation under translation** — pin down the invariants so the port cannot
 silently drop them.
@@ -52,12 +52,13 @@ Laws 12–13 (Rosette) are **orphaned**: the `rosette`/`roscala` VM is out of sc
 - **Proven**: Law 1 (`sortPar_idempotent`, `sortPar_comm` in `Rchain/Sort.lean`), Law 2's core
   (`StrCong` ≡ in `Rchain/Rho.lean`), Law 4's core (`Reduce` ⟶ COMM in `Rchain/Rho.lean` +
   `reduce_closed` in `Rchain/Ty.lean`), and Law 6 (`Closed` + the preservation fundamentals in
-  `Rchain/Ty.lean`). The one residual of Law 1 is the lawfulness of the 23-function structural
-  comparator family (`cmpPar`/`cmpSend`/…/`cmpListParPair`), declared as 69
-  `cmpX_eq_iff`/`cmpX_swap`/`cmpX_lt_trans` axioms in `Rchain/Sort.lean`. These cannot be discharged
-  with the current definitions: the two-argument mutual induction hangs Lean's termination checker,
-  and `Rchain.cmpPar.mutual_induct` fails to derive (a `whnf` heartbeat timeout). Discharge requires a
-  refactor — a single well-founded recursion over a sum type — see the note in `Rchain/Sort.lean`.
+  `Rchain/Ty.lean`). The one residual of Law 1 is the lawfulness of the 10 element comparators
+  (`cmpPar`/`cmpSend`/…/`cmpConnective`), declared as 30
+  `cmpX_eq_iff`/`cmpX_swap`/`cmpX_lt_trans` axioms in `Rchain/Sort.lean` (the 12 list-comparator and
+  `cmpGUnforgeable` laws are proven by direct induction). The remaining element laws need mutual
+  induction over the AST, which hangs Lean's termination checker for the two-argument `cmpX` family.
+  The sum-type `Sortable`/`cmpSortable` definition is in place (termination proven); the remaining step
+  is its laws proof by well-founded induction — see the note in `Rchain/Sort.lean`.
 - **Stated** (axiom, precise signature, definition deferred): Laws 3 (`Subst.lean`), 4-full
   (`Reduce.lean`), 5 (`Match.lean`), 7–11 (`RSpace/*`), 14–18 (`Casper/*`). Each states the law's
   signature over the `Par`/abstract data types; the definitions (capture-avoiding substitution,

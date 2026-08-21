@@ -68,7 +68,7 @@ list cannot exceed 255; config durations/sizes cannot exceed `Long` range). Chan
 | Site | Cast | Scala oracle | Assessment |
 |---|---|---|---|
 | `rholang/matcher/par_count.rs` + `par_spatial_matcher_utils.rs` | `par.sends.len() as i32` | `ParCount` fields are Scala `Int` | faithful |
-| `casper/{runtime_replay,runtime_manager,block_creator}.rs` | `i as u8` / `(len + i) as u8` into `split_byte` | `Blake2b512Random.splitByte(Byte)` truncates `Int`→`Byte` | faithful |
+| `casper/{runtime_replay,runtime_manager,block_creator}.rs` | `i as u8` / `(len + i) as u8` into `split_byte` | `Blake2b512Random.splitByte(Byte)` truncates `Int`→`Byte` | **superseded** — subsequently fixed to checked `u8::try_from` (see §8) |
 | `node/configuration/{config_mapper,hocon}.rs`, `node/diagnostics/model.rs` | `as_nanos() as i64`, `(n * mult) as i64`, `as f64 … as i64` | Scala `Long` nanoseconds / `Long` byte counts | faithful |
 | `crypto/util/sorting.rs` | `(*x as i8).cmp(&(*y as i8))` | Scala `Ordering.by(Array[Byte].toIterable)` orders **signed** `Byte` | **correct** (doc comment already states this) |
 
@@ -274,7 +274,8 @@ out-of-range `i32` no longer truncates via `as u8`). The remaining casts are bou
 ## 9. Rust-first reimplementation — fragility audit of the Scala-port rholang layer
 
 This section is the justification for the rust-first reimplementation (plan
-`delegated-crafting-phoenix.md`). It documents *why* the current rholang layer is fragile — not as a
+`delegated-crafting-phoenix.md`; plans live outside the repo, in the project's `~/.claude/plans/`
+directory). It documents *why* the current rholang layer is fragile — not as a
 list of bugs to patch, but as the record of the Scala legacy the reimplementation removes. For each
 finding: **what it is → why it is fragile/exploitable → how the rust-first rewrite eliminates it**.
 Scala remains a *checklist* of required behavior only, never an implementation guide.
@@ -325,8 +326,9 @@ Scala remains a *checklist* of required behavior only, never an implementation g
   derivation is spec-driven and self-consistent, and the blessed contracts are demoted to checklist
   fixtures (Phase 3).
 
-**Status:** the reimplementation is tracked by the plan `delegated-crafting-phoenix.md`; each phase
-closes the corresponding finding (F1→Phase 4, F2/F3→Phases 1–3, F4→Phase 4.7, F5→Phase 3).
+**Status:** the reimplementation is tracked by the plan `delegated-crafting-phoenix.md` (plans live
+outside the repo, in `~/.claude/plans/`); each phase closes the corresponding finding (F1→Phase 4,
+F2/F3→Phases 1–3, F4→Phase 4.7, F5→Phase 3).
 
 ---
 

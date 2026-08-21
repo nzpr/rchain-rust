@@ -19,8 +19,8 @@ the node's live chain state (`rspace-*`).
 cargo run --release -p rchain-node --bin rnode -- run -s
 ```
 
-The node serves Deploy + Propose + Repl all on the internal gRPC port **40402** (the external 40401
-is configured but not bound).
+The node serves **Deploy** on the external gRPC port **40401** and **Propose + Repl** on the internal
+loopback port **40402** (propose/repl are not network-reachable — `spec/AUDIT.md` C1).
 
 ### Run the REPL
 

@@ -7,8 +7,9 @@ below are from `branch dev` after the rust-first reimplementation (Phases 0–5)
 
 ## Inventory
 
-**709 `#[test]`/`#[tokio::test]` functions** across the workspace (695 unit, 14 integration, 5
-proptest, 7 bench). Only **3 of 12 crates have integration tests** (`rholang`, `casper`, `node`).
+**~750 `#[test]`/`#[tokio::test]` functions** across the workspace (unit + 16 integration, 5
+proptest, 7 bench — the per-crate table below is authoritative; the headline count drifts as tests are
+added). Only **3 of 12 crates have integration tests** (`rholang`, `casper`, `node`).
 
 | Crate | Unit | Integration | Property | Bench |
 |---|---|---|---|---|

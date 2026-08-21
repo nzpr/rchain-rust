@@ -109,7 +109,7 @@ refinements become *types*, so illegal states are unrepresentable:
 | `Closed` (Law 6) | `Closed(Par)` newtype (`TryFrom`/`new` construction, `From<Closed> for Par` discharge) |
 | `WellScoped` | newtype over `(Ctx, Par)` |
 | `BindsAtMostOnce` (Law 5) | newtype carrying the `freeCount` invariant |
-| numeric invariants | `BlockHeight`/`SeqNum`/`Port`/`Cost`/`WireLen`/`ByteLen`/`ShortLen`/`NonNegI64`/`Bond` in [`shared/src/refined.rs`](../../shared/src/refined.rs) |
+| numeric invariants | `BlockHeight`/`SeqNum`/`Port`/`Cost`/`WireLen`/`ByteLen`/`ShortLen`/`NonNegI64`/`NonNegI32` in [`../shared/src/refined.rs`](../shared/src/refined.rs) |
 
 The sorter, wire codec, and constructors (`RhoName`/`RhoNil`/`single_expr`/`single_unforgeable`) are
 sort-typed; the interpreter (`rholang/`) and tuple space (`rspace/`) thread `Par<S>` end-to-end.

@@ -18,6 +18,7 @@ IV.
 | Reader/agent navigation map (goal-indexed) | [`docs/src/ai-entrypoint.md`](docs/src/ai-entrypoint.md) |
 | The ρ-calculus core spec (grammar, sorts, operations, refinements) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
 | The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
+| Human-facing walkthrough: each law → concrete Rust file/type/function + test | [`docs/src/contributor/laws-to-rust.md`](docs/src/contributor/laws-to-rust.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
 | How Rust made the Scala fragility explicit (bugs caught, production-readiness) | [`spec/RUST-VS-SCALA.md`](spec/RUST-VS-SCALA.md) |
 | Adversarial-audit findings register (incl. §9 rust-first fragility audit, §10 full-system HAZOP, §11 red-team re-audit) | [`spec/AUDIT.md`](spec/AUDIT.md) |
@@ -133,11 +134,13 @@ Per-law proof status lives in [`spec/INVENTORY.md`](spec/INVENTORY.md).
 The full 19-law table (with per-law formalization status and line-level source pointers) lives in
 [`spec/INVENTORY.md`](spec/INVENTORY.md); it is the canonical catalog and is not repeated here.
 
-**Proven vs. axiomatized:** laws 1–3, 7–11, 12–13, 15–18 and the merge part of 19 are provable
-algebraic/combinatorial statements (targets for the proof assistants). Cryptographic primitives
-(Blake2b, secp256k1, Curve25519) are **axiomatized** — modeled as abstract interfaces whose required
-properties are postulated, not proven. Liveness (eventual finality) is an open question, not an
-inductive invariant.
+**Proven vs. axiomatized:** the algebraic/combinatorial laws are provable statements — Law 1
+(idempotence/commutativity), Law 2's core (≡), Law 4's core (COMM), and Law 6 (`Closed`) are already
+**proven** in `Rchain/`; the rest are **stated** (precise signature, definition deferred); Laws 12–13
+(Rosette VM) are **orphaned** (out of scope — the Rust reducer replaces the VM). Cryptographic
+primitives (Blake2b, secp256k1, Curve25519 — Law 19) are **axiomatized** — modeled as abstract
+interfaces whose required properties are postulated, not proven. Liveness (eventual finality) is an
+open question, not an inductive invariant.
 
 ## Layer map
 
@@ -218,7 +221,9 @@ Bottom-up order: `sdk` (and `regex`, in parallel) → `shared` → `crypto` + `g
   `block-storage`, `rspace`, `rholang`, `casper`, `comm`, `regex`, `node`) are ported at the
   workspace root. The proofs-first *pause* was lifted in practice; the port was written against the
   verified spec rather than waiting on Laws 1–11.
-- **Formalization — residual**: Law 1's idempotence/commutativity is proven, conditional on the 69
-  comparator-law `axiom`s in `Rchain/Sort.lean` (the remaining "total order" obligation). Laws 2–19
-  are stated as Phase 1–5 obligations (see `spec/INVENTORY.md`); the type-system fundamentals F1–F6
-  are proven in `Rchain/Ty.lean`. The adversarial audit findings are in `spec/AUDIT.md`.
+- **Formalization — residual**: Law 1's idempotence/commutativity is proven, conditional on the 30
+  element-comparator `axiom`s in `Rchain/Sort.lean` (the remaining "total order" obligation). Law 2's
+  core (≡) and Law 4's core (COMM) are proven in `Rchain/Rho.lean`, Law 6 is proven in `Rchain/Ty.lean`;
+  the rest are stated (see `spec/INVENTORY.md`), Laws 12–13 are orphaned (Rosette VM out of scope). The
+  type-system fundamentals F1–F6 are proven in `Rchain/Ty.lean`. The adversarial audit findings are in
+  `spec/AUDIT.md`.

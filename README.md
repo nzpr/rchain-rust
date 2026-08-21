@@ -78,7 +78,7 @@ cargo run --release -p rchain-node --bin rnode -- run -s
 # Interactive REPL (prompt `rholang $ `, history, tab-completion):
 cargo run --release -p rchain-node --bin rnode -- repl
 
-# …or point the client at a remote node (all gRPC services are on port 40402):
+# …or point the client at a remote node (Repl is on the internal port 40402; Deploy is on 40401):
 rnode --grpc-host <host> --grpc-port 40402 repl
 ```
 

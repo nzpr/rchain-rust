@@ -3,7 +3,7 @@
 
 State-channel changes merge associatively, and merging two non-conflicting change logs is
 commutative. The Scala oracle is `merger/{StateChange,ChannelChange,EventLogMergingLogic}.scala`; the
-Rust realization is `rspace::merger::StateChangeMerger`.
+Rust realization is the module `rspace/src/merger/state_change_merger.rs` (`compute_trie_actions`).
 -/
 
 namespace Rchain

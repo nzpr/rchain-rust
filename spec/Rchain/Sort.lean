@@ -507,8 +507,8 @@ theorem cmpListParPair_eq_iff (l l' : List (Par × Par)) : cmpListParPair l l' =
 
 /-! ## Lawfulness: `swap` (RESIDUAL AXIOMS)
 
-Residual: the 11 element-comparator `swap` laws (the 12 list-comparator `swap` laws are discharged
-below); see the `lt_trans` note for the Lean limitation.
+Residual: the 10 element-comparator `swap` laws (the 12 list-comparator and `cmpGUnforgeable` `swap`
+laws are discharged below); see the `lt_trans` note for the Lean limitation.
 -/
 
 axiom cmpPar_swap (p q : Par) : cmpPar q p = Ordering.swap (cmpPar p q)

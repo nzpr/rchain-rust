@@ -90,15 +90,23 @@ invariants.
 
 ## 4. What still lags (honest)
 
-- A large **"deferred"/unwired** surface — Kademlia discovery, the HTTP transaction API, block
-  reporting, the `rho:regex` system process, peer store-items serving, and the rholang parser's
-  remaining genesis gaps — is still faithful-to-Scala-or-absent rather than surpassed.
-- **Residual panic sites** (`assert!`/`panic!`) remain in internal invariant paths (radix-tree
-  corrupt-node detection, constructor length checks); the audit gate is being extended to flag them.
-- **Liveness gaps** (equivocation handling, fringe pruning) are newly fixed in this remediation but
-  need end-to-end integration coverage.
+- **Formalization**: the 30 element-comparator axioms in `Rchain/Sort.lean` (Law 1's "total order"
+  residual) remain to discharge — they need the sum-type `cmpSortable` laws proof (well-founded
+  induction); the definition is in place. Everything else is proven or stated.
+- **Simplified native contracts**: the PoS/vault model is a "simplified balance map" — the vault
+  unforgeable-name capability, minimum/maximum-bond validation, and the epoch/quarantine/reward/Coop
+  vault machinery are deferred (documented in `spec/RUST-FIRST.md`).
+- **Accepted-faithful residuals** (by design, not defects — see `AUDIT.md` §5/§11): plaintext
+  external-IP discovery (M7), the DAG `seen`-cache O(N²) (H6), and the rate-limited-but-plaintext
+  Kademlia discovery bind.
 
-These are tracked in `AUDIT.md` and the remediation plan, and are the active work — not the end state.
+The earlier "deferred/unwired" surface (Kademlia, the HTTP transaction API, block reporting, the
+rholang parser's genesis gaps, peer store-items ingress) is now **wired and fixed** (see
+`AUDIT.md` §8/§11); the `rho:regex` system process never existed in the Scala oracle (the `regex` crate
+is orphaned). The audit gate (`tools/audit-type-system.sh`) is **clean** — zero production
+`panic`/`unsafe`/silent-conversion, with the remaining `assert!` sites whitelisted as documented
+internal invariants; equivocation rejection and finalizer fringe advancement now have regression tests
+(`spec/TEST-COVERAGE.md` G1/G8).
 
 ---
 
