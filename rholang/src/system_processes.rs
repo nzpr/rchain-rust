@@ -984,7 +984,12 @@ mod tests {
     fn mock_system_processes(
         mock: &Arc<MockSpace>,
     ) -> (SystemProcesses, Vec<Definition>) {
-        let charging = ChargingRSpace::new(mock.clone());
+        let charging = ChargingRSpace::new(
+            mock.clone(),
+            Arc::new(crate::accounting::CostAccounting::from_initial(
+                crate::accounting::Costs::unsafe_max(),
+            )),
+        );
         let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
         let block_data = Arc::new(Mutex::new(BlockData::empty()));
         let native_state = Arc::new(NativeSystemState::new(Arc::new(
@@ -1087,7 +1092,12 @@ mod tests {
         );
         native.set_bonds(&bonds);
 
-        let charging = ChargingRSpace::new(mock.clone());
+        let charging = ChargingRSpace::new(
+            mock.clone(),
+            Arc::new(crate::accounting::CostAccounting::from_initial(
+                crate::accounting::Costs::unsafe_max(),
+            )),
+        );
         let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
         let block_data = Arc::new(Mutex::new(BlockData::empty()));
         let sp = SystemProcesses::new(charging, dispatcher, block_data, Arc::new(native));

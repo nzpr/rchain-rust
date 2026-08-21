@@ -16,6 +16,7 @@ use rchain_rspace::tuple_space::{
     ContResult, Result as RSpaceResult, Tuplespace as RSpaceTuplespace,
 };
 
+use crate::accounting::{CostAccounting, Costs};
 use crate::errors::RholangError;
 use crate::matcher::{fold_match, spatial_match, FreeMap};
 use crate::reduce::{Application, Tuplespace};
@@ -85,17 +86,18 @@ impl Match<BindPattern, ListParWithRandom> for RhoMatch {
 }
 
 /// The charging tuplespace bridge: adapts the async rspace to the async rholang `Tuplespace` (port
-/// of `ChargingRSpace`). Gas charging for storage/events is deferred; this delegates produce/consume
-/// and converts the result.
+/// of `ChargingRSpace`). Charges the produce/consume storage + event/COMM costs (C-2); the Scala
+/// storage *refund* on a matched continuation is not yet modeled (safe over-charge).
 #[derive(Clone)]
 pub struct ChargingRSpace {
     space: RhoTuplespace,
+    cost: Arc<CostAccounting>,
 }
 
 impl ChargingRSpace {
-    /// Wrap `space`, delegating its async produce/consume directly (no `block_on` bridge).
-    pub fn new(space: RhoTuplespace) -> Self {
-        ChargingRSpace { space }
+    /// Wrap `space` with the cost cell, charging produce/consume (port of `chargingRSpace`).
+    pub fn new(space: RhoTuplespace, cost: Arc<CostAccounting>) -> Self {
+        ChargingRSpace { space, cost }
     }
 }
 
@@ -107,11 +109,22 @@ impl Tuplespace for ChargingRSpace {
         data: ListParWithRandom,
         persist: bool,
     ) -> Result<Application, RholangError> {
+        self.cost.charge(Costs::storage_cost_produce(channel, &data))?;
         let result = self
             .space
             .produce(channel.clone(), data, persist)
             .await
             .map_err(|e| RholangError::ReduceError(e.to_string()))?;
+        match &result {
+            None => self.cost.charge(Costs::event_storage_cost(1))?,
+            Some((cont, _)) => {
+                if !persist {
+                    self.cost.charge(Costs::event_storage_cost(1))?;
+                }
+                self.cost
+                    .charge(Costs::comm_event_storage_cost(cont.channels.len() as i64))?;
+            }
+        }
         Ok(to_application(result))
     }
 
@@ -123,11 +136,26 @@ impl Tuplespace for ChargingRSpace {
         persist: bool,
         peeks: BTreeSet<usize>,
     ) -> Result<Application, RholangError> {
+        self.cost
+            .charge(Costs::storage_cost_consume(channels, patterns, &continuation))?;
         let result = self
             .space
             .consume(channels, patterns, continuation, persist, peeks)
             .await
             .map_err(|e| RholangError::ReduceError(e.to_string()))?;
+        match &result {
+            None => self
+                .cost
+                .charge(Costs::event_storage_cost(channels.len() as i64))?,
+            Some((cont, _)) => {
+                if !persist {
+                    self.cost
+                        .charge(Costs::event_storage_cost(channels.len() as i64))?;
+                }
+                self.cost
+                    .charge(Costs::comm_event_storage_cost(cont.channels.len() as i64))?;
+            }
+        }
         Ok(to_application(result))
     }
 }

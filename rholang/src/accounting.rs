@@ -10,6 +10,8 @@ use std::sync::Mutex;
 
 use num_bigint::BigInt;
 
+use rchain_models::ast::Par;
+use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_shared::serialize::Serialize;
 
 use crate::errors::RholangError;
@@ -256,6 +258,41 @@ impl Costs {
             terms.iter().map(|a| <T as Serialize<T>>::encode(a).len() as i64).sum(),
             "storage cost",
         )
+    }
+
+    /// Consume storage cost: channels + patterns + the `ParBody` continuation body (port of
+    /// `storageCostConsume`).
+    pub fn storage_cost_consume(
+        channels: &[Par],
+        patterns: &[BindPattern],
+        continuation: &TaggedContinuation,
+    ) -> Cost {
+        let channels_cost: i64 = channels
+            .iter()
+            .map(|c| <Par as Serialize<Par>>::encode(c).len() as i64)
+            .sum();
+        let patterns_cost: i64 = patterns
+            .iter()
+            .map(|p| <BindPattern as Serialize<BindPattern>>::encode(p).len() as i64)
+            .sum();
+        let body_cost: i64 = match continuation {
+            TaggedContinuation::ParBody(pwr) => {
+                <Par as Serialize<Par>>::encode(&pwr.body).len() as i64
+            }
+            _ => 0,
+        };
+        Cost::new(channels_cost + patterns_cost + body_cost, "consume storage")
+    }
+
+    /// Produce storage cost: channel + the produced data (port of `storageCostProduce`).
+    pub fn storage_cost_produce(channel: &Par, data: &ListParWithRandom) -> Cost {
+        let channel_cost = <Par as Serialize<Par>>::encode(channel).len() as i64;
+        let data_cost: i64 = data
+            .pars
+            .iter()
+            .map(|p| <Par as Serialize<Par>>::encode(p).len() as i64)
+            .sum();
+        Cost::new(channel_cost + data_cost, "produces storage")
     }
 
     const HASH_LEN: i64 = 32;

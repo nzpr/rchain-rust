@@ -130,7 +130,7 @@ pub(crate) async fn build_runtime_core(
     native_store: Arc<InMemNativeStore>,
 ) -> std::io::Result<RuntimeCore> {
     let cost = Arc::new(CostAccounting::from_initial(crate::accounting::Costs::unsafe_max()));
-    let charging_space = ChargingRSpace::new(space.clone());
+    let charging_space = ChargingRSpace::new(space.clone(), cost.clone());
     let block_data = Arc::new(Mutex::new(BlockData::empty()));
     let native_state = Arc::new(NativeSystemState::new(native_store));
 
@@ -583,8 +583,8 @@ mod tests {
         let mock = Arc::new(MockSpace {
             produced: Mutex::new(Vec::new()),
         });
-        let charging = ChargingRSpace::new(mock.clone());
         let cost = Arc::new(CostAccounting::from_initial(crate::accounting::Costs::unsafe_max()));
+        let charging = ChargingRSpace::new(mock.clone(), cost.clone());
         let reducer = setup_reducer(charging, cost.clone(), Par::default());
 
         let send = rchain_models::ast::Send {
