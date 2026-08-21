@@ -108,3 +108,37 @@ async fn deploy_exceeding_phlo_limit_fails_and_next_runs() {
     // The next deploy still runs: the per-deploy phlo `set` resets the balance.
     assert!(!results[1].deploy.is_failed, "subsequent deploy must succeed");
 }
+
+#[tokio::test]
+async fn replay_matches_play_for_persistent_and_peek() {
+    let rm = build_runtime_manager().await;
+    let rand = fixed_rand();
+    // A non-trivial deploy: persistent send + peek receive (Law 11 replay must reproduce the play
+    // post-state, not just a single trivial send).
+    let term = r#"new c in { c!!(42) | for (@x <<- c) { @"out"!(x) } }"#;
+    let (pre, post, results) = rm
+        .compute_genesis(
+            &[deploy(term)],
+            &rand,
+            BlockData::empty(),
+            &std::collections::BTreeMap::new(),
+        )
+        .await
+        .expect("compute_genesis");
+    assert!(results[0].eval_result.succeeded(), "deploy should succeed");
+
+    let processed: Vec<ProcessedDeploy> = results.iter().map(|r| r.deploy.clone()).collect();
+    let (replay_post, _) = rm
+        .replay_compute_state(
+            &pre,
+            &processed,
+            &[],
+            &rand,
+            BlockData::empty(),
+            false,
+            &std::collections::BTreeMap::new(),
+        )
+        .await
+        .expect("replay_compute_state");
+    assert_eq!(post, replay_post, "replay must reproduce the play post-state");
+}

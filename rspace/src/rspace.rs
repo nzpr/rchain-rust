@@ -583,3 +583,46 @@ where
         self.native_store.revert(checkpoint.native_snapshot);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rchain_shared::store_manager::InMemoryStoreManager;
+
+    struct StrMatch;
+    impl Match<String, String> for StrMatch {
+        fn get(&self, _p: &String, a: &String) -> Option<String> {
+            Some(a.clone())
+        }
+    }
+
+    async fn space() -> Arc<RSpace<String, String, String, String>> {
+        let manager = InMemoryStoreManager::default();
+        crate::factory::create_rspace::<String, String, String, String>(&manager, Arc::new(StrMatch))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn checkpoint_reset_returns_persisted_data() {
+        let s = space().await;
+        s.produce("c".to_string(), "data".to_string(), false).await.unwrap();
+        let cp = s.create_checkpoint().await.unwrap();
+        s.reset(cp.root).await.unwrap();
+        let data = s.get_data(&"c".to_string()).await.unwrap();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].a, "data");
+    }
+
+    #[tokio::test]
+    async fn soft_checkpoint_revert_rolls_back_produces() {
+        let s = space().await;
+        let soft = s.create_soft_checkpoint().await;
+        s.produce("c".to_string(), "extra".to_string(), false).await.unwrap();
+        s.revert_to_soft_checkpoint(soft).await;
+        assert!(
+            s.get_data(&"c".to_string()).await.unwrap().is_empty(),
+            "reverted produce must be gone"
+        );
+    }
+}

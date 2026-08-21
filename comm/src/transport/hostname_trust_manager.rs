@@ -252,4 +252,32 @@ mod tests {
             .unwrap();
         assert_eq!(cn, rchain_shared::base16::encode(&address));
     }
+
+    #[test]
+    fn server_verifier_rejects_wrong_hostname() {
+        let (cert_pem, _) =
+            crate::transport::generate_certificate_if_absent::generate_certificate().unwrap();
+        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
+        let der = CertificateDer::from(pem.contents);
+
+        let verifier = NodeIdServerVerifier::new();
+        // A fixed 40-hex peer id that cannot equal the randomly-generated cert's address.
+        let name = ServerName::try_from("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef").unwrap();
+        let result = verifier.verify_server_cert(&der, &[], &name, &[], UnixTime::now());
+        assert!(result.is_err(), "a server cert whose address != the peer id must be rejected");
+    }
+
+    #[test]
+    fn client_verifier_rejects_stale_cert() {
+        let (cert_pem, _) =
+            crate::transport::generate_certificate_if_absent::generate_certificate().unwrap();
+        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
+        let der = CertificateDer::from(pem.contents);
+
+        let verifier = NodeIdClientVerifier::new();
+        // `now` at the Unix epoch is before the cert's `not_before`.
+        let now = UnixTime::since_unix_epoch(std::time::Duration::ZERO);
+        let result = verifier.verify_client_cert(&der, &[], now);
+        assert!(result.is_err(), "a not-yet-valid cert must be rejected");
+    }
 }
