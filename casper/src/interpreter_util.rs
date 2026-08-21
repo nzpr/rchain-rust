@@ -95,9 +95,12 @@ pub async fn compute_deploys_checkpoint(
 }
 
 /// The hard-coded empty-state (genesis pre-state) hash (port of `emptyStateHashFixed`).
+///
+/// Recomputed after the native system-process install + de-blessed genesis (the empty state is now
+/// "system processes installed + empty native state", with no registry-bootstrap echo).
 pub fn empty_state_hash_fixed() -> Blake2b256Hash {
     Blake2b256Hash::from_byte_array(&base16::unsafe_decode(
-        "9619d9a34bdaf56d5de8cfb7c2304d63cd9e469a0bfc5600fd2f5b9808e290f1",
+        "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
     ))
 }
 

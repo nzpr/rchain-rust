@@ -62,3 +62,14 @@ async fn genesis_deploy_replay_recomputes_state() {
         .expect("replay_compute_state");
     assert_eq!(post, replay_post, "replay must reproduce the play post-state");
 }
+
+#[tokio::test]
+async fn empty_state_hash_fixed_matches_runtime() {
+    let rm = build_runtime_manager().await;
+    let hash = rm.runtime().empty_state_hash().await.expect("empty state hash");
+    assert_eq!(
+        hash,
+        rchain_casper::interpreter_util::empty_state_hash_fixed(),
+        "the hard-coded genesis pre-state hash must match the computed empty state"
+    );
+}
