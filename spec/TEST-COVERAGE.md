@@ -101,3 +101,21 @@ For each gap: **code location** → **current test state** → **the seam a regr
 - [`RUST-FIRST.md`](RUST-FIRST.md) — the native system-contract state model (G3/G5/G6 touch it).
 - [`RHO-CALCULUS.md`](RHO-CALCULUS.md) / [`INVENTORY.md`](INVENTORY.md) — the 19-law oracle the
   property + replay tests assert.
+
+## Remediation status
+
+| Gap | Status |
+|---|---|
+| G1 equivocation | ✅ regression test (`casper/dag.rs`) |
+| G2 DoS limits | ✅ RateLimiter + chunker; ⏸ dispatch-semaphore (over tokio's tested primitive) |
+| G3 PoS mutations | ✅ `slash`/`pre_charge`/vault deposit/transfer |
+| G4 gas enforcement | ✅ `ChargingRSpace` + `phlo_limit` exhaustion end-to-end |
+| G5 state-sync | ✅ export→validate round-trip; ⏸ full store export→import→compare |
+| G6 history checkpoint/reset/rollback | ✅ `RSpace::create_checkpoint`/`reset`/`revert` |
+| G7 replay | ✅ persistent+peek replay matches play; ⏸ `check_replay_data` negative path |
+| G8 finalizer | ✅ `calculate_finalization` fork/lockstep |
+| G9 malformed input | ✅ `NodeIdentifier`/`KeySegment` |
+| G10 TLS trust-manager | ✅ wrong-hostname + stale-cert rejection |
+| G11 transport socket | ⏸ no socket-level round-trip yet (mutual-TLS gRPC harness) |
+
+*(✅ = covered; ⏸ = deferred with the seam documented above.)*
