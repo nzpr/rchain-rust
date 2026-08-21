@@ -21,6 +21,11 @@ use rchain_shared::typed_store::KeyValueTypedStore;
 use crate::block_metadata_store::BlockMetadataStore;
 use crate::merging::BlockIndex;
 
+/// Upper bound on the number of distinct deploys held in the pending pool. Reached by the
+/// `add_deploy` chokepoint so a remote flood cannot exhaust the deploy store (documented Scala
+/// deviation — the Scala pool is unbounded).
+pub const MAX_POOLED_DEPLOYS: usize = 10_000;
+
 /// Build a `Message` from a `BlockMetadata` given the current message map (port of
 /// `BlockDagKeyValueStorage.messageFromBlockMetadata`). Returns `None` when a justification is
 /// absent from `msg_map` (the Scala `Map.apply` throws).
@@ -276,6 +281,11 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
     }
 
     async fn add_deploy(&self, deploy: SignedDeployData) -> Result<(), String> {
+        // Soft DoS bound: reject before writing once the pool reaches `MAX_POOLED_DEPLOYS`
+        // distinct deploys (documented Scala deviation — the Scala pool is unbounded).
+        if self.deploy_store.count().await? >= MAX_POOLED_DEPLOYS {
+            return Err("deploy pool is full".to_string());
+        }
         self.deploy_store.put(&[(deploy.sig.clone(), deploy)]).await?;
         Ok(())
     }
@@ -452,5 +462,32 @@ mod tests {
 
         let pooled = storage.pooled_deploys().await.unwrap();
         assert_eq!(pooled[&deploy.sig], deploy);
+    }
+
+    fn deploy_with_id(id: usize) -> SignedDeployData {
+        SignedDeployData {
+            data: rchain_models::casper::protocol::casper_message::DeployData {
+                term: "Nil".to_string(),
+                timestamp: 0,
+                phlo_price: 1,
+                phlo_limit: 1,
+                valid_after_block_number: 0,
+                shard_id: "root".to_string(),
+            },
+            deployer: vec![0],
+            sig: id.to_le_bytes().to_vec(),
+            sig_algorithm: "secp256k1".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_deploy_rejects_when_pool_full() {
+        let storage = build_storage().await;
+        for id in 0..MAX_POOLED_DEPLOYS {
+            storage.add_deploy(deploy_with_id(id)).await.unwrap();
+        }
+        let err = storage.add_deploy(deploy_with_id(MAX_POOLED_DEPLOYS)).await;
+        assert!(err.is_err(), "deploy pool must reject once full");
+        assert!(err.unwrap_err().contains("full"));
     }
 }

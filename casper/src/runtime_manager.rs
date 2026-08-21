@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
@@ -17,6 +18,7 @@ use rchain_models::par_ops::from_expr;
 use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::validator::Validator;
+use rchain_rholang::accounting::Cost;
 use rchain_rholang::evaluate_result::EvaluateResult;
 use rchain_rholang::native_state::{decode_bonds, pos_bonds_key, NativeSystemState};
 use rchain_rholang::merging::{
@@ -42,6 +44,13 @@ use crate::system_deploy::{
 ///
 /// The mergeable-channel store (port of `RuntimeManager.MergeableStore`).
 pub type MergeableStore = Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<DeployMergeableData>>>;
+
+/// The phlo (gas) limit for a single exploratory deploy (documented Scala deviation: Scala runs
+/// exploratory deploys with no limit). Mirrors the Repl bound in
+/// `node/src/api/grpc/repl_grpc_service.rs`.
+const EXPLORATORY_PHLO_LIMIT: i64 = 1_000_000_000;
+/// The wall-clock deadline for a single exploratory deploy (documented Scala deviation).
+const EXPLORATORY_EVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct RuntimeManager {
     runtime: RhoRuntime,
@@ -259,7 +268,10 @@ impl RuntimeManager {
         let mut collector = EvalCollector::default();
 
         let pre_charge = SystemDeploy::pre_charge(
-            deploy.data.total_phlo_charge(),
+            deploy
+                .data
+                .total_phlo_charge()
+                .ok_or_else(|| "phlo charge overflow".to_string())?,
             &PublicKey::new(deploy.deployer.clone()),
             rand.split_byte(0),
         );
@@ -553,7 +565,19 @@ impl RuntimeManager {
         return_channel: &Par,
     ) -> Result<Vec<Par>, String> {
         self.runtime.reset(to_blake(start)).await.map_err(|e| e)?;
-        let eval = self.runtime.evaluate(term, rand).await.map_err(|e| e.to_string())?;
+        // Bound the exploratory evaluation (documented Scala deviation): a phlo cap (the reducer
+        // aborts with `OutOfPhlogistonsError` once the balance is exhausted) + a wall-clock
+        // deadline, mirroring the Repl bound.
+        self.runtime
+            .cost()
+            .set(Cost::new(EXPLORATORY_PHLO_LIMIT, "exploratory"));
+        let eval = tokio::time::timeout(
+            EXPLORATORY_EVAL_TIMEOUT,
+            self.runtime.evaluate(term, rand),
+        )
+        .await
+        .map_err(|_| format!("exploratory deploy timed out after {EXPLORATORY_EVAL_TIMEOUT:?}"))?
+        .map_err(|e| e.to_string())?;
         if !eval.errors.is_empty() {
             return Err(format!("{:?}", eval.errors));
         }

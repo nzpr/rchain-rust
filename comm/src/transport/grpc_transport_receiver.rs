@@ -192,7 +192,11 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
             .and_then(|stmd| stream_handler::to_result(&stmd));
 
         match collected {
-            Ok(msg) => match stream_handler::restore(&msg, &mut cache) {
+            Ok(msg) => match stream_handler::restore(
+                &msg,
+                &mut cache,
+                usize::try_from(self.max_stream_message_size).unwrap_or(usize::MAX),
+            ) {
                 Ok(blob) => {
                     let handle = self.handle_streamed.clone();
                     tokio::spawn(async move {

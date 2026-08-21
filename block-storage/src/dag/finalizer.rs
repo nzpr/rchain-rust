@@ -148,14 +148,17 @@ where
         bonds_map: &BTreeMap<S, NonNegI64>,
     ) -> bool {
         let bonded_senders: BTreeSet<S> = bonds_map.keys().cloned().collect();
-        let mut full_partition_stake: i64 = 0;
+        let mut full_partition_stake: i128 = 0;
         for (sender, seen_by) in next_fringe_support_map {
             let all_bonded = !seen_by.is_empty() && seen_by.values().all(|v| v == &bonded_senders);
             if all_bonded {
-                full_partition_stake += i64::from(bonds_map[sender]);
+                full_partition_stake += i128::from(i64::from(bonds_map[sender]));
             }
         }
-        let total_stake: i64 = bonds_map.values().map(|v| i64::from(*v)).sum();
+        let total_stake: i128 = bonds_map
+            .values()
+            .map(|v| i128::from(i64::from(*v)))
+            .sum();
         is_super_majority(full_partition_stake, total_stake)
     }
 

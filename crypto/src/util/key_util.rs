@@ -6,6 +6,7 @@
 //! (SubjectPublicKeyInfo), and the public key as hex.
 
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use k256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
@@ -20,10 +21,37 @@ use crate::private_key::PrivateKey;
 use crate::public_key::PublicKey;
 use crate::signatures::signatures_alg::SignaturesAlg;
 
-/// PBKDF2 iteration count for the encrypted private key (BouncyCastle's default).
-const PBKDF2_ITERATIONS: u32 = 1024;
+/// PBKDF2 iteration count for the encrypted private key.
+///
+/// Raised from BouncyCastle's `1024` default to the OWASP-recommended floor for PBKDF2-HMAC-SHA256
+/// (documented deviation — a higher count slows offline brute-force at rest). Note the interop
+/// caveat: keys written with this count cannot be decrypted by tooling pinned to the 1024 default
+/// and vice-versa.
+const PBKDF2_ITERATIONS: u32 = 310_000;
 const SALT_LEN: usize = 16;
 const AES_BLOCK_SIZE: usize = 16;
+
+/// Write secret material (e.g. a private key) with owner-only permissions (`0o600`). Falls back to a
+/// plain `fs::write` on non-Unix platforms (the workspace targets Linux).
+pub fn write_private_key(path: &Path, bytes: impl AsRef<[u8]>) -> Result<(), String> {
+    write_with_mode(path, bytes.as_ref(), 0o600)
+}
+
+#[cfg(unix)]
+fn write_with_mode(path: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true).mode(mode);
+    opts.open(path)
+        .map_err(|e| e.to_string())?
+        .write_all(bytes)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(unix))]
+fn write_with_mode(path: &Path, bytes: &[u8], _mode: u32) -> Result<(), String> {
+    fs::write(path, bytes).map_err(|e| e.to_string())
+}
 
 /// Write validator keys to PEM/hex files (port of `KeyUtil.writeKeys`).
 pub fn write_keys(
@@ -68,7 +96,7 @@ pub fn write_keys(
         .to_pem("PUBLIC KEY", LineEnding::LF)
         .map_err(|e| e.to_string())?;
 
-    fs::write(private_key_pem_path, private_pem.as_bytes()).map_err(|e| e.to_string())?;
+    write_private_key(private_key_pem_path, private_pem.as_bytes())?;
     fs::write(public_key_pem_path, public_pem.as_bytes()).map_err(|e| e.to_string())?;
     fs::write(public_key_hex_path, format!("{}\n", base16::encode(pk.bytes())))
         .map_err(|e| e.to_string())?;

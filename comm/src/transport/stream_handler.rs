@@ -149,11 +149,13 @@ pub fn to_result(stmd: &Streamed) -> Result<crate::transport::messages::StreamMe
 pub fn restore(
     msg: &crate::transport::messages::StreamMessage,
     cache: &mut HashMap<String, Vec<u8>>,
+    max_decompressed_size: usize,
 ) -> Result<Blob, String> {
     let content = cache
         .remove(&msg.key)
         .ok_or_else(|| "Could not read streamed data from cache".to_string())?;
-    let decompressed = decompress_content(&content, msg.compressed, msg.content_length)?;
+    let decompressed =
+        decompress_content(&content, msg.compressed, msg.content_length, max_decompressed_size)?;
     Ok(blob(msg.sender.clone(), msg.type_id.clone(), decompressed))
 }
 
@@ -162,10 +164,20 @@ pub fn decompress_content(
     raw: &[u8],
     compressed: bool,
     content_length: WireLen,
+    max_decompressed_size: usize,
 ) -> Result<Vec<u8>, String> {
     if compressed {
         let length = usize::try_from(u32::from(content_length))
             .map_err(|_| "content length too large".to_string())?;
+        // Reject *before* allocating: `content_length` comes from the untrusted stream header and
+        // `lz4_flex::block::decompress` allocates exactly that many bytes, so a huge declared size
+        // must be capped here (the receiver's compressed-byte cap does not bound the decompressed
+        // size).
+        if length > max_decompressed_size {
+            return Err(format!(
+                "decompressed content length {length} exceeds cap {max_decompressed_size}"
+            ));
+        }
         rchain_shared::compression::decompress(raw, length)
             .ok_or_else(|| "Could not decompress data".to_string())
     } else {
@@ -244,7 +256,27 @@ mod tests {
             content_length: WireLen::try_from(raw.len()).unwrap(),
         };
         let mut cache = HashMap::from([("k".to_string(), compressed)]);
-        let blob = restore(&msg, &mut cache).unwrap();
+        let blob = restore(&msg, &mut cache, raw.len() * 2).unwrap();
         assert_eq!(blob.packet.content, raw);
+    }
+
+    #[test]
+    fn restore_rejects_oversized_decompressed_content() {
+        let raw = b"hello world hello world hello world".to_vec();
+        let compressed = rchain_shared::compression::compress(&raw);
+        // Declared content length is within the WireLen range, but far exceeds the cap.
+        let msg = crate::transport::messages::StreamMessage {
+            sender: peer(),
+            type_id: "BlockMessage".to_string(),
+            key: "k".to_string(),
+            compressed: true,
+            content_length: WireLen::try_from(1_000_000usize).unwrap(),
+        };
+        let mut cache = HashMap::from([("k".to_string(), compressed)]);
+        // Cap is far smaller than the declared length: reject without allocating 1 MB.
+        match restore(&msg, &mut cache, 1024) {
+            Err(e) => assert!(e.contains("exceeds cap"), "unexpected error: {e}"),
+            Ok(_) => panic!("expected rejection"),
+        }
     }
 }

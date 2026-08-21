@@ -20,7 +20,7 @@ IV.
 | The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
 | The ρ→CoC type-system spec | [`spec/TYPE-SYSTEM.md`](spec/TYPE-SYSTEM.md) |
 | How Rust made the Scala fragility explicit (bugs caught, production-readiness) | [`spec/RUST-VS-SCALA.md`](spec/RUST-VS-SCALA.md) |
-| Adversarial-audit findings register (incl. §9 rust-first fragility audit) | [`spec/AUDIT.md`](spec/AUDIT.md) |
+| Adversarial-audit findings register (incl. §9 rust-first fragility audit, §10 full-system HAZOP, §11 red-team re-audit) | [`spec/AUDIT.md`](spec/AUDIT.md) |
 | Native system contracts (registry/PoS/vault state model + replay determinism) | [`spec/RUST-FIRST.md`](spec/RUST-FIRST.md) |
 | Test-coverage audit & gap analysis | [`spec/TEST-COVERAGE.md`](spec/TEST-COVERAGE.md) |
 | Machine-checked Lean/Coq definitions & proofs | [`spec/`](spec/) |

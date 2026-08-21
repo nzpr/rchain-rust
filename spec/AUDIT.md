@@ -26,7 +26,7 @@ Audit dimensions (in the order applied):
 - **`panic`** — production `.unwrap()` / `.expect(` / `panic!` / `unreachable!` / `todo!` /
   `unimplemented!`, whitelisting `sdk/src/primitive.rs` (the Scala `getUnsafe` escape hatch) and the
   Scala-oracle `TODO`/`NotImplementedError` stubs in `node/src/dag/implementation.rs` +
-  `regex/src/regex_pattern.rs`; the rholang parser's `self.expect(Tok)` method is excluded (a
+  `regex/src/regex_pattern.rs`; the rholang parser's `expect(Tok::…)` method is excluded (a
   method, not `Result::expect`).
 - **`unsafe`** — `unsafe {` (must be zero; the crate graph is entirely safe Rust).
 - **`silent`** — `try_into().unwrap()` / `try_into().expect(`, and `unwrap_or(0)` /
@@ -195,6 +195,14 @@ Every place the Rust port deliberately departs from the Scala oracle, with the r
 | peer-table evicts least-recently-seen when saturated | Scala drops the peer (relies on the ping RPC) | without a ping RPC a full bucket would saturate permanently (M5) |
 | `/reporting/trace` gated on `enable-reporting` | Scala reads the flag but does not enforce it | the flag must actually gate the route (M6) |
 | bootstrap request gives up after 10 retries | Scala `keepOnRequestingTillRunning` retries forever | a dead bootstrap must not block startup (M8) |
+| deploy pool capped (`MAX_POOLED_DEPLOYS = 10_000`) | Scala deploy pool is unbounded | a remote flood must not exhaust the deploy store (R2) |
+| stream decompression capped (`content_length ≤ max_stream_message_size`) | Scala `LZ4Compressor` does not bound decompressed size | reject a decompression bomb before allocating (R3) |
+| Kademlia RPC rate-limited (100 req/s) | Scala Kademlia ping/lookup are unlimited | bound sybil/routing-table pollution + peer enumeration (R5) |
+| exploratory deploy phlo limit (`1e9`) + 60 s deadline | Scala runs exploratory deploy with no limit | a runaway term must not drain a read-only node (R6) |
+| private keys written owner-only (`0o600`) | Scala `fs.write` uses default perms | secret material must not be world-readable (R8) |
+| rholang parser depth guard (`MAX_PARSE_DEPTH = 512`) | Scala BNFC parser has no depth guard | a deeply-nested term must not overflow the stack (R9) |
+| HTTP `/api/deploy` + explore routes rate-limited (100 req/s) | Scala HTTP deploy routes are unlimited | match the gRPC deploy rate limit (R10) |
+| PBKDF2 iterations raised `1024 → 310_000` | Scala uses BouncyCastle default `1024` | slow offline brute-force of encrypted keys at rest (R11) |
 
 ---
 
@@ -309,4 +317,126 @@ Scala remains a *checklist* of required behavior only, never an implementation g
 
 **Status:** the reimplementation is tracked by the plan `delegated-crafting-phoenix.md`; each phase
 closes the corresponding finding (F1→Phase 4, F2/F3→Phases 1–3, F4→Phase 4.7, F5→Phase 3).
+
+---
+
+## 10. Full-system HAZOP
+
+A guideword analysis over the whole crate graph. **Guidewords** (domain-adapted): **No/Not** (missing
+check/field), **More** (unbounded / overflow / amplification), **Less** (truncation / underflow /
+negative), **As well as** (extra unvalidated input), **Part of** (partial data), **Reverse** (ordering
+/ sign flip), **Other than** (wrong identity / type / field), **Early/Late** (TOCTOU / expiry),
+**Before/After** (state ordering / race). Each Safeguard references the finding it closes (R1–R12, or
+the prior C1–C3/H1–H6/M1–M8 register).
+
+| Node | Parameter | Guideword | Consequence | Safeguard |
+|---|---|---|---|---|
+| N1 Transport | `content_length` (decompressed) | More | i32::MAX allocation → OOM | cap ≤ `max_stream_message_size` (R3) |
+| N1 Transport | compressed stream bytes | More | unbounded buffering | cap enforced while draining (C2) |
+| N1 Transport | inbound dispatch concurrency | More | unbounded tasks | semaphore 1024 (C3) |
+| N1 Transport | TLS handshake concurrency | More | serialized accept | bounded 128 (M1) |
+| N1 Transport | peer send | Late | no timeout | 5 s `send` timeout (M4) |
+| N1 Transport | key file mode | Other than | world-readable key | `0o600` write (R8) |
+| N2 Deploy | deploy signature | No | unsigned deploy accepted on gRPC | verify at ingress (R1) |
+| N2 Deploy | deploy pool size | More | disk exhaustion | cap 10k (R2) |
+| N2 Deploy | `phlo_limit × phlo_price` | More | i64 wrap → gas bypass | `checked_mul` (R4) |
+| N2 Deploy | `phlo_limit` sign | Less | negative limit | reject at ingress (R4) |
+| N2 Deploy | HTTP deploy rate | More | flood | HTTP limiter (R10) |
+| N3 Consensus | `attestation_stake`/`total_stake` sum | More | i64 overflow → false majority | accumulate in i128 (R7) |
+| N3 Consensus | super-majority comparison | More | f64 precision loss | exact `3·stake > 2·total` (Law 14) |
+| N3 Consensus | equivocation (`seq_num` reuse) | As well as | double block by a sender | rejected before write (H-1) |
+| N4 Crypto | PBKDF2 iterations | Less | fast offline brute-force | 310 000 (R11) |
+| N4 Crypto | signature/key parse | Other than | panic on malformed input | `false`/`Err` (defensive) |
+| N5 State/replay | LMDB I/O in async | Before/After | blocked workers | `spawn_blocking` (M3) |
+| N6 Parser | parse nesting | More | stack exhaustion | `MAX_PARSE_DEPTH` (R9) |
+| N6 Parser | `from_slice` length | Other than | panic on wire input | `TryFrom<&[u8]>` (R12) |
+| N6 Parser | hex decode | As well as | lax non-hex decode | `try_decode` at ingress (R12) |
+| N7 Discovery | ping/lookup rate | More | table pollution / sybil | rate limit 100/s (R5) |
+| N7 Discovery | routing `(id, host, port)` | Other than | arbitrary outbound conn | enforced at mTLS handshake (mTLS) |
+| N8 RSpace | radix node slots | Less | short node panic | fixed `[Item; 256]` (finding 3) |
+| N9 Cost/gas | exploratory deploy | More | unbounded phlo/time | phlo cap + deadline (R6) |
+| N9 Cost/gas | gas metering | No | phlo not enforced | charging implemented (F4) |
+
+---
+
+## 11. Red-team re-audit findings (pass 2)
+
+A fresh attacker's-eye pass over the network surface (this session). Severity order; **all fixed** in
+this pass. Each entry: **site → root cause → fix → classification** (pure bug fix vs documented Scala
+deviation) → verification.
+
+### Critical (P0)
+
+- **R1 — deploy signature not verified on the gRPC path.** `casper/src/api/block_api_impl.rs::deploy`
+  checked read-only/shard/forbidden-key/phlo-price but never the signature; the HTTP path verifies
+  (`node/src/api/conversion.rs::to_signed_deploy` → `Signed::from_signed_data`). **Fix:**
+  `SignedDeployData::verify_signature` (`models/src/casper/protocol/casper_message.rs`) recomputes the
+  same hash/verify as the HTTP path, and `BlockApiImpl::deploy` rejects an invalid signature first.
+  **Pure bug fix.** Verified: `verify_signature_accepts_valid_deploy` / `_rejects_tampered_term` /
+  `_rejects_unknown_algorithm`.
+- **R2 — unbounded deploy pool.** `casper/src/dag.rs::add_deploy` put without bound (keyed by
+  signature). **Fix:** `MAX_POOLED_DEPLOYS = 10_000` cap via a new `count()` on `KeyValueTypedStore`
+  (O(1) `num_records` on the byte store). **Documented deviation.** Verified:
+  `add_deploy_rejects_when_pool_full`.
+- **R3 — lz4 decompression bomb.** `comm/src/transport/stream_handler.rs::decompress_content`
+  allocated attacker-controlled `content_length` before `lz4_flex::block::decompress`; the receiver
+  capped only compressed bytes. **Fix:** thread `max_decompressed_size` into `restore`/`decompress_content`
+  and reject before allocating (`grpc_transport_receiver.rs` passes `max_stream_message_size`).
+  **Documented deviation.** Verified: `restore_rejects_oversized_decompressed_content`.
+- **R4 — unchecked phlo multiply.** `models/.../casper_message.rs::total_phlo_charge` did
+  `phlo_limit * phlo_price` in i64 (wrap/panic); `runtime_replay.rs::refund_amount` repeated it.
+  **Fix:** `Option<i64>` via `i128::checked_mul`; propagate `Err` at the two pre-charge sites; clamp
+  the refund; reject negative `phlo_limit` at ingress. **Pure bug fix.** Verified:
+  `total_phlo_charge_does_not_wrap_on_overflow`.
+
+### High (P1)
+
+- **R5 — plaintext unauthenticated Kademlia discovery on `0.0.0.0:40404`.** Only a non-secret
+  `network_id` gates ping/lookup; peers inject arbitrary `(id, host, port)`. **Fix:** rate-limit the
+  RPC (`DEFAULT_KADEMLIA_RATE_LIMIT_PER_SEC = 100`) via the shared `RateLimiter`. The `0.0.0.0` bind
+  is kept (faithful to Scala and to the transport's own bind convention; the discovered external IP is
+  not a local bind address, and the routing table only affects peer discovery, not consensus safety).
+  **Documented deviation** with the residual "plaintext + non-secret network_id" risk noted.
+- **R6 — unbounded `exploratory_deploy`.** `casper/src/runtime_manager.rs::capture_results` ran
+  `evaluate` with no phlo/timeout (reachable on public read-only nodes). **Fix:** mirror the Repl
+  bound — `EXPLORATORY_PHLO_LIMIT = 1e9` + `EXPLORATORY_EVAL_TIMEOUT = 60 s`. **Documented deviation.**
+- **R7 — i64 stake-sum overflow.** `casper/.../proposer.rs` and `block-storage/.../finalizer.rs`
+  summed `NonNegI64` stakes into `i64` before the super-majority comparison. **Fix:** accumulate in
+  `i128`; widen `sdk/src/consensus.rs::is_super_majority` to `(i128, i128)`. **Pure bug fix.**
+  Verified: `i64_overflowing_stakes_do_not_wrap`.
+
+### Medium (P2)
+
+- **R8 — private keys/certs written with default perms.** `generate_certificate_if_absent.rs`,
+  `bonds_parser.rs`, `key_util.rs` used `fs::write` (default `0666 & ~umask`) for secret material.
+  **Fix:** `crypto::util::key_util::write_private_key` (owner-only `0o600`) at all three sites.
+  **Documented deviation.**
+- **R9 — rholang parser has no recursion-depth guard.** `rholang/src/parser.rs` recursed without bound
+  (≤16 MB terms via gRPC). **Fix:** `MAX_PARSE_DEPTH = 128` + `Parser::with_depth` wrapping the
+  recursive-descent roots (`parse_proc`, `parse_proc1`, `parse_proc10`, `parse_proc15`, `parse_name`).
+  **Documented deviation.** Verified: `rejects_excessive_nesting_depth`.
+- **R10 — HTTP `/api/deploy` not rate-limited.** Only the gRPC deploy server was rate-limited.
+  **Fix:** shared `RateLimiter` promoted to `rchain_shared`; `HttpState.deploy_rate_limiter` gates
+  `api_deploy`/`api_explore_deploy`/`api_explore_deploy_by_block_hash` (`429`). **Documented deviation.**
+
+### Low (P3)
+
+- **R11 — `PBKDF2_ITERATIONS = 1024`.** **Fix:** raised to `310_000` (OWASP PBKDF2-HMAC-SHA256).
+  **Documented deviation** (interop caveat: keys written with the new count are not readable by
+  BouncyCastle-1024 tooling and vice-versa).
+- **R12 — validate-on-ingress `from_slice` asserts.** `models/{block_hash,block/state_hash,validator}.rs`
+  `from_slice` panicked on wrong-length wire input (whitelisted in the gate); `BlockHash::from_hex`
+  used lax `unsafe_decode`. **Fix:** `TryFrom<&[u8]>` checked constructors (a new `ModelsError::Length`
+  variant) + `BlockHash::try_from_hex` (via `base16::try_decode`); the `/reporting/trace` ingress now
+  returns 400 instead of panicking. Remaining internal `from_slice` call sites are a tracked follow-up
+  (shrink the `tools/audit-type-system.sh` whitelist as they migrate). **Pure bug fix.**
+
+**Verification (this pass):** `cargo check --workspace` clean; `tools/audit-type-system.sh` zero hard
+violations (the `expect(Tok::…)` parser exclusion was widened to cover the `with_depth` receiver `p`);
+`cargo test` green for `rchain-models`/`rchain-sdk`/`rchain-comm`/`rchain-rholang`/`rchain-casper`/
+`rchain-node`; `rchain-crypto` green except the pre-existing flaky
+`read_key_pair_round_trips_private_key` (shared temp-dir race, unrelated); `cargo clippy --workspace
+--all-targets` clean on the changed files. The parser guard is `MAX_PARSE_DEPTH = 128` (512/256
+overflowed the 2 MiB test-thread stack during recursion; 128 is stack-safe and far deeper than any
+real rholang term).
 

@@ -402,12 +402,15 @@ where
     }
     let new_state_transition = new_blocks.iter().any(|b| has_deploys(b));
     let new_senders: BTreeSet<Validator> = new_blocks.iter().map(|b| b.sender).collect();
-    let attestation_stake: i64 = pre_state_bonds
+    let attestation_stake: i128 = pre_state_bonds
         .iter()
         .filter(|(v, _)| new_senders.contains(v))
-        .map(|(_, s)| i64::from(*s))
+        .map(|(_, s)| i128::from(i64::from(*s)))
         .sum();
-    let pre_state_bonds_stake: i64 = pre_state_bonds.values().map(|s| i64::from(*s)).sum();
+    let pre_state_bonds_stake: i128 = pre_state_bonds
+        .values()
+        .map(|s| i128::from(i64::from(*s)))
+        .sum();
     let waiting_for_supermajority =
         !(new_state_transition || is_super_majority(attestation_stake, pre_state_bonds_stake));
 

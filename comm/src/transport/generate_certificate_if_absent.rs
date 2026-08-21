@@ -36,7 +36,8 @@ pub fn run(tls: &TlsConf) -> Result<(), String> {
     }
     let (cert_pem, key_pem) = generate_certificate()?;
     fs::write(&tls.certificate_path, cert_pem).map_err(|e| e.to_string())?;
-    fs::write(&tls.key_path, key_pem).map_err(|e| e.to_string())?;
+    // The node private key is secret material: write it owner-only (0600), not with default perms.
+    rchain_crypto::util::key_util::write_private_key(Path::new(&tls.key_path), key_pem.as_bytes())?;
     Ok(())
 }
 

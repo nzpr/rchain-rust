@@ -24,9 +24,11 @@ use rchain_casper::protocol::comm_util::ConnectionsCell;
 use rchain_comm::discovery::NodeDiscovery;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_models::block_hash::BlockHash;
+use rchain_shared::rate_limiter::RateLimiter;
 use rchain_shared::refined::Port;
 
 use crate::api::admin_web_api::AdminWebApi;
+use crate::api::grpc::DEFAULT_API_RATE_LIMIT_PER_SEC;
 use crate::api::dto::{
     BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest, DeployRequest,
     ExploreDeployRequest,
@@ -55,6 +57,9 @@ pub struct HttpState {
     pub block_report_api: Arc<BlockReportApi>,
     pub status_provider: Option<StatusProvider>,
     pub enable_reporting: bool,
+    /// Rate limiter for the unauthenticated deploy/explore-deploy routes (documented Scala
+    /// deviation: the Scala HTTP deploy routes are unlimited).
+    pub deploy_rate_limiter: Arc<RateLimiter>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -105,10 +110,18 @@ async fn api_status(State(state): State<HttpState>) -> Response {
 }
 
 async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployRequest>) -> Response {
+    if !state.deploy_rate_limiter.allow() {
+        return (StatusCode::TOO_MANY_REQUESTS, Json("deploy rate limit exceeded".to_string()))
+            .into_response();
+    }
     json_result(state.web_api.deploy(&req).await)
 }
 
 async fn api_explore_deploy(State(state): State<HttpState>, Json(term): Json<String>) -> Response {
+    if !state.deploy_rate_limiter.allow() {
+        return (StatusCode::TOO_MANY_REQUESTS, Json("deploy rate limit exceeded".to_string()))
+            .into_response();
+    }
     json_result(state.web_api.exploratory_deploy(&term, None, false).await)
 }
 
@@ -116,6 +129,10 @@ async fn api_explore_deploy_by_block_hash(
     State(state): State<HttpState>,
     Json(req): Json<ExploreDeployRequest>,
 ) -> Response {
+    if !state.deploy_rate_limiter.allow() {
+        return (StatusCode::TOO_MANY_REQUESTS, Json("deploy rate limit exceeded".to_string()))
+            .into_response();
+    }
     let block_hash = if req.block_hash.is_empty() {
         None
     } else {
@@ -239,7 +256,18 @@ async fn reporting_trace(
     if !state.enable_reporting {
         return (StatusCode::NOT_FOUND, ()).into_response();
     }
-    let hash = BlockHash::from_hex(&query.block_hash);
+    // Validate-on-ingress: a malformed block hash (non-hex / wrong length) must be a 400, not a
+    // panic in `BlockHash::from_hex`.
+    let hash = match BlockHash::try_from_hex(&query.block_hash) {
+        Ok(h) => h,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json("invalid block hash".to_string()),
+            )
+                .into_response()
+        }
+    };
     let result = state
         .block_report_api
         .block_report(&hash, query.force_replay.unwrap_or(false))
@@ -340,6 +368,7 @@ pub async fn acquire_http_server(
         block_report_api,
         status_provider,
         enable_reporting,
+        deploy_rate_limiter: Arc::new(RateLimiter::new(DEFAULT_API_RATE_LIMIT_PER_SEC)),
     })
     .layer(TimeoutLayer::new(max_connection_idle));
     axum::serve(listener, app).await.map_err(|e| e.to_string())
@@ -525,6 +554,7 @@ mod tests {
             block_report_api: test_block_report_api(),
             status_provider: None,
             enable_reporting: true,
+            deploy_rate_limiter: Arc::new(RateLimiter::new(DEFAULT_API_RATE_LIMIT_PER_SEC)),
         }
     }
 

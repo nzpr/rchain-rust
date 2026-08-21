@@ -9,8 +9,9 @@
 #   panic   — `.unwrap()`, `.expect(`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` in
 #             production code. Whitelisted: `sdk/src/primitive.rs` (the Scala `getUnsafe` escape
 #             hatch) and `node/src/dag/implementation.rs` / `regex/src/regex_pattern.rs` (the Scala
-#             `NotImplementedError("TODO")` stubs). The rholang parser's `self.expect(Tok)` method is
-#             excluded (a method, not `Result::expect`).
+#             `NotImplementedError("TODO")` stubs). The rholang parser's `expect(Tok::…)` method is
+#             excluded (a method, not `Result::expect`; the receiver may be `self` or the parser
+#             parameter `p` inside `with_depth`).
 #   unsafe  — `unsafe {` (must be zero: the crate graph is entirely safe Rust).
 #   silent  — silent defaulting of a fallible numeric conversion: `try_into().unwrap()`,
 #             `try_into().expect(`, `try_into().unwrap_or(`, `try_from(..).unwrap_or(`,
@@ -118,7 +119,7 @@ scan() {
         note "$kind" "$f" "$line" "$text"
       done < <(awk "$STRIP_AWK" "$f" \
                  | grep -nE "$pattern" \
-                 | grep -vE 'self\.expect\(')
+                 | grep -vE 'self\.expect\(|\.expect\(Tok::')
     done < <(find "$dir" -name '*.rs' | grep -vE "$TEST_ONLY_FILE_RE")
   done
 }

@@ -58,8 +58,12 @@ pub struct DeployData {
 }
 
 impl DeployData {
-    pub fn total_phlo_charge(&self) -> i64 {
-        self.phlo_limit * self.phlo_price
+    /// The total phlo charge (`phlo_limit * phlo_price`). Returns `None` on overflow rather than
+    /// wrapping (a wrapped charge would bypass cost accounting). Computed in `i128` so the product
+    /// cannot overflow before the `i64` range check.
+    pub fn total_phlo_charge(&self) -> Option<i64> {
+        let product = (self.phlo_limit as i128).checked_mul(self.phlo_price as i128)?;
+        i64::try_from(product).ok()
     }
 
     fn from_proto_data(p: &DeployDataProto) -> Self {
@@ -98,8 +102,7 @@ impl Serialize<DeployData> for DeployData {
     }
 }
 
-/// A signed deploy (the wire form of `Signed[DeployData]`). Signature *verification* lives in the
-/// casper deploy-acceptance path; here only the wire round-trip is modeled.
+/// A signed deploy (the wire form of `Signed[DeployData]`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedDeployData {
     pub data: DeployData,
@@ -125,6 +128,21 @@ impl SignedDeployData {
             sig_algorithm: self.sig_algorithm.clone(),
             ..self.data.to_proto_data()
         }
+    }
+
+    /// Verify the signature over the deploy data, byte-identical to the HTTP path
+    /// (`node/src/api/conversion.rs::to_signed_deploy`). Returns `false` on any failure
+    /// (unknown algorithm, malformed key/sig, or mismatched signature).
+    pub fn verify_signature(&self) -> bool {
+        let Some(alg) =
+            rchain_crypto::signatures::signatures_alg::from_algorithm(&self.sig_algorithm)
+        else {
+            return false;
+        };
+        let serialized = <DeployData as Serialize<DeployData>>::encode(&self.data);
+        let hash = rchain_crypto::signatures::signed::signature_hash(alg.name(), &serialized);
+        let pk = rchain_crypto::public_key::PublicKey::new(self.deployer.clone());
+        alg.verify(&hash, &self.sig, pk.bytes())
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -1148,5 +1166,65 @@ mod tests {
         let proto = casper.to_proto();
         let decoded_casper = CasperMessage::from_proto(&proto).unwrap();
         assert_eq!(decoded_casper, casper);
+    }
+
+    fn signed_deploy_data(term: &str) -> SignedDeployData {
+        use rchain_crypto::signatures::secp256k1::Secp256k1;
+        use rchain_crypto::signatures::signed::Signed;
+        use rchain_crypto::signatures::signatures_alg::SignaturesAlg;
+        let (sec, _pk) = Secp256k1.new_key_pair();
+        let data = DeployData {
+            term: term.to_string(),
+            timestamp: 0,
+            phlo_price: 1,
+            phlo_limit: 100,
+            valid_after_block_number: 0,
+            shard_id: "root".to_string(),
+        };
+        let signed = Signed::new(data, &Secp256k1, &sec).unwrap();
+        SignedDeployData {
+            data: signed.data,
+            deployer: signed.pk.bytes().to_vec(),
+            sig: signed.sig,
+            sig_algorithm: signed.sig_algorithm.name().to_string(),
+        }
+    }
+
+    #[test]
+    fn verify_signature_accepts_valid_deploy() {
+        assert!(signed_deploy_data("Nil").verify_signature());
+    }
+
+    #[test]
+    fn verify_signature_rejects_tampered_term() {
+        let mut sd = signed_deploy_data("Nil");
+        sd.data.term = "Nil | Nil".to_string();
+        assert!(!sd.verify_signature());
+    }
+
+    #[test]
+    fn verify_signature_rejects_unknown_algorithm() {
+        let mut sd = signed_deploy_data("Nil");
+        sd.sig_algorithm = "bogus".to_string();
+        assert!(!sd.verify_signature());
+    }
+
+    #[test]
+    fn total_phlo_charge_does_not_wrap_on_overflow() {
+        let mut d = DeployData {
+            term: "Nil".to_string(),
+            timestamp: 0,
+            phlo_price: i64::MAX,
+            phlo_limit: 2,
+            valid_after_block_number: 0,
+            shard_id: "root".to_string(),
+        };
+        assert_eq!(d.total_phlo_charge(), None);
+
+        d.phlo_limit = 1;
+        assert_eq!(d.total_phlo_charge(), Some(i64::MAX));
+
+        d.phlo_limit = 0;
+        assert_eq!(d.total_phlo_charge(), Some(0));
     }
 }

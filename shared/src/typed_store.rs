@@ -29,6 +29,12 @@ pub trait KeyValueTypedStore<K, V>: Send + Sync {
     async fn delete(&self, keys: &[K]) -> Result<usize, String>;
     async fn contains(&self, keys: &[K]) -> Result<Vec<bool>, String>;
     async fn to_map(&self) -> Result<BTreeMap<K, V>, String>;
+
+    /// Number of records stored. Defaults to `to_map().len()`; the codec-backed implementation
+    /// overrides this with a cheaper `num_records` on the underlying byte store.
+    async fn count(&self) -> Result<usize, String> {
+        Ok(self.to_map().await?.len())
+    }
 }
 
 /// A typed store over a byte store with key/value codecs (port of `KeyValueTypedStoreCodec`).
@@ -120,6 +126,16 @@ where
                 Ok((k, v))
             })
             .collect()
+    }
+
+    async fn count(&self) -> Result<usize, String> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = store.blocking_lock();
+            store.num_records()
+        })
+        .await
+        .map_err(|e| e.to_string())
     }
 }
 

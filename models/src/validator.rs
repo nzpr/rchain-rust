@@ -4,6 +4,8 @@
 
 use rchain_shared::base16;
 
+use crate::errors::ModelsError;
+
 /// The length of a `Validator` in bytes (an uncompressed secp256k1 public key).
 pub const LENGTH: usize = 65;
 
@@ -25,6 +27,20 @@ impl Validator {
 
     pub fn as_bytes(&self) -> &[u8; LENGTH] {
         &self.0
+    }
+}
+
+impl TryFrom<&[u8]> for Validator {
+    type Error = ModelsError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != LENGTH {
+            return Err(ModelsError::Length {
+                got: bytes.len(),
+                expected: LENGTH,
+            });
+        }
+        Ok(Self::from_slice(bytes))
     }
 }
 

@@ -14,6 +14,12 @@ pub trait KeyValueStore {
     /// Delete the given keys, returning the number of keys that were actually present.
     fn delete(&mut self, keys: &[Vec<u8>]) -> Result<usize, String>;
     fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String>;
+
+    /// Number of records currently stored. Defaults to an O(n) `entries` scan; implementations
+    /// may override with a cheaper count.
+    fn num_records(&self) -> usize {
+        self.entries().map(|e| e.len()).unwrap_or(0)
+    }
 }
 
 /// In-memory implementation (port of `InMemoryKeyValueStore`, using a `BTreeMap` for determinism).
@@ -23,10 +29,6 @@ pub struct InMemoryKeyValueStore {
 }
 
 impl InMemoryKeyValueStore {
-    pub fn num_records(&self) -> usize {
-        self.map.len()
-    }
-
     pub fn clear(&mut self) {
         self.map.clear();
     }
@@ -50,6 +52,10 @@ impl KeyValueStore for InMemoryKeyValueStore {
 
     fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
         Ok(self.map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+    }
+
+    fn num_records(&self) -> usize {
+        self.map.len()
     }
 }
 

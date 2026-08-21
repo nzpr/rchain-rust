@@ -229,7 +229,11 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
 
         // Pre-charge.
         let pre_charge = SystemDeploy::pre_charge(
-            processed_deploy.deploy.data.total_phlo_charge(),
+            processed_deploy
+                .deploy
+                .data
+                .total_phlo_charge()
+                .ok_or_else(|| ReplayFailure::internal_error("phlo charge overflow"))?,
             &PublicKey::new(processed_deploy.deploy.deployer.clone()),
             rand.split_byte(PRE_CHARGE_SPLIT_INDEX),
         );
@@ -679,11 +683,14 @@ fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> Result<i64, String> 
 
 /// The phlo refunded after a deploy (port of `ProcessedDeploy.refundAmount`).
 fn refund_amount(processed_deploy: &ProcessedDeploy) -> i64 {
-    processed_deploy
+    // Compute in i128 and clamp to i64::MAX: the refund is non-negative by construction
+    // (`max(0)`), so any overflow would otherwise wrap and corrupt cost accounting.
+    let remaining = processed_deploy
         .deploy
         .data
         .phlo_limit
         .saturating_sub_unsigned(processed_deploy.cost.cost)
-        .max(0)
-        * processed_deploy.deploy.data.phlo_price
+        .max(0) as i128;
+    let product = remaining * (processed_deploy.deploy.data.phlo_price as i128);
+    i64::try_from(product).unwrap_or(i64::MAX)
 }

@@ -227,9 +227,16 @@ fn lex(src: &str) -> Result<Vec<Tok>, RholangError> {
     Ok(toks)
 }
 
+/// Maximum recursive-descent nesting depth. Reached by the depth guard in `with_depth` so a
+/// maliciously deep term (up to the gRPC message-size limit) cannot overflow the task stack
+/// (documented Scala deviation: the BNFC parser has no depth guard). 128 levels is far deeper than
+/// any real rholang term yet well within a 2 MiB async-thread stack.
+const MAX_PARSE_DEPTH: usize = 128;
+
 struct Parser {
     toks: Vec<Tok>,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -240,6 +247,22 @@ impl Parser {
         let t = self.toks[self.pos].clone();
         self.pos += 1;
         t
+    }
+    /// Run `f` under the recursion-depth guard: increment on entry (rejecting once
+    /// `MAX_PARSE_DEPTH` is exceeded) and decrement on every exit path, including `?` early
+    /// returns inside `f`.
+    fn with_depth<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, RholangError>,
+    ) -> Result<T, RholangError> {
+        self.depth += 1;
+        if self.depth > MAX_PARSE_DEPTH {
+            self.depth -= 1;
+            return Err(RholangError::SyntaxError("parse depth exceeded".to_string()));
+        }
+        let result = f(self);
+        self.depth -= 1;
+        result
     }
     fn eat_ident(&mut self, kw: &str) -> bool {
         if let Tok::Ident(id) = self.peek() {
@@ -267,50 +290,54 @@ impl Parser {
 /// Parse a source string into a `Proc` (port of `Compiler.sourceToAST`).
 pub fn parse(source: &str) -> Result<Proc, RholangError> {
     let toks = lex(source)?;
-    let mut p = Parser { toks, pos: 0 };
+    let mut p = Parser { toks, pos: 0, depth: 0 };
     let proc = p.parse_proc()?;
     Ok(proc)
 }
 
 impl Parser {
     fn parse_proc(&mut self) -> Result<Proc, RholangError> {
-        let mut left = self.parse_proc1()?;
-        while self.peek() == &Tok::Pipe {
-            self.next();
-            let right = self.parse_proc1()?;
-            left = Proc::PPar(Box::new(left), Box::new(right));
-        }
-        Ok(left)
+        self.with_depth(|p| {
+            let mut left = p.parse_proc1()?;
+            while p.peek() == &Tok::Pipe {
+                p.next();
+                let right = p.parse_proc1()?;
+                left = Proc::PPar(Box::new(left), Box::new(right));
+            }
+            Ok(left)
+        })
     }
 
     fn parse_proc1(&mut self) -> Result<Proc, RholangError> {
-        if self.eat_ident("if") {
-            self.expect(Tok::LParen)?;
-            let cond = self.parse_proc()?;
-            self.expect(Tok::RParen)?;
-            let then = self.parse_proc2()?;
-            if self.eat_ident("else") {
-                let els = self.parse_proc1()?;
-                Ok(Proc::PIfElse(Box::new(cond), Box::new(then), Box::new(els)))
-            } else {
-                Ok(Proc::PIf(Box::new(cond), Box::new(then)))
-            }
-        } else if self.eat_ident("new") {
-            let mut decls = Vec::new();
-            while self.peek() != &Tok::Ident("in".to_string()) {
-                decls.push(self.parse_name_decl()?);
-                if self.peek() == &Tok::Comma {
-                    self.next();
+        self.with_depth(|p| {
+            if p.eat_ident("if") {
+                p.expect(Tok::LParen)?;
+                let cond = p.parse_proc()?;
+                p.expect(Tok::RParen)?;
+                let then = p.parse_proc2()?;
+                if p.eat_ident("else") {
+                    let els = p.parse_proc1()?;
+                    Ok(Proc::PIfElse(Box::new(cond), Box::new(then), Box::new(els)))
                 } else {
-                    break;
+                    Ok(Proc::PIf(Box::new(cond), Box::new(then)))
                 }
+            } else if p.eat_ident("new") {
+                let mut decls = Vec::new();
+                while p.peek() != &Tok::Ident("in".to_string()) {
+                    decls.push(p.parse_name_decl()?);
+                    if p.peek() == &Tok::Comma {
+                        p.next();
+                    } else {
+                        break;
+                    }
+                }
+                p.eat_ident("in");
+                let body = p.parse_proc1()?;
+                Ok(Proc::PNew(decls, Box::new(body)))
+            } else {
+                p.parse_proc2()
             }
-            self.eat_ident("in");
-            let body = self.parse_proc1()?;
-            Ok(Proc::PNew(decls, Box::new(body)))
-        } else {
-            self.parse_proc2()
-        }
+        })
     }
 
     fn parse_proc2(&mut self) -> Result<Proc, RholangError> {
@@ -570,16 +597,18 @@ impl Parser {
     }
 
     fn parse_proc10(&mut self) -> Result<Proc, RholangError> {
-        if self.eat_ident("not") {
-            let p = self.parse_proc10()?;
-            Ok(Proc::PNot(Box::new(p)))
-        } else if self.peek() == &Tok::Minus {
-            self.next();
-            let p = self.parse_proc10()?;
-            Ok(Proc::PNeg(Box::new(p)))
-        } else {
-            self.parse_proc11()
-        }
+        self.with_depth(|p| {
+            if p.eat_ident("not") {
+                let q = p.parse_proc10()?;
+                Ok(Proc::PNot(Box::new(q)))
+            } else if p.peek() == &Tok::Minus {
+                p.next();
+                let q = p.parse_proc10()?;
+                Ok(Proc::PNeg(Box::new(q)))
+            } else {
+                p.parse_proc11()
+            }
+        })
     }
 
     fn parse_proc11(&mut self) -> Result<Proc, RholangError> {
@@ -648,13 +677,15 @@ impl Parser {
     }
 
     fn parse_proc15(&mut self) -> Result<Proc, RholangError> {
-        if self.peek() == &Tok::Tilde {
-            self.next();
-            let p = self.parse_proc15()?;
-            Ok(Proc::PNegation(Box::new(p)))
-        } else {
-            self.parse_proc16()
-        }
+        self.with_depth(|p| {
+            if p.peek() == &Tok::Tilde {
+                p.next();
+                let q = p.parse_proc15()?;
+                Ok(Proc::PNegation(Box::new(q)))
+            } else {
+                p.parse_proc16()
+            }
+        })
     }
 
     fn parse_proc16(&mut self) -> Result<Proc, RholangError> {
@@ -754,16 +785,18 @@ impl Parser {
     }
 
     fn parse_name(&mut self) -> Result<Name, RholangError> {
-        if self.peek() == &Tok::Underscore {
-            self.next();
-            Ok(Name::NameWildcard)
-        } else if self.peek() == &Tok::At {
-            self.next();
-            let p = self.parse_proc12()?;
-            Ok(Name::NameQuote(Box::new(p)))
-        } else {
-            Ok(Name::NameVar(self.parse_source_var()?))
-        }
+        self.with_depth(|p| {
+            if p.peek() == &Tok::Underscore {
+                p.next();
+                Ok(Name::NameWildcard)
+            } else if p.peek() == &Tok::At {
+                p.next();
+                let q = p.parse_proc12()?;
+                Ok(Name::NameQuote(Box::new(q)))
+            } else {
+                Ok(Name::NameVar(p.parse_source_var()?))
+            }
+        })
     }
 
     fn parse_send(&mut self) -> Result<Send, RholangError> {
@@ -1134,6 +1167,16 @@ mod tests {
     fn parses_nil() {
         let p = parse("Nil").unwrap();
         assert_eq!(p, Proc::PNil);
+    }
+
+    #[test]
+    fn rejects_excessive_nesting_depth() {
+        // Deeply nested `new`/`not`/`~` terms must error rather than overflow the stack.
+        let deep_new = format!("{}Nil", "new x in ".repeat(MAX_PARSE_DEPTH + 10));
+        assert!(parse(&deep_new).is_err());
+
+        let deep_not = format!("{}Nil", "not ".repeat(MAX_PARSE_DEPTH + 10));
+        assert!(parse(&deep_not).is_err());
     }
 
     #[test]

@@ -2,6 +2,8 @@
 //!
 //! Mirrors `models/src/main/scala/coop/rchain/models/block/StateHash.scala`.
 
+use crate::errors::ModelsError;
+
 /// The length of a `StateHash` in bytes.
 pub const LENGTH: usize = 32;
 
@@ -23,5 +25,19 @@ impl StateHash {
 
     pub fn as_bytes(&self) -> &[u8; LENGTH] {
         &self.0
+    }
+}
+
+impl TryFrom<&[u8]> for StateHash {
+    type Error = ModelsError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != LENGTH {
+            return Err(ModelsError::Length {
+                got: bytes.len(),
+                expected: LENGTH,
+            });
+        }
+        Ok(Self::from_slice(bytes))
     }
 }

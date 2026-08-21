@@ -15,6 +15,8 @@ pub enum ModelsError {
     Malformed(&'static str),
     /// A packet's type tag did not match the expected tag.
     PacketTypeMismatch { got: String, expected: String },
+    /// A fixed-width value had the wrong byte length (validate-on-ingress).
+    Length { got: usize, expected: usize },
 }
 
 impl fmt::Display for ModelsError {
@@ -24,6 +26,9 @@ impl fmt::Display for ModelsError {
             ModelsError::Malformed(m) => write!(f, "malformed: {m}"),
             ModelsError::PacketTypeMismatch { got, expected } => {
                 write!(f, "Got {got} packet - need {expected} packet")
+            }
+            ModelsError::Length { got, expected } => {
+                write!(f, "expected {expected} bytes, got {got}")
             }
         }
     }

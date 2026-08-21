@@ -58,10 +58,13 @@ pub fn new_validators(
     let mut bonds = BTreeMap::new();
     for i in 0..autogen_shard_size {
         let (sec, pub_key) = Secp256k1.new_key_pair();
-        // Write `<public_key>.sk` file with the private key.
+        // Write `<public_key>.sk` file with the private key (owner-only perms: it is secret).
         if let Some(parent) = bonds_file_path.parent() {
             let sk_file = parent.join(format!("{}.sk", base16::encode(pub_key.bytes())));
-            let _ = std::fs::write(&sk_file, base16::encode(sec.bytes()));
+            let _ = rchain_crypto::util::key_util::write_private_key(
+                &sk_file,
+                base16::encode(sec.bytes()),
+            );
         }
         // `i >= 0`, so `i + 1 >= 1` is non-negative by construction.
         let stake = NonNegI64::try_from(i64::from(i) + 1)

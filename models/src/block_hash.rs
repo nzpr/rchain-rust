@@ -4,6 +4,8 @@
 
 use rchain_shared::base16;
 
+use crate::errors::ModelsError;
+
 /// The length of a `BlockHash` in bytes.
 pub const LENGTH: usize = 32;
 
@@ -40,9 +42,30 @@ impl BlockHash {
         Self::from_slice(&base16::unsafe_decode(s))
     }
 
+    /// Parse a full 32-byte hex string, rejecting non-hex or wrong-length input (validate-on-ingress
+    /// counterpart of [`BlockHash::from_hex`]).
+    pub fn try_from_hex(s: &str) -> Result<Self, ModelsError> {
+        let bytes = base16::try_decode(s).map_err(ModelsError::Decode)?;
+        Self::try_from(bytes.as_slice())
+    }
+
     /// Whether the hash begins with `prefix` (used by `DagRepresentation.find`).
     pub fn starts_with(&self, prefix: &[u8]) -> bool {
         self.0.starts_with(prefix)
+    }
+}
+
+impl TryFrom<&[u8]> for BlockHash {
+    type Error = ModelsError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != LENGTH {
+            return Err(ModelsError::Length {
+                got: bytes.len(),
+                expected: LENGTH,
+            });
+        }
+        Ok(Self::from_slice(bytes))
     }
 }
 
@@ -75,5 +98,20 @@ mod tests {
         let h = BlockHash::new(bytes);
         assert!(h.starts_with(&[0xde, 0xad]));
         assert!(!h.starts_with(&[0xde, 0xae]));
+    }
+
+    #[test]
+    fn try_from_rejects_wrong_length() {
+        assert!(BlockHash::try_from(&[0u8; 31][..]).is_err());
+        assert!(BlockHash::try_from(&[0u8; 33][..]).is_err());
+        assert!(BlockHash::try_from(&[0u8; 32][..]).is_ok());
+    }
+
+    #[test]
+    fn try_from_hex_rejects_malformed() {
+        assert!(BlockHash::try_from_hex("zz").is_err());
+        assert!(BlockHash::try_from_hex("abcd").is_err()); // wrong length
+        let h = BlockHash::new([0xab; 32]);
+        assert_eq!(BlockHash::try_from_hex(&h.to_hex()).unwrap(), h);
     }
 }

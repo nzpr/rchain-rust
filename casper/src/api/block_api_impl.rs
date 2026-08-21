@@ -237,6 +237,12 @@ impl BlockApi for BlockApiImpl {
         if self.is_node_read_only {
             return Err("Deploy was rejected because node is running in read-only mode.".to_string());
         }
+        if !deploy.verify_signature() {
+            return Err("Deploy signature is invalid.".to_string());
+        }
+        if deploy.data.phlo_limit < 0 {
+            return Err("Deploy phlo limit must be non-negative.".to_string());
+        }
         if deploy.data.shard_id != self.shard_id {
             return Err(format!(
                 "Deploy shardId '{}' is not as expected network shard '{}'.",

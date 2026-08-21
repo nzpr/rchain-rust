@@ -94,6 +94,13 @@ impl KeyValueStore for LmdbKeyValueStore {
         txn.commit().map_err(|e| format!("LMDB commit: {e}"))?;
         Ok(out)
     }
+
+    fn num_records(&self) -> usize {
+        let Ok(txn) = self.env.begin_ro_txn() else {
+            return 0;
+        };
+        txn.stat(self.db).map(|s| s.entries()).unwrap_or(0)
+    }
 }
 
 /// A store manager over a single LMDB environment (port of `LmdbStoreManager`).

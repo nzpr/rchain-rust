@@ -107,14 +107,14 @@ For each gap: **code location** → **current test state** → **the seam a regr
 | Gap | Status |
 |---|---|
 | G1 equivocation | ✅ regression test (`casper/dag.rs`) |
-| G2 DoS limits | ✅ RateLimiter + chunker; ⏸ dispatch-semaphore (over tokio's tested primitive) |
+| G2 DoS limits | ✅ RateLimiter + chunker + deploy-pool cap (R2) + decompression cap (R3) + parser depth guard (R9); ⏸ dispatch-semaphore (over tokio's tested primitive) |
 | G3 PoS mutations | ✅ `slash`/`pre_charge`/vault deposit/transfer |
 | G4 gas enforcement | ✅ `ChargingRSpace` + `phlo_limit` exhaustion end-to-end |
 | G5 state-sync | ✅ export→validate round-trip; ⏸ full store export→import→compare |
 | G6 history checkpoint/reset/rollback | ✅ `RSpace::create_checkpoint`/`reset`/`revert` |
 | G7 replay | ✅ persistent+peek replay matches play; ⏸ `check_replay_data` negative path |
 | G8 finalizer | ✅ `calculate_finalization` fork/lockstep |
-| G9 malformed input | ✅ `NodeIdentifier`/`KeySegment` |
+| G9 malformed input | ✅ `NodeIdentifier`/`KeySegment` + `BlockHash::try_from`/`try_from_hex` (R12) + deploy-signature verify (R1) |
 | G10 TLS trust-manager | ✅ wrong-hostname + stale-cert rejection |
 | G11 transport socket | ✅ loopback mutual-TLS gRPC send round-trip (`grpc_transport.rs`) |
 

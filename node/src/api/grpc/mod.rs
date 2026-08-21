@@ -14,13 +14,12 @@ pub use deploy_grpc_service_v1::DeployGrpcServiceV1;
 pub use propose_grpc_service_v1::ProposeGrpcServiceV1;
 pub use repl_grpc_service::{CmdRequest, EvalRequest, ReplGrpcService, ReplResponse};
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
 use rchain_casper::api::block_api::BlockApi;
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_rholang::runtime::RhoRuntime;
+use rchain_shared::rate_limiter::RateLimiter;
 
 /// The trio of node gRPC services (port of `GrpcServices`).
 pub struct GrpcServices {
@@ -50,36 +49,7 @@ impl GrpcServices {
 
 /// The deploy request rate limit (requests/second) applied to the external (unauthenticated) gRPC
 /// server. Documented Scala deviation: Scala binds the deploy service to `0.0.0.0` with no limit.
-const DEFAULT_API_RATE_LIMIT_PER_SEC: u64 = 100;
-
-/// A minimal fixed-window rate limiter (bounded requests per second) for the unauthenticated
-/// deploy gRPC server (H2).
-pub struct RateLimiter {
-    max_per_sec: u64,
-    window_start: Mutex<Instant>,
-    count: AtomicU64,
-}
-
-impl RateLimiter {
-    pub fn new(max_per_sec: u64) -> Self {
-        RateLimiter {
-            max_per_sec,
-            window_start: Mutex::new(Instant::now()),
-            count: AtomicU64::new(0),
-        }
-    }
-
-    /// Admit a request if the current one-second window has capacity.
-    pub fn allow(&self) -> bool {
-        let now = Instant::now();
-        let mut start = self.window_start.lock().unwrap_or_else(|p| p.into_inner());
-        if now.duration_since(*start) >= Duration::from_secs(1) {
-            *start = now;
-            self.count.store(0, Ordering::SeqCst);
-        }
-        self.count.fetch_add(1, Ordering::SeqCst) < self.max_per_sec
-    }
-}
+pub const DEFAULT_API_RATE_LIMIT_PER_SEC: u64 = 100;
 
 /// Serve the external gRPC service (deploy) on `addr` (port of the external `GrpcServer`).
 pub async fn serve_deploy(
