@@ -59,7 +59,10 @@ pub fn decode_bonds(bytes: &[u8]) -> Result<BTreeMap<Validator, NonNegI64>, Stri
     let mut out = BTreeMap::new();
     for chunk in bytes.chunks_exact(BOND_ENTRY_LEN) {
         let validator = Validator::from_slice(&chunk[..65]);
-        let stake = i64::from_le_bytes(chunk[65..73].try_into().expect("8-byte stake"));
+        let stake_bytes: [u8; 8] = chunk[65..73]
+            .try_into()
+            .map_err(|_| "bonds encoding: invalid stake length".to_string())?;
+        let stake = i64::from_le_bytes(stake_bytes);
         let stake = NonNegI64::try_from(stake).map_err(|_| format!("negative bond stake {stake}"))?;
         out.insert(validator, stake);
     }

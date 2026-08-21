@@ -394,7 +394,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v2 = eval_expr(p2, env, cost)?;
             let sv1 = substitute_par(&v1, 0, env)?;
             let sv2 = substitute_par(&v2, 0, env)?;
-            cost.charge(Costs::comparison_cost())?;
+            cost.charge(Costs::equality_check_cost(&sv1, &sv2))?;
             Ok(Expr::GBool(sv1 == sv2))
         }
         Expr::ENeq(p1, p2) => {
@@ -402,7 +402,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v2 = eval_expr(p2, env, cost)?;
             let sv1 = substitute_par(&v1, 0, env)?;
             let sv2 = substitute_par(&v2, 0, env)?;
-            cost.charge(Costs::comparison_cost())?;
+            cost.charge(Costs::equality_check_cost(&sv1, &sv2))?;
             Ok(Expr::GBool(sv1 != sv2))
         }
         Expr::EAnd(p1, p2) => {
@@ -792,6 +792,7 @@ fn eval_method(
             let substituted = substitute_par(target, 0, env)?;
             let bytes =
                 <Par as rchain_shared::serialize::Serialize<Par>>::encode(&substituted);
+            cost.charge(Costs::to_byte_array_cost(&substituted))?;
             Ok(from_expr(Expr::GByteArray(bytes)))
         }
         "union" => {

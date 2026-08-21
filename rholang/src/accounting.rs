@@ -10,6 +10,8 @@ use std::sync::Mutex;
 
 use num_bigint::BigInt;
 
+use rchain_shared::serialize::Serialize;
+
 use crate::errors::RholangError;
 
 /// A gas cost (port of `Cost`).
@@ -229,6 +231,33 @@ impl Costs {
         Cost::new(12, "match eval")
     }
 
+    /// Size-proportional equality check (port of `equalityCheckCost`): the smaller serialized size.
+    pub fn equality_check_cost<T, P>(x: &T, y: &P) -> Cost
+    where
+        T: Serialize<T>,
+        P: Serialize<P>,
+    {
+        Cost::new(
+            (<T as Serialize<T>>::encode(x).len() as i64)
+                .min(<P as Serialize<P>>::encode(y).len() as i64),
+            "equality check",
+        )
+    }
+
+    /// Serializing a term into a byte array allocates + copies `serializedSize` bytes (port of
+    /// `toByteArrayCost`).
+    pub fn to_byte_array_cost<T: Serialize<T>>(a: &T) -> Cost {
+        Cost::new(<T as Serialize<T>>::encode(a).len() as i64, "to byte array")
+    }
+
+    /// Storage cost: the sum of the serialized sizes (port of `storageCost`).
+    pub fn storage_cost<T: Serialize<T>>(terms: &[T]) -> Cost {
+        Cost::new(
+            terms.iter().map(|a| <T as Serialize<T>>::encode(a).len() as i64).sum(),
+            "storage cost",
+        )
+    }
+
     const HASH_LEN: i64 = 32;
 
     pub fn event_storage_cost(channels_involved: i64) -> Cost {
@@ -256,6 +285,16 @@ impl Costs {
 /// Typeclass for charging a term (port of `Chargeable`).
 pub trait Chargeable<A> {
     fn cost(a: &A) -> i64;
+}
+
+/// The protobuf `fromProtobuf` instance: charge a term by its serialized (wire) size.
+impl<T> Chargeable<T> for T
+where
+    T: Serialize<T>,
+{
+    fn cost(a: &T) -> i64 {
+        <T as Serialize<T>>::encode(a).len() as i64
+    }
 }
 
 /// The synchronous cost-accounting state (models the `_cost[F]` monad stack).
@@ -329,5 +368,18 @@ mod tests {
         assert!(acc.charge(Cost::new(4, "x")).is_ok());
         assert_eq!(acc.get().value, 6);
         assert!(acc.charge(Cost::new(7, "y")).is_err());
+    }
+
+    #[test]
+    fn size_proportional_costs_match_serialized_size() {
+        let par = rchain_models::par_ops::from_expr(rchain_models::ast::Expr::GInt(42));
+        let encoded =
+            <rchain_models::ast::Par as Serialize<rchain_models::ast::Par>>::encode(&par);
+        let len = encoded.len() as i64;
+
+        assert_eq!(Costs::to_byte_array_cost(&par).value, len);
+        assert_eq!(Costs::to_byte_array_cost(&par).operation, "to byte array");
+        assert_eq!(Costs::storage_cost(&[par.clone()]).value, len);
+        assert_eq!(Costs::equality_check_cost(&par, &par).value, len);
     }
 }
