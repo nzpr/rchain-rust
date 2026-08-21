@@ -44,12 +44,14 @@ guided by `Rchain/Rho.lean` and `Rchain/Ty.lean`. It is **not** a new law and do
 
 ## Open questions
 
-1. `casper/src/main/resources/casper.tla` models only the genesis **bootstrap ceremony handshake**,
-   not the finality rule. The formal finality spec must be reconstructed from
+1. `casper/src/main/resources/casper.tla` models only the genesis **bootstrap ceremony handshake**.
+   The finality rule is now formalized in `CasperFinality.tla` (Laws 14/15/16: > 2/3 supermajority,
+   fringe antichain + seen-set monotonicity, seqNum strictly increasing), reconstructed from
    `Finalizer.scala` + `MessageMapSyntax.scala`.
 2. The `faultTolerance` field asserted in `integration-tests/test/test_dag_correctness.py:105-111`
-   is not computed anywhere in this tree — its exact formula is to be recovered or declared an open
-   question.
+   is not computed anywhere in this tree — its exact formula is declared an open question;
+   `CasperFinality.tla` states the safety margin (`3·support − 2·total`) and the monotonicity the
+   test relies on.
 3. `Rosette` (`rosette/`, `roscala/`) is not wired into `build.sbt` and is **orphaned** — Laws 12–13
    are documented (no Lean files); the Rust reducer (`rholang::reduce`) replaces the VM, so these two
    laws are out of scope for the formalization.
