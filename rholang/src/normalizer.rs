@@ -35,12 +35,6 @@ fn pos() -> SourcePosition {
     SourcePosition { row: 0, column: 0 }
 }
 
-fn defer(name: &str) -> RholangError {
-    RholangError::UnrecognizedNormalizerError(format!(
-        "Compilation of construct not yet supported: {name}"
-    ))
-}
-
 fn with_connective_used(mut par: Par) -> Par {
     par.connective_used = true;
     par
@@ -1185,7 +1179,14 @@ fn normalize_input(
                             patterns.push((lb.0.clone(), lb.1.clone()));
                             sources.push(name.clone());
                         }
-                        _ => return Err(defer("complex input source")),
+                        // Unreachable: complex sources (`ReceiveSendSource`/`SendReceiveSource`) are
+                        // desugared above into a `new` of sends + a simple-source receive, so a
+                        // `LinearSimple` bind can only carry a `SimpleSource`.
+                        NameSource::ReceiveSendSource(_) | NameSource::SendReceiveSource(_, _) => {
+                            return Err(RholangError::BugFoundError(
+                                "complex input source was not desugared".to_string(),
+                            ))
+                        }
                     }
                 }
                 (patterns, sources, false, false)
