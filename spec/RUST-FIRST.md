@@ -58,10 +58,17 @@ The native `rho:*` protocol is installed as ordinary system-process `Definition`
 
 - `rho:registry:lookup` / `insertArbitrary` / `insertSigned:secp256k1` — backed by the native
   registry map.
-- `rho:rchain:pos` — `getBonds` → `RhoMap`, `getActiveValidators` → `RhoSet` (method dispatch via a
-  `remainder` install pattern).
+- `rho:rchain:pos` — `getBonds` → `RhoMap`, `getActiveValidators` → `RhoSet`, `bond`/`withdraw`
+  (validator lifecycle; simplified — see below) via a `remainder` install pattern.
 - `rho:rchain:revVault` / `multiSigRevVault` — `getBalance` / `deposit` / `transfer` over the vault
   balance map.
+
+The `bond` (deduct the deployer's REV vault and add `(validator, stake)` to the bonds map, rejecting
+already-bonded keys) and `withdraw` (remove from the bonds map and refund the stake to the REV vault)
+methods are implemented natively, returning the `(Bool, Either)` result the PoS contract expects.
+**Deferred (simplified balance-map model):** minimum/maximum-bond validation, the epoch/quarantine
+bookkeeping, reward computation, the Coop slashing vault, and vault `create`/`findOrCreate`
+unforgeable-name generation.
 
 `default_blessed_terms` now returns an empty list; the PoS bonds are installed natively in
 `compute_genesis`, and `compute_bonds`/`get_active_validators` read the bonds leaf directly (no

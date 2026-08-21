@@ -198,6 +198,66 @@ impl NativeSystemState {
         self.set_bonds(&bonds);
         Ok(Ok(()))
     }
+
+    /// Bond `amount` stake for `validator` (port of the PoS `bond` behavior, simplified: the
+    /// minimum/maximum-bond check and the epoch/quarantine machinery are deferred). The stake is
+    /// deducted from the validator's REV vault and added to the bonds map.
+    pub async fn bond(
+        &self,
+        validator: &Validator,
+        amount: NonNegI64,
+    ) -> Result<Result<(), String>, String> {
+        let mut bonds = self.bonds().await?;
+        if bonds.contains_key(validator) {
+            return Ok(Err("Public key is already bonded.".to_string()));
+        }
+        let address = self.vault_address(validator)?;
+        let balance = match self.vault_balance(&address).await? {
+            Some(b) => b,
+            None => NonNegI64::zero(),
+        };
+        if i64::from(balance) < i64::from(amount) {
+            return Ok(Err(format!(
+                "insufficient funds to bond {} (have {})",
+                i64::from(amount),
+                i64::from(balance)
+            )));
+        }
+        let new_balance = NonNegI64::try_from(i64::from(balance) - i64::from(amount))
+            .map_err(|e| format!("bond: {e}"))?;
+        self.set_vault_balance(&address, new_balance);
+        bonds.insert(*validator, amount);
+        self.set_bonds(&bonds);
+        Ok(Ok(()))
+    }
+
+    /// Withdraw a validator's entire bond (port of the PoS `withdraw` behavior, simplified: the
+    /// quarantine period is deferred, so the bond is refunded immediately). The validator is removed
+    /// from the bonds map and their stake is credited back to their REV vault.
+    pub async fn withdraw(&self, validator: &Validator) -> Result<Result<(), String>, String> {
+        let mut bonds = self.bonds().await?;
+        let stake = bonds
+            .remove(validator)
+            .ok_or_else(|| "User is not bonded".to_string())?;
+        self.set_bonds(&bonds);
+        let address = self.vault_address(validator)?;
+        let balance = match self.vault_balance(&address).await? {
+            Some(b) => b,
+            None => NonNegI64::zero(),
+        };
+        let new_balance = NonNegI64::try_from(i64::from(balance) + i64::from(stake))
+            .map_err(|e| format!("withdraw: {e}"))?;
+        self.set_vault_balance(&address, new_balance);
+        Ok(Ok(()))
+    }
+
+    /// The REV address (base58) of a validator's public key.
+    fn vault_address(&self, validator: &Validator) -> Result<String, String> {
+        let pk = PublicKey::new(validator.as_bytes().to_vec());
+        RevAddress::from_public_key(&pk)
+            .map(|a| a.to_base58())
+            .ok_or_else(|| "invalid validator public key".to_string())
+    }
 }
 
 #[cfg(test)]
@@ -256,5 +316,59 @@ mod tests {
         // Deducting more than the balance fails via the user-error branch.
         let result = native.pre_charge(&pk, 100).await.unwrap();
         assert!(result.is_err(), "insufficient funds must be rejected");
+    }
+
+    #[tokio::test]
+    async fn bond_deducts_vault_and_adds_stake() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let v = validator(1);
+        let pk = PublicKey::new(v.as_bytes().to_vec());
+        let addr = RevAddress::from_public_key(&pk).unwrap().to_base58();
+        native.set_vault_balance(&addr, NonNegI64::try_from(100).unwrap());
+
+        native.bond(&v, NonNegI64::try_from(40).unwrap()).await.unwrap().unwrap();
+
+        assert_eq!(
+            i64::from(native.vault_balance(&addr).await.unwrap().unwrap()),
+            60
+        );
+        assert_eq!(
+            i64::from(native.bonds().await.unwrap()[&v]),
+            40
+        );
+    }
+
+    #[tokio::test]
+    async fn bond_rejects_already_bonded() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let v = validator(1);
+        let pk = PublicKey::new(v.as_bytes().to_vec());
+        let addr = RevAddress::from_public_key(&pk).unwrap().to_base58();
+        native.set_vault_balance(&addr, NonNegI64::try_from(100).unwrap());
+
+        native.bond(&v, NonNegI64::try_from(40).unwrap()).await.unwrap().unwrap();
+        let result = native.bond(&v, NonNegI64::try_from(10).unwrap()).await.unwrap();
+        assert!(result.is_err(), "already bonded must be rejected");
+    }
+
+    #[tokio::test]
+    async fn withdraw_refunds_bond_and_removes_validator() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let v = validator(1);
+        let pk = PublicKey::new(v.as_bytes().to_vec());
+        let addr = RevAddress::from_public_key(&pk).unwrap().to_base58();
+        native.set_vault_balance(&addr, NonNegI64::try_from(100).unwrap());
+
+        native.bond(&v, NonNegI64::try_from(40).unwrap()).await.unwrap().unwrap();
+        native.withdraw(&v).await.unwrap().unwrap();
+
+        assert!(
+            !native.bonds().await.unwrap().contains_key(&v),
+            "withdrawn validator removed"
+        );
+        assert_eq!(
+            i64::from(native.vault_balance(&addr).await.unwrap().unwrap()),
+            100
+        );
     }
 }

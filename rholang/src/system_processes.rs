@@ -18,6 +18,7 @@ use rchain_models::rholang::RhoType::{
     RhoString, RhoSysAuthToken, RhoTupleN, RhoUri,
 };
 use rchain_models::runtime::ListParWithRandom;
+use rchain_models::validator::Validator;
 
 use crate::contract_call::ContractCall;
 use crate::dispatch::{RholangAndScalaDispatcher, ScalaBodyFn};
@@ -821,6 +822,46 @@ impl SystemProcesses {
                             .map(|v| RhoByteArray::apply(v.as_bytes().to_vec()))
                             .collect();
                         cc.produce(&rand, &[RhoSet::apply(ps)], ret).await
+                    }
+                    "bond" => {
+                        let [deployer_id, amount, ret] = rest else {
+                            return Err(illegal_arg(
+                                "bond expects deployerId, amount and return channel",
+                            ));
+                        };
+                        let deployer_id = RhoByteArray::unapply(deployer_id)
+                            .ok_or_else(|| illegal_arg("bond expects a deployerId byte array"))?;
+                        let amount = RhoNumber::unapply(amount)
+                            .ok_or_else(|| illegal_arg("bond expects a number amount"))?;
+                        let amount =
+                            NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
+                        let validator = Validator::try_from(deployer_id)
+                            .map_err(|e| illegal_arg(&e.to_string()))?;
+                        let out = match native.bond(&validator, amount).await.map_err(|e| illegal_arg(&e))? {
+                            Ok(()) => RhoTupleN::apply(vec![RhoBoolean::apply(true), RhoNil::apply()]),
+                            Err(msg) => RhoTupleN::apply(vec![
+                                RhoBoolean::apply(false),
+                                RhoString::apply(msg),
+                            ]),
+                        };
+                        cc.produce(&rand, &[out], ret).await
+                    }
+                    "withdraw" => {
+                        let [deployer_id, ret] = rest else {
+                            return Err(illegal_arg("withdraw expects deployerId and return channel"));
+                        };
+                        let deployer_id = RhoByteArray::unapply(deployer_id)
+                            .ok_or_else(|| illegal_arg("withdraw expects a deployerId byte array"))?;
+                        let validator = Validator::try_from(deployer_id)
+                            .map_err(|e| illegal_arg(&e.to_string()))?;
+                        let out = match native.withdraw(&validator).await.map_err(|e| illegal_arg(&e))? {
+                            Ok(()) => RhoTupleN::apply(vec![RhoBoolean::apply(true), RhoNil::apply()]),
+                            Err(msg) => RhoTupleN::apply(vec![
+                                RhoBoolean::apply(false),
+                                RhoString::apply(msg),
+                            ]),
+                        };
+                        cc.produce(&rand, &[out], ret).await
                     }
                     _ => Err(illegal_arg(&format!("pos: unknown method {op}"))),
                 }
