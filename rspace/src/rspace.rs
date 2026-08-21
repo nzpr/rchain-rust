@@ -17,6 +17,7 @@ use crate::hot_store::{HotStore, InMemHotStore};
 use crate::i_space::ISpace;
 use crate::internal::{ConsumeCandidate, Datum, Install, ProduceCandidate, Row, WaitingContinuation};
 use crate::match_::Match;
+use crate::native_store::{InMemNativeStore, NativeStoreState};
 use crate::replay_rspace::ReplayRSpace;
 use crate::space_matcher::{extract_data_candidates, extract_first_match};
 use crate::trace::event::{Comm, Consume, Event, Produce};
@@ -37,6 +38,7 @@ pub struct RSpace<C, P, A, K> {
     installs: RwLock<BTreeMap<Vec<C>, Install<P, K>>>,
     lock_f: Arc<TwoStepLock<Blake2b256Hash>>,
     matcher: Arc<dyn Match<P, A>>,
+    native_store: Arc<InMemNativeStore>,
 }
 
 impl<C, P, A, K> RSpace<C, P, A, K>
@@ -59,6 +61,7 @@ where
             installs: RwLock::new(BTreeMap::new()),
             lock_f: Arc::new(TwoStepLock::new()),
             matcher,
+            native_store: Arc::new(InMemNativeStore::empty()),
         }
     }
 
@@ -96,6 +99,11 @@ where
 
     pub(crate) fn matcher(&self) -> Arc<dyn Match<P, A>> {
         self.matcher.clone()
+    }
+
+    /// The native system-contract store (shared with the reducer's system processes).
+    pub fn native_store(&self) -> Arc<InMemNativeStore> {
+        self.native_store.clone()
     }
 
     pub(crate) fn current_store(&self) -> Arc<dyn HotStore<C, P, A, K>> {
@@ -492,9 +500,10 @@ where
 {
     async fn create_checkpoint(&self) -> std::result::Result<Checkpoint, String> {
         let changes = self.current_store().changes().await;
+        let native_changes = self.native_store.drain_changes();
         let next_history = {
             let history = self.current_history();
-            history.checkpoint(&changes).await?
+            history.checkpoint_with_native(&changes, &native_changes).await?
         };
         *crate::lock::wlock(&self.history_repository) = next_history.clone();
         let log = std::mem::take(&mut *crate::lock::wlock(&self.event_log));
@@ -502,6 +511,8 @@ where
         let history_reader = next_history.get_history_reader(next_history.root()).await;
         let base = history_reader.base();
         *crate::lock::wlock(&self.store) = Arc::new(InMemHotStore::new(base));
+        let native_reader = next_history.get_native_reader(next_history.root()).await;
+        self.native_store.set_reader(native_reader);
         Ok(Checkpoint {
             root: next_history.root(),
             log,
@@ -519,6 +530,9 @@ where
         let history_reader = next_history.get_history_reader(root).await;
         let base = history_reader.base();
         *crate::lock::wlock(&self.store) = Arc::new(InMemHotStore::new(base));
+        self.native_store.revert(NativeStoreState::default());
+        let native_reader = next_history.get_native_reader(root).await;
+        self.native_store.set_reader(native_reader);
         Ok(())
     }
 
@@ -554,6 +568,7 @@ where
             cache_snapshot: snapshot,
             log,
             produce_counter,
+            native_snapshot: self.native_store.snapshot(),
         }
     }
 
@@ -565,5 +580,6 @@ where
             Arc::new(InMemHotStore::from_state(checkpoint.cache_snapshot, base));
         *crate::lock::wlock(&self.event_log) = checkpoint.log;
         *crate::lock::wlock(&self.produce_counter) = checkpoint.produce_counter;
+        self.native_store.revert(checkpoint.native_snapshot);
     }
 }

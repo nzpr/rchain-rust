@@ -35,7 +35,12 @@ async fn genesis_deploy_replay_recomputes_state() {
     let rm = build_runtime_manager().await;
     let rand = fixed_rand();
     let (pre, post, results) = rm
-        .compute_genesis(&[deploy(r#"@"chan"!(42)"#)], &rand, BlockData::empty())
+        .compute_genesis(
+            &[deploy(r#"@"chan"!(42)"#)],
+            &rand,
+            BlockData::empty(),
+            &std::collections::BTreeMap::new(),
+        )
         .await
         .expect("compute_genesis");
     assert_eq!(results.len(), 1);
@@ -44,7 +49,15 @@ async fn genesis_deploy_replay_recomputes_state() {
     // Law 11: replay recomputes the same post-state hash from the recorded log.
     let processed: Vec<ProcessedDeploy> = results.iter().map(|r| r.deploy.clone()).collect();
     let (replay_post, _) = rm
-        .replay_compute_state(&pre, &processed, &[], &rand, BlockData::empty(), false)
+        .replay_compute_state(
+            &pre,
+            &processed,
+            &[],
+            &rand,
+            BlockData::empty(),
+            false,
+            &std::collections::BTreeMap::new(),
+        )
         .await
         .expect("replay_compute_state");
     assert_eq!(post, replay_post, "replay must reproduce the play post-state");

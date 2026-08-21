@@ -18,6 +18,7 @@ use crate::checkpoint::SoftCheckpoint;
 use crate::i_replay_space::IReplaySpace;
 use crate::i_space::ISpace;
 use crate::internal::{Datum, Row, WaitingContinuation};
+use crate::native_store::InMemNativeStore;
 use crate::replay_rspace::ReplayRSpace;
 use crate::trace::Log;
 use crate::tuple_space::{ContResult, Result, Tuplespace};
@@ -71,6 +72,11 @@ where
             report: RwLock::new(Vec::new()),
             soft_report: RwLock::new(Vec::new()),
         }
+    }
+
+    /// The native system-contract store (shared with the wrapped replay/play spaces).
+    pub fn native_store(&self) -> Arc<InMemNativeStore> {
+        self.replay.native_store()
     }
 
     pub fn record_produce(&self, channel: C, data: A) {

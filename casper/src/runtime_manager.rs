@@ -18,6 +18,7 @@ use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::validator::Validator;
 use rchain_rholang::evaluate_result::EvaluateResult;
+use rchain_rholang::native_state::{decode_bonds, pos_bonds_key, NativeSystemState};
 use rchain_rholang::merging::{
     calculate_num_channel_diff, encode_mergeable_key, get_number_with_rnd, DeployMergeableData,
     NumberChannel,
@@ -26,12 +27,15 @@ use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::storage::RhoHistoryRepository;
 use rchain_rholang::system_processes::BlockData;
 use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
+use rchain_rspace::native_store::PREFIX_POS;
 use rchain_shared::typed_store::KeyValueTypedStore;
 
 use crate::event_converter::to_casper_event;
 use crate::rholang::{ReplayFailure, SystemDeployRuntimeResult, UserDeployRuntimeResult};
 use crate::runtime_replay::RuntimeReplayOps;
-use crate::system_deploy::{process_bool_result, EvalCollector, SystemDeploy, SystemDeployUserError};
+use crate::system_deploy::{
+    process_bool_result, EvalCollector, NativeSystemDeployOp, SystemDeploy, SystemDeployUserError,
+};
 
 /// The runtime manager (port of `RuntimeManager`). Deploy execution (user deploys + system
 /// deploys), genesis/state computation, replay, and bond/validator queries are implemented.
@@ -318,16 +322,47 @@ impl RuntimeManager {
     }
 
     /// Compute the genesis state from deploys (port of `computeGenesis`).
+    ///
+    /// Rust-first: the PoS bonds and active-validator set are installed as native state (not derived
+    /// from an interpreted `Pos.rhox`), and `terms` is the (possibly empty) list of pure-library
+    /// deploys.
     pub async fn compute_genesis(
         &self,
         terms: &[SignedDeployData],
         rand: &Blake2b512Random,
         block_data: BlockData,
+        bonds: &BTreeMap<Validator, NonNegI64>,
     ) -> Result<(Blake2b256Hash, Blake2b256Hash, Vec<UserDeployRuntimeResult>), String> {
+        let creator = block_data.sender.bytes().to_vec();
+        let seq_num = i64::from(block_data.seq_num);
         self.runtime.set_block_data(block_data);
         let pre_state_hash = self.runtime.empty_state_hash().await?;
-        let (post_state_hash, processed) = self.play_deploys(&pre_state_hash, terms, rand).await?;
-        Ok((pre_state_hash, post_state_hash, processed))
+        self.runtime.reset(pre_state_hash).await.map_err(|e| e)?;
+        let mut results = Vec::new();
+        for (i, d) in terms.iter().enumerate() {
+            let r = rand
+                .split_byte(u8::try_from(i).map_err(|e| e.to_string())?)
+                .split_byte(1);
+            let (processed, eval_result) = self
+                .process_deploy(d, &r)
+                .await
+                .map_err(|e| format!("deploy #{i} failed: {e}"))?;
+            results.push(UserDeployRuntimeResult {
+                deploy: processed,
+                mergeable: BTreeMap::new(),
+                eval_result,
+            });
+        }
+        // Install the native system-contract state before the final checkpoint so it is
+        // content-addressed into the post-state hash.
+        let native = NativeSystemState::new(self.runtime.native_store());
+        native.set_bonds(bonds);
+        let checkpoint = self.runtime.create_checkpoint().await.map_err(|e| e)?;
+        let mergeable_chs: Vec<NumberChannelsDiff> =
+            results.iter().map(|r| r.mergeable.clone()).collect();
+        self.save_mergeable_channels(checkpoint.root, &creator, seq_num, &mergeable_chs, pre_state_hash)
+            .await?;
+        Ok((pre_state_hash, checkpoint.root, results))
     }
 
     /// Run a system deploy's source (port of `evaluateSystemSource`).
@@ -360,6 +395,9 @@ impl RuntimeManager {
         &self,
         deploy: &SystemDeploy,
     ) -> Result<(Result<(), SystemDeployUserError>, EvaluateResult), String> {
+        if let Some(op) = &deploy.op {
+            return self.eval_native_system_deploy(op).await;
+        }
         let eval_result = self.evaluate_system_source(deploy).await?;
         if !eval_result.errors.is_empty() {
             return Err(format!("Unexpected system errors: {:?}", eval_result.errors));
@@ -375,6 +413,28 @@ impl RuntimeManager {
             },
             None => Err("Unable to consume results of system deploy".to_string()),
         }
+    }
+
+    /// Evaluate a native system deploy (rust-first replacement for the rholang PoS/registry sources).
+    async fn eval_native_system_deploy(
+        &self,
+        op: &NativeSystemDeployOp,
+    ) -> Result<(Result<(), SystemDeployUserError>, EvaluateResult), String> {
+        let native = NativeSystemState::new(self.runtime.native_store());
+        let result = match op {
+            NativeSystemDeployOp::PreCharge { deployer, amount } => {
+                native.pre_charge(deployer, *amount).await?
+            }
+            NativeSystemDeployOp::Refund { amount } => native.refund(*amount).await?,
+            NativeSystemDeployOp::CloseBlock => native.close_block().await?,
+            NativeSystemDeployOp::Slash { validator } => native.slash(validator).await?,
+        };
+        let eval_result = EvaluateResult {
+            cost: rchain_rholang::accounting::Cost::new(0, "native-system-deploy"),
+            errors: Vec::new(),
+            mergeable: BTreeSet::new(),
+        };
+        Ok((result.map_err(SystemDeployUserError), eval_result))
     }
 
     /// Play a single block-level system deploy from `state_hash` (port of `playSystemDeploy`).
@@ -423,6 +483,8 @@ impl RuntimeManager {
         ),
         String,
     > {
+        let creator = block_data.sender.bytes().to_vec();
+        let seq_num = i64::from(block_data.seq_num);
         self.runtime.set_block_data(block_data);
         let (mut state_hash, processed_deploys) =
             self.play_deploys_with_cost_accounting(start_hash, terms, rand).await?;
@@ -432,6 +494,11 @@ impl RuntimeManager {
             state_hash = new_hash;
             processed_system_deploys.push(processed);
         }
+        let mut mergeable_chs: Vec<NumberChannelsDiff> = Vec::new();
+        mergeable_chs.extend(processed_deploys.iter().map(|r| r.mergeable.clone()));
+        mergeable_chs.extend(processed_system_deploys.iter().map(|r| r.mergeable.clone()));
+        self.save_mergeable_channels(state_hash, &creator, seq_num, &mergeable_chs, *start_hash)
+            .await?;
         Ok((state_hash, processed_deploys, processed_system_deploys))
     }
 
@@ -445,8 +512,11 @@ impl RuntimeManager {
         rand: &Blake2b512Random,
         block_data: BlockData,
         with_cost_accounting: bool,
+        bonds: &BTreeMap<Validator, NonNegI64>,
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
-        RuntimeReplayOps::new(&self.replay_runtime)
+        let creator = block_data.sender.bytes().to_vec();
+        let seq_num = i64::from(block_data.seq_num);
+        let (state_hash, mergeable_chs) = RuntimeReplayOps::new(&self.replay_runtime)
             .replay_compute_state(
                 start_hash,
                 rand,
@@ -454,8 +524,13 @@ impl RuntimeManager {
                 system_deploys,
                 block_data,
                 with_cost_accounting,
+                bonds,
             )
+            .await?;
+        self.save_mergeable_channels(state_hash, &creator, seq_num, &mergeable_chs, *start_hash)
             .await
+            .map_err(ReplayFailure::internal_error)?;
+        Ok((state_hash, mergeable_chs))
     }
 
     /// Run a read-only exploratory deploy and capture its result (port of `playExploratoryDeploy`).
@@ -488,68 +563,23 @@ impl RuntimeManager {
             .map_err(|e| e.to_string())
     }
 
-    /// Query the current active validators at `hash` (port of `getActiveValidators`).
+    /// Query the current active validators at `hash` (native PoS read, port of `getActiveValidators`).
     pub async fn get_active_validators(&self, hash: &StateHash) -> Result<Vec<Validator>, String> {
-        let pars = self
-            .play_exploratory_deploy(ACTIVATE_VALIDATOR_QUERY_SOURCE, hash)
-            .await?;
-        if pars.len() != 1 {
-            return Err(format!("Incorrect number of results: {}", pars.len()));
-        }
-        Ok(to_validator_seq(&pars[0]))
+        // Active validators = every bonded validator (derived from the bonds leaf).
+        Ok(self.compute_bonds(hash).await?.into_keys().collect())
     }
 
-    /// Query the current bonds at `hash` (port of `computeBonds`).
+    /// Query the current bonds at `hash` (native PoS read, port of `computeBonds`).
     pub async fn compute_bonds(&self, hash: &StateHash) -> Result<BTreeMap<Validator, NonNegI64>, String> {
-        let pars = self.play_exploratory_deploy(BONDS_QUERY_SOURCE, hash).await?;
-        if pars.len() != 1 {
-            return Err(format!("Incorrect number of results: {}", pars.len()));
-        }
-        to_bond_map(&pars[0])
+        let reader = self.history_repo.get_history_reader(to_blake(hash)).await;
+        let bytes = reader
+            .get_native(PREFIX_POS, pos_bonds_key())
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "bonds leaf not found in state".to_string())?;
+        decode_bonds(&bytes)
     }
 }
-
-fn to_validator_seq(p: &Par) -> Vec<Validator> {
-    let mut out = Vec::new();
-    if let Some(Expr::ESet(set)) = p.exprs.first() {
-        for v in &set.ps {
-            if let Some(Expr::GByteArray(bytes)) = v.exprs.first() {
-                out.push(Validator::from_slice(bytes));
-            }
-        }
-    }
-    out
-}
-
-fn to_bond_map(p: &Par) -> Result<BTreeMap<Validator, NonNegI64>, String> {
-    let mut out = BTreeMap::new();
-    if let Some(Expr::EMap(map)) = p.exprs.first() {
-        for (k, v) in &map.kvs {
-            if let (Some(Expr::GByteArray(vb)), Some(Expr::GInt(bond))) =
-                (k.exprs.first(), v.exprs.first())
-            {
-                let stake = NonNegI64::try_from(*bond)
-                    .map_err(|_| format!("negative bond stake: {bond}"))?;
-                out.insert(Validator::from_slice(vb), stake);
-            }
-        }
-    }
-    Ok(out)
-}
-
-const ACTIVATE_VALIDATOR_QUERY_SOURCE: &str = r#"new return, rl(`rho:registry:lookup`), poSCh in {
-  rl!(`rho:rchain:pos`, *poSCh) |
-  for(@(_, Pos) <- poSCh) {
-    @Pos!("getActiveValidators", *return)
-  }
-}"#;
-
-const BONDS_QUERY_SOURCE: &str = r#"new return, rl(`rho:registry:lookup`), poSCh in {
-  rl!(`rho:rchain:pos`, *poSCh) |
-  for(@(_, Pos) <- poSCh) {
-    @Pos!("getBonds", *return)
-  }
-}"#;
 
 fn to_blake(hash: &StateHash) -> Blake2b256Hash {
     Blake2b256Hash::from_byte_array(hash.as_bytes())

@@ -21,6 +21,7 @@ use rchain_models::runtime::ListParWithRandom;
 use crate::contract_call::ContractCall;
 use crate::dispatch::{RholangAndScalaDispatcher, ScalaBodyFn};
 use crate::errors::RholangError;
+use crate::native_state::NativeSystemState;
 use crate::pretty_printer::PrettyPrinter;
 use crate::registry;
 use crate::storage::ChargingRSpace;
@@ -155,6 +156,7 @@ pub struct SystemProcesses {
     contract_call: ContractCall<ChargingRSpace, Arc<RholangAndScalaDispatcher>>,
     pretty_printer: PrettyPrinter,
     block_data: Arc<Mutex<BlockData>>,
+    native_state: Arc<NativeSystemState>,
 }
 
 impl SystemProcesses {
@@ -162,11 +164,13 @@ impl SystemProcesses {
         space: ChargingRSpace,
         dispatcher: Arc<RholangAndScalaDispatcher>,
         block_data: Arc<Mutex<BlockData>>,
+        native_state: Arc<NativeSystemState>,
     ) -> Self {
         SystemProcesses {
             contract_call: ContractCall::new(space, dispatcher),
             pretty_printer: PrettyPrinter::new(),
             block_data,
+            native_state,
         }
     }
 
@@ -657,7 +661,10 @@ mod tests {
         let charging = ChargingRSpace::new(mock.clone());
         let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
         let block_data = Arc::new(Mutex::new(BlockData::empty()));
-        let sp = SystemProcesses::new(charging, dispatcher, block_data);
+        let native_state = Arc::new(NativeSystemState::new(Arc::new(
+            rchain_rspace::native_store::InMemNativeStore::empty(),
+        )));
+        let sp = SystemProcesses::new(charging, dispatcher, block_data, native_state);
         let defs = sp.definitions();
         (sp, defs)
     }

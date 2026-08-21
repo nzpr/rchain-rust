@@ -18,6 +18,7 @@ use crate::hashing::stable_hash_provider::hash_channel;
 use crate::i_replay_space::IReplaySpace;
 use crate::i_space::ISpace;
 use crate::internal::{ConsumeCandidate, Datum, ProduceCandidate, Row, WaitingContinuation};
+use crate::native_store::InMemNativeStore;
 use crate::rspace::RSpace;
 use crate::space_matcher::{extract_data_candidates, extract_first_match};
 use crate::trace::event::{Comm, Consume, Event, Produce};
@@ -98,6 +99,11 @@ where
             replay_data: RwLock::new(ReplayData::default()),
             lock_f: Arc::new(TwoStepLock::new()),
         }
+    }
+
+    /// The native system-contract store (shared with the wrapped play space).
+    pub fn native_store(&self) -> Arc<InMemNativeStore> {
+        self.space.native_store()
     }
 
     /// Build the replay data table from a log (port of `IReplaySpace.rig`). Only IO events that

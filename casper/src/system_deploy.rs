@@ -7,10 +7,7 @@ use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_crypto::public_key::PublicKey;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::Event;
-use rchain_models::rholang::RhoType::{
-    RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken,
-    RhoTupleN,
-};
+use rchain_models::rholang::RhoType::{RhoBoolean, RhoString, RhoTupleN};
 use rchain_models::validator::Validator;
 
 /// A user-level system-deploy error (port of `SystemDeployUserError`).
@@ -62,86 +59,67 @@ pub enum SystemDeployResult<A> {
 }
 
 /// A system deploy: the rholang source plus its normalizer environment (port of `SystemDeploy`).
+///
+/// Rust-first: the pre-charge/refund/close-block/slash system deploys are now **native** operations
+/// (see [`NativeSystemDeployOp`]); `source`/`normalizer_env`/`return_channel` remain only for the
+/// legacy rholang path, which is no longer constructed.
 pub struct SystemDeploy {
     pub source: &'static str,
     pub normalizer_env: BTreeMap<String, Par>,
     pub rand: Blake2b512Random,
     pub return_channel: Par,
+    /// A native system-deploy operation; `Some` makes this deploy bypass the rholang source path.
+    pub op: Option<NativeSystemDeployOp>,
 }
 
-fn mk_return_channel(rand: &mut Blake2b512Random) -> Par {
-    RhoName::apply_bytes(rand.next())
-}
-
-fn mk_sys_auth_token() -> Par {
-    RhoSysAuthToken::apply()
-}
-
-fn mk_deployer_id(pk: &PublicKey) -> Par {
-    RhoDeployerId::apply(pk.bytes().to_vec())
+/// A native system-deploy operation (rust-first replacement for the rholang PoS/registry
+/// system-deploy sources; the Scala sources are a checklist only).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NativeSystemDeployOp {
+    PreCharge { deployer: PublicKey, amount: i64 },
+    Refund { amount: i64 },
+    CloseBlock,
+    Slash { validator: Validator },
 }
 
 impl SystemDeploy {
     pub fn pre_charge(amount: i64, pk: &PublicKey, rand: Blake2b512Random) -> SystemDeploy {
-        let mut r = rand;
-        let return_channel = mk_return_channel(&mut r);
-        let mut env = BTreeMap::new();
-        env.insert("sys:casper:deployerId".to_string(), mk_deployer_id(pk));
-        env.insert("sys:casper:chargeAmount".to_string(), RhoNumber::apply(amount));
-        env.insert("sys:casper:authToken".to_string(), mk_sys_auth_token());
-        env.insert("sys:casper:return".to_string(), return_channel.clone());
         SystemDeploy {
-            source: PRE_CHARGE_SOURCE,
-            normalizer_env: env,
-            rand: r,
-            return_channel,
+            source: "",
+            normalizer_env: BTreeMap::new(),
+            rand,
+            return_channel: Par::default(),
+            op: Some(NativeSystemDeployOp::PreCharge { deployer: pk.to_owned(), amount }),
         }
     }
 
     pub fn refund(amount: i64, rand: Blake2b512Random) -> SystemDeploy {
-        let mut r = rand;
-        let return_channel = mk_return_channel(&mut r);
-        let mut env = BTreeMap::new();
-        env.insert("sys:casper:refundAmount".to_string(), RhoNumber::apply(amount));
-        env.insert("sys:casper:authToken".to_string(), mk_sys_auth_token());
-        env.insert("sys:casper:return".to_string(), return_channel.clone());
         SystemDeploy {
-            source: REFUND_SOURCE,
-            normalizer_env: env,
-            rand: r,
-            return_channel,
+            source: "",
+            normalizer_env: BTreeMap::new(),
+            rand,
+            return_channel: Par::default(),
+            op: Some(NativeSystemDeployOp::Refund { amount }),
         }
     }
 
     pub fn close_block(rand: Blake2b512Random) -> SystemDeploy {
-        let mut r = rand;
-        let return_channel = mk_return_channel(&mut r);
-        let mut env = BTreeMap::new();
-        env.insert("sys:casper:authToken".to_string(), mk_sys_auth_token());
-        env.insert("sys:casper:return".to_string(), return_channel.clone());
         SystemDeploy {
-            source: CLOSE_BLOCK_SOURCE,
-            normalizer_env: env,
-            rand: r,
-            return_channel,
+            source: "",
+            normalizer_env: BTreeMap::new(),
+            rand,
+            return_channel: Par::default(),
+            op: Some(NativeSystemDeployOp::CloseBlock),
         }
     }
 
     pub fn slash(validator: &Validator, rand: Blake2b512Random) -> SystemDeploy {
-        let mut r = rand;
-        let return_channel = mk_return_channel(&mut r);
-        let mut env = BTreeMap::new();
-        env.insert(
-            "sys:casper:slashedValidator".to_string(),
-            RhoByteArray::apply(validator.as_bytes().to_vec()),
-        );
-        env.insert("sys:casper:authToken".to_string(), mk_sys_auth_token());
-        env.insert("sys:casper:return".to_string(), return_channel.clone());
         SystemDeploy {
-            source: SLASH_SOURCE,
-            normalizer_env: env,
-            rand: r,
-            return_channel,
+            source: "",
+            normalizer_env: BTreeMap::new(),
+            rand,
+            return_channel: Par::default(),
+            op: Some(NativeSystemDeployOp::Slash { validator: *validator }),
         }
     }
 }
@@ -170,40 +148,19 @@ pub fn process_bool_result(output: &Par) -> Result<(), SystemDeployUserError> {
     Err(error)
 }
 
-const PRE_CHARGE_SOURCE: &str = r#"new rl(`rho:registry:lookup`), poSCh, initialDeployerId(`sys:casper:deployerId`), chargeAmount(`sys:casper:chargeAmount`), sysAuthToken(`sys:casper:authToken`), return(`sys:casper:return`) in {
-  rl!(`rho:rchain:pos`, *poSCh) |
-  for(@(_, Pos) <- poSCh) { @Pos!("chargeDeploy", *initialDeployerId, *chargeAmount, *sysAuthToken, *return) }
-}"#;
-
-const REFUND_SOURCE: &str = r#"new rl(`rho:registry:lookup`), poSCh, refundAmount(`sys:casper:refundAmount`), sysAuthToken(`sys:casper:authToken`), return(`sys:casper:return`) in {
-  rl!(`rho:rchain:pos`, *poSCh) |
-  for(@(_, Pos) <- poSCh) { @Pos!("refundDeploy", *refundAmount, *sysAuthToken, *return) }
-}"#;
-
-const CLOSE_BLOCK_SOURCE: &str = r#"new rl(`rho:registry:lookup`), poSCh, sysAuthToken(`sys:casper:authToken`), return(`sys:casper:return`) in {
-  rl!(`rho:rchain:pos`, *poSCh) |
-  for(@(_, Pos) <- poSCh) { @Pos!("closeBlock", *sysAuthToken, *return) }
-}"#;
-
-const SLASH_SOURCE: &str = r#"new rl(`rho:registry:lookup`), poSCh, slashedValidator(`sys:casper:slashedValidator`), sysAuthToken(`sys:casper:authToken`), return(`sys:casper:return`) in {
-  rl!(`rho:rchain:pos`, *poSCh) |
-  for(@(_, Pos) <- poSCh) { @Pos!("slash", *slashedValidator, *sysAuthToken, *return) }
-}"#;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn pre_charge_env_has_expected_bindings() {
+    fn pre_charge_is_native() {
         let pk = PublicKey::new(vec![1u8; 65]);
         let rand = Blake2b512Random::new_random(128);
         let d = SystemDeploy::pre_charge(100, &pk, rand);
-        assert!(!d.source.is_empty());
-        assert!(d.normalizer_env.contains_key("sys:casper:deployerId"));
-        assert!(d.normalizer_env.contains_key("sys:casper:chargeAmount"));
-        assert!(d.normalizer_env.contains_key("sys:casper:authToken"));
-        assert!(d.normalizer_env.contains_key("sys:casper:return"));
+        assert_eq!(
+            d.op,
+            Some(NativeSystemDeployOp::PreCharge { deployer: pk, amount: 100 })
+        );
     }
 
     #[test]

@@ -17,6 +17,7 @@ use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::i_replay_space::IReplaySpace;
 use rchain_rspace::i_space::ISpace;
 use rchain_rspace::internal::Datum;
+use rchain_rspace::native_store::InMemNativeStore;
 use rchain_rspace::reporting_rspace::{ReportingEvent, ReportingRspace};
 use rchain_rspace::trace::Log;
 use rchain_rspace::tuple_space::Tuplespace;
@@ -62,7 +63,8 @@ impl ReportingRuntime {
         mergeable_tag_name: Par,
     ) -> std::io::Result<ReportingRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
-        let core = build_runtime_core(&tuplespace, mergeable_tag_name).await?;
+        let native_store = space.native_store();
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store).await?;
         Ok(ReportingRuntime {
             reducer: core.reducer,
             space,
@@ -79,6 +81,11 @@ impl ReportingRuntime {
     /// The cost-accounting cell (exposed so replay can seed the per-deploy phlo budget).
     pub fn cost(&self) -> &CostAccounting {
         self.cost.as_ref()
+    }
+
+    /// The native system-contract store (shared with the wrapped reporting/replay/play spaces).
+    pub fn native_store(&self) -> Arc<InMemNativeStore> {
+        self.space.native_store()
     }
 
     pub fn set_block_data(&self, block_data: BlockData) {

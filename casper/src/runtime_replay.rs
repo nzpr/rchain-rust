@@ -6,6 +6,7 @@
 //! consumed (Law 11).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -19,9 +20,12 @@ use rchain_models::casper::protocol::casper_message::{
 use rchain_models::par_ops::from_expr;
 use rchain_models::rholang::RhoType::RhoNumber;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::validator::Validator;
+use rchain_shared::refined::NonNegI64;
 use rchain_rholang::accounting::{Cost, CostAccounting};
 use rchain_rholang::evaluate_result::EvaluateResult;
 use rchain_rholang::errors::RholangError;
+use rchain_rholang::native_state::NativeSystemState;
 use rchain_rholang::reporting_runtime::ReportingRuntime;
 use rchain_rholang::runtime::ReplayRhoRuntime;
 use rchain_rholang::system_processes::BlockData;
@@ -30,12 +34,15 @@ use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::hashing::stable_hash_provider::hash_channel;
 use rchain_rspace::internal::Datum;
 use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
+use rchain_rspace::native_store::InMemNativeStore;
 use rchain_rspace::trace::Log;
 use rchain_rspace::util::ReplayException;
 
 use crate::event_converter::to_rspace_event;
 use crate::rholang::ReplayFailure;
-use crate::system_deploy::{process_bool_result, SystemDeploy, SystemDeployUserError};
+use crate::system_deploy::{
+    process_bool_result, NativeSystemDeployOp, SystemDeploy, SystemDeployUserError,
+};
 
 /// Random-seed split indices for the pre-charge / user-deploy / refund sequence (port of
 /// `BlockRandomSeed`).
@@ -84,6 +91,8 @@ pub trait ReplayRuntime {
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError>;
 
     async fn create_checkpoint(&self) -> Result<Checkpoint, String>;
+
+    fn native_store(&self) -> Arc<InMemNativeStore>;
 }
 
 /// Replay orchestration (port of `RuntimeReplayOps`).
@@ -106,9 +115,10 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         system_deploys: &[ProcessedSystemDeploy],
         block_data: BlockData,
         with_cost_accounting: bool,
+        bonds: &BTreeMap<Validator, NonNegI64>,
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         self.runtime.set_block_data(block_data);
-        self.replay_deploys(start_hash, rand, terms, system_deploys, with_cost_accounting)
+        self.replay_deploys(start_hash, rand, terms, system_deploys, with_cost_accounting, bonds)
             .await
     }
 
@@ -121,11 +131,17 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         terms: &[ProcessedDeploy],
         system_deploys: &[ProcessedSystemDeploy],
         with_cost_accounting: bool,
+        bonds: &BTreeMap<Validator, NonNegI64>,
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         self.runtime
             .reset(*start_hash)
             .await
             .map_err(ReplayFailure::internal_error)?;
+        // Genesis replay (no cost accounting): re-install the native bonds so the replayed post-state
+        // hash matches the play genesis hash.
+        if !with_cost_accounting {
+            NativeSystemState::new(self.runtime.native_store()).set_bonds(bonds);
+        }
 
         let mut mergeable: Vec<NumberChannelsDiff> = Vec::new();
         for (i, term) in terms.iter().enumerate() {
@@ -368,6 +384,9 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         &self,
         deploy: &SystemDeploy,
     ) -> Result<(Result<(), SystemDeployUserError>, EvaluateResult), String> {
+        if let Some(op) = &deploy.op {
+            return self.eval_native_system_deploy(op).await;
+        }
         let eval_result = self
             .runtime
             .evaluate_with_env(deploy.source, &deploy.normalizer_env, &deploy.rand)
@@ -390,6 +409,28 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             },
             None => Err("Unable to consume results of system deploy".to_string()),
         }
+    }
+
+    /// Evaluate a native system deploy during replay (deterministic: pure in the deploy + state).
+    async fn eval_native_system_deploy(
+        &self,
+        op: &NativeSystemDeployOp,
+    ) -> Result<(Result<(), SystemDeployUserError>, EvaluateResult), String> {
+        let native = NativeSystemState::new(self.runtime.native_store());
+        let result = match op {
+            NativeSystemDeployOp::PreCharge { deployer, amount } => {
+                native.pre_charge(deployer, *amount).await?
+            }
+            NativeSystemDeployOp::Refund { amount } => native.refund(*amount).await?,
+            NativeSystemDeployOp::CloseBlock => native.close_block().await?,
+            NativeSystemDeployOp::Slash { validator } => native.slash(validator).await?,
+        };
+        let eval_result = EvaluateResult {
+            cost: Cost::new(0, "native-system-deploy"),
+            errors: Vec::new(),
+            mergeable: BTreeSet::new(),
+        };
+        Ok((result.map_err(SystemDeployUserError), eval_result))
     }
 
     async fn consume_system_result(
@@ -549,6 +590,10 @@ impl ReplayRuntime for ReplayRhoRuntime {
     async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
         ReplayRhoRuntime::create_checkpoint(self).await
     }
+
+    fn native_store(&self) -> Arc<InMemNativeStore> {
+        ReplayRhoRuntime::native_store(self)
+    }
 }
 
 #[async_trait]
@@ -613,6 +658,10 @@ impl ReplayRuntime for ReportingRuntime {
 
     async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
         ReportingRuntime::create_checkpoint(self).await
+    }
+
+    fn native_store(&self) -> Arc<InMemNativeStore> {
+        ReportingRuntime::native_store(self)
     }
 }
 

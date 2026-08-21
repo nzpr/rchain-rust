@@ -25,6 +25,13 @@ pub trait HistoryReader<C, P, A, K>: Send + Sync {
 
     async fn get_joins(&self, key: Blake2b256Hash) -> Result<Vec<Vec<C>>, RSpaceError>;
 
+    /// Read a native system-contract leaf under `prefix` (registry / PoS / vault).
+    async fn get_native(
+        &self,
+        prefix: u8,
+        key: Blake2b256Hash,
+    ) -> Result<Option<Vec<u8>>, RSpaceError>;
+
     /// A reader that hashes channels internally (port of `base`).
     fn base(&self) -> Arc<dyn HistoryReaderBase<C, P, A, K>>;
 

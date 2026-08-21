@@ -21,6 +21,7 @@ pub mod internal;
 pub mod lock;
 pub mod match_;
 pub mod merger;
+pub mod native_store;
 #[cfg(test)]
 mod property_tests;
 pub mod replay_rspace;

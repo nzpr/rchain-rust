@@ -251,3 +251,62 @@ Under the new oracle (the ρ-calculus spec, not Scala), the following were **fix
 - **`rho_expr.rs` `unsafe_decode`**: converting `rho_expr_to_par`/`unforg_to_par` to `Result` is a
   follow-up (the recursive `.map` would become `try_collect`).
 
+---
+
+## 9. Rust-first reimplementation — fragility audit of the Scala-port rholang layer
+
+This section is the justification for the rust-first reimplementation (plan
+`delegated-crafting-phoenix.md`). It documents *why* the current rholang layer is fragile — not as a
+list of bugs to patch, but as the record of the Scala legacy the reimplementation removes. For each
+finding: **what it is → why it is fragile/exploitable → how the rust-first rewrite eliminates it**.
+Scala remains a *checklist* of required behavior only, never an implementation guide.
+
+- **F1 — The interpreter core is a mechanical Scala port.** `rholang/src/reduce.rs` (1773 lines)
+  mirrors `Reduce.scala`/`DebruijnInterpreter`; `normalizer.rs` (1807 lines) mirrors the
+  BNFC-derived compiler; `matcher/*` ports the cats-effect `StateT`/`StreamT` monad stack to concrete
+  `Vec<FreeMap>` backtracking. *Why fragile:* the effect stack is shoe-horned into `async` +
+  concrete collections, and the structural invariants (`locally_free`, `connective_used`) are
+  maintained **by hand** (`reduce.rs:35-59`, `substitute.rs`) rather than carried by the type. A
+  single inversion (the `normalize_contr` formal-order reversal, fixed in `5ae8dc4df`) silently broke
+  list-as-channel matching — latent bugs are invisible until one contract exercises them. *How the
+  rewrite eliminates it:* the interpreter is re-derived from the 19 laws (`INVENTORY.md`) and the
+  grammar in `RHO-CALCULUS.md`, with the `Par<S>` sort split and the `Closed`/`WellScoped`/
+  `BindsAtMostOnce` refinements carrying the invariants structurally (Phase 4).
+
+- **F2 — The blessed genesis contracts re-implement a HashMap trie in interpreted rholang.**
+  `casper/src/genesis/resources/Registry.rho:80-368` is a depth-4 keccak-256 nybble trie with 16-bit
+  power-of-two bitmasks, built on `@[node, *storeToken]` list-channels and `@(map, "depth")`
+  tuple-channels. *Why fragile:* it stresses every exotic interpreter feature at once — peek `<<-`,
+  persistent `!!`, list/tuple channels, method calls, keccak trie hashing, bitmask arithmetic — and
+  any one of them failing makes the registry **silently empty** (the `process_deploy` path only
+  surfaces *reported* errors, `runtime_manager.rs:198`). *How the rewrite eliminates it:* the
+  registry/PoS/vault become **native Rust system processes** over a native `BTreeMap` state, exposed
+  on the same `rho:*` protocol but with no rholang trie to execute (Phases 1–3).
+
+- **F3 — Silent partiality hides the failure.** `compute_bonds` (`casper/src/runtime_manager.rs:503-509`)
+  runs an exploratory deploy (`BONDS_QUERY_SOURCE`, `:547-552`); a non-matching receive yields 0
+  results → an empty bond map → "Incorrect number of results: 0", with no indication *which* link
+  broke (registry lookup? PoS `getBonds`? the `for(@(_, Pos) <- poSCh)` pattern?). *Why fragile:*
+  three separate reductions must all succeed for a single fact (the bonds map) to be observable, and
+  the failure mode is a count mismatch rather than a typed error. *How the rewrite eliminates it:*
+  `compute_bonds` becomes a single native read (`HistoryReader::get_native(PREFIX_POS, …)`), total and
+  typed (Phase 2).
+
+- **F4 — Gas metering is unwired.** `ChargingRSpace` (`rholang/src/storage.rs:88`) is a pure
+  passthrough (storage/event charging deferred); `substituteAndCharge` (`substitute.rs:5`) and the
+  proto-size cost table (`accounting.rs:5`) are deferred; `Chargeable` has no instances. *Why
+  fragile:* the node's primary DoS defense (phlo) is not actually enforced against untrusted deploy
+  work. *How the rewrite eliminates it:* `substituteAndCharge`, the proto-size `Costs`, `Chargeable`,
+  and `ChargingRSpace` storage/event charging are implemented (Phase 4.7).
+
+- **F5 — Scala-specific encodings leaked into the port.** The CRC14 + 270-bit `ZBase32` registry URI
+  (a Scala-specific `org.lightningj.util` dependency) was carried into the port before being dropped
+  for the rust-first `rho:id:` + z-base-32 encoding (`rholang/src/registry.rs`); the `.rho`/`.rhox`
+  headers still document the stale 55-char Scala URIs. *Why fragile:* non-spec, non-reproducible
+  encodings coupling the state hash to a JVM library. *How the rewrite eliminates it:* the URI
+  derivation is spec-driven and self-consistent, and the blessed contracts are demoted to checklist
+  fixtures (Phase 3).
+
+**Status:** the reimplementation is tracked by the plan `delegated-crafting-phoenix.md`; each phase
+closes the corresponding finding (F1→Phase 4, F2/F3→Phases 1–3, F4→Phase 4.7, F5→Phase 3).
+

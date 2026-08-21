@@ -16,7 +16,6 @@ use rchain_shared::refined::NonNegI64;
 
 use crate::block_random_seed::BlockRandomSeed;
 use crate::genesis::contracts::{ProofOfStake, Registry, Vault};
-use crate::genesis::standard_deploys::StandardDeploys;
 use crate::proto_util::unsigned_block_proto;
 use rchain_shared::refined::{BlockHeight, SeqNum};
 use crate::runtime_manager::RuntimeManager;
@@ -76,43 +75,17 @@ fn create_block_with_processed_deploys(
 }
 
 /// The ordered list of blessed (standard) genesis deploys (port of `defaultBlessedTerms`).
+///
+/// Rust-first: the registry/PoS/vault system contracts are now **native** (`rholang::native_state`
+/// + `system_deploy::NativeSystemDeployOp`); the blessed `.rho`/`.rhox` sources are a checklist only.
+/// Genesis therefore installs no rholang system contracts.
 pub fn default_blessed_terms(
-    proof_of_stake: &ProofOfStake,
-    registry: &Registry,
-    vaults: &[Vault],
-    shard_id: &str,
+    _proof_of_stake: &ProofOfStake,
+    _registry: &Registry,
+    _vaults: &[Vault],
+    _shard_id: &str,
 ) -> Result<Vec<SignedDeployData>, String> {
-    // Split the initial vault creation into batches of 100 (the last batch is marked so the
-    // `RevVault` init channel is not continued).
-    let vault_batches: Vec<&[Vault]> = vaults.chunks(100).collect();
-    let batch_count = vault_batches.len();
-    let vault_deploys: Vec<SignedDeployData> = vault_batches
-        .into_iter()
-        .enumerate()
-        .map(|(idx, batch)| {
-            StandardDeploys::rev_generator(
-                batch,
-                1565818101792 + idx as i64,
-                1 + idx == batch_count,
-                shard_id,
-            )
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    // Order matters: dependencies must be defined before their users.
-    let mut terms = vec![
-        StandardDeploys::registry_generator(registry, shard_id)?,
-        StandardDeploys::list_ops(shard_id)?,
-        StandardDeploys::either(shard_id)?,
-        StandardDeploys::non_negative_number(shard_id)?,
-        StandardDeploys::make_mint(shard_id)?,
-        StandardDeploys::auth_key(shard_id)?,
-        StandardDeploys::rev_vault(shard_id)?,
-        StandardDeploys::multi_sig_rev_vault(shard_id)?,
-    ];
-    terms.extend(vault_deploys);
-    terms.push(StandardDeploys::pos_generator(proof_of_stake, shard_id)?);
-    Ok(terms)
+    Ok(Vec::new())
 }
 
 /// Create the signed genesis block (port of `Genesis.createGenesisBlock`).
@@ -133,8 +106,9 @@ pub async fn create_genesis_block(
         seq_num: SeqNum::zero(),
     };
     let rand = BlockRandomSeed::random_generator_from_shard_id(&genesis.shard_id);
+    let bonds = build_bonds_map(&genesis.proof_of_stake);
     let (start_hash, state_hash, processed_results) = runtime
-        .compute_genesis(&blessed_terms, &rand, block_data)
+        .compute_genesis(&blessed_terms, &rand, block_data, &bonds)
         .await?;
     // Surface deploy evaluation errors (the Scala `require` only checks the `isFailed` flag; the
     // underlying errors are otherwise lost, making genesis failures opaque).

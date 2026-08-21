@@ -15,6 +15,7 @@ use crate::history::history::History;
 use crate::history::history_reader::{HistoryReader, HistoryReaderBase, HistoryReaderBinary};
 use crate::history::key_segment::KeySegment;
 use crate::internal::{Datum, WaitingContinuation};
+use crate::native_store::NativeHistoryReader;
 use crate::serializers::scodec_serialize::{
     decode_continuations, decode_continuations_binary, decode_datums, decode_datums_binary,
     decode_joins, decode_joins_binary,
@@ -98,6 +99,18 @@ where
         }
     }
 
+    async fn get_native(
+        &self,
+        prefix: u8,
+        key: Blake2b256Hash,
+    ) -> Result<Option<Vec<u8>>, RSpaceError> {
+        match self.fetch_data(prefix, key).await.map_err(|_| RSpaceError::Codec("native"))? {
+            Some(PersistedData::NativeLeaf(bytes)) => Ok(Some(bytes)),
+            Some(_) => Err(RSpaceError::UnexpectedLeaf("native")),
+            None => Ok(None),
+        }
+    }
+
     fn base(&self) -> Arc<dyn HistoryReaderBase<C, P, A, K>> {
         Arc::new(BaseReader {
             reader: Arc::new(RSpaceHistoryReaderImpl {
@@ -114,6 +127,23 @@ where
             leaf_store: self.leaf_store.clone(),
             marker: std::marker::PhantomData,
         })
+    }
+}
+
+#[async_trait]
+impl<C, P, A, K> NativeHistoryReader for RSpaceHistoryReaderImpl<C, P, A, K>
+where
+    C: Serialize<C> + Send + Sync + 'static,
+    P: Serialize<P> + Send + Sync + 'static,
+    A: Serialize<A> + Send + Sync + 'static,
+    K: Serialize<K> + Send + Sync + 'static,
+{
+    async fn get_native(&self, prefix: u8, key: Blake2b256Hash) -> Result<Option<Vec<u8>>, String> {
+        match self.fetch_data(prefix, key).await? {
+            Some(PersistedData::NativeLeaf(bytes)) => Ok(Some(bytes)),
+            Some(_) => Err("unexpected leaf while looking for native".to_string()),
+            None => Ok(None),
+        }
     }
 }
 

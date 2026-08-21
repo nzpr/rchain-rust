@@ -15,6 +15,8 @@ pub enum PersistedData {
     JoinsLeaf(Vec<u8>),
     DataLeaf(Vec<u8>),
     ContinuationsLeaf(Vec<u8>),
+    /// A native system-contract leaf (registry / PoS / vault); the trie prefix disambiguates which.
+    NativeLeaf(Vec<u8>),
 }
 
 /// The cold-store typed store type (port of `ColdKeyValueStore`).
@@ -26,6 +28,7 @@ pub fn encode_persisted_data(value: &PersistedData) -> Vec<u8> {
         PersistedData::JoinsLeaf(b) => (0u64, b),
         PersistedData::DataLeaf(b) => (1u64, b),
         PersistedData::ContinuationsLeaf(b) => (2u64, b),
+        PersistedData::NativeLeaf(b) => (3u64, b),
     };
     let mut w = BitWriter::new();
     w.write_bits(tag, 2);
@@ -46,6 +49,7 @@ pub fn decode_persisted_data(bytes: &[u8]) -> Result<PersistedData, String> {
         0 => Ok(PersistedData::JoinsLeaf(data)),
         1 => Ok(PersistedData::DataLeaf(data)),
         2 => Ok(PersistedData::ContinuationsLeaf(data)),
+        3 => Ok(PersistedData::NativeLeaf(data)),
         _ => Err(format!("unknown persisted-data tag {tag}")),
     }
 }
@@ -74,6 +78,7 @@ mod tests {
             PersistedData::JoinsLeaf(vec![1, 2, 3]),
             PersistedData::DataLeaf(vec![]),
             PersistedData::ContinuationsLeaf(vec![0xff; 40]),
+            PersistedData::NativeLeaf(vec![0xab, 0xcd]),
         ] {
             let encoded = encode_persisted_data(&leaf);
             assert_eq!(decode_persisted_data(&encoded).unwrap(), leaf);

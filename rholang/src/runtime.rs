@@ -14,6 +14,7 @@ use rchain_rspace::errors::RSpaceError;
 use rchain_rspace::i_replay_space::IReplaySpace;
 use rchain_rspace::i_space::ISpace;
 use rchain_rspace::internal::{Datum, Row, WaitingContinuation};
+use rchain_rspace::native_store::InMemNativeStore;
 use rchain_rspace::replay_rspace::ReplayRSpace;
 use rchain_rspace::rspace::RSpace;
 use rchain_rspace::trace::Log;
@@ -25,6 +26,7 @@ use crate::dispatch::RholangAndScalaDispatcher;
 use crate::env::Env;
 use crate::errors::RholangError;
 use crate::evaluate_result::EvaluateResult;
+use crate::native_state::NativeSystemState;
 use crate::reduce::DebruijnInterpreter;
 use crate::storage::{ChargingRSpace, RhoHistoryRepository, RhoTuplespace};
 use crate::system_processes::{BlockData, FixedChannels, SystemProcesses};
@@ -72,6 +74,7 @@ pub struct RhoRuntime {
     cost: Arc<CostAccounting>,
     block_data: Arc<Mutex<BlockData>>,
     _history: RhoHistoryRepository,
+    proc_defs: Arc<Vec<(Par, i32, i64)>>,
 }
 
 /// A write-only bundle over `channel` (port of `Bundle(channel, writeFlag = true)`).
@@ -118,19 +121,27 @@ pub(crate) struct RuntimeCore {
     pub(crate) reducer: Arc<RhoReducer>,
     pub(crate) cost: Arc<CostAccounting>,
     pub(crate) block_data: Arc<Mutex<BlockData>>,
+    pub(crate) proc_defs: Vec<(Par, i32, i64)>,
 }
 
 pub(crate) async fn build_runtime_core(
     space: &RhoTuplespace,
     mergeable_tag_name: Par,
+    native_store: Arc<InMemNativeStore>,
 ) -> std::io::Result<RuntimeCore> {
     let cost = Arc::new(CostAccounting::from_initial(crate::accounting::Costs::unsafe_max()));
     let charging_space = ChargingRSpace::new(space.clone());
     let block_data = Arc::new(Mutex::new(BlockData::empty()));
+    let native_state = Arc::new(NativeSystemState::new(native_store));
 
     // Build the dispatcher (empty), then the system processes, then wire them together.
     let dispatcher = Arc::new(RholangAndScalaDispatcher::new(BTreeMap::new()));
-    let system_processes = SystemProcesses::new(charging_space.clone(), dispatcher.clone(), block_data.clone());
+    let system_processes = SystemProcesses::new(
+        charging_space.clone(),
+        dispatcher.clone(),
+        block_data.clone(),
+        native_state,
+    );
 
     let mut dispatch_table = BTreeMap::new();
     let mut urn_map = BTreeMap::new();
@@ -179,6 +190,7 @@ pub(crate) async fn build_runtime_core(
         reducer,
         cost,
         block_data,
+        proc_defs,
     })
 }
 
@@ -189,13 +201,15 @@ impl RhoRuntime {
         mergeable_tag_name: Par,
     ) -> std::io::Result<RhoRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
-        let core = build_runtime_core(&tuplespace, mergeable_tag_name).await?;
+        let native_store = space.native_store();
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store).await?;
         Ok(RhoRuntime {
             reducer: core.reducer,
             space,
             cost: core.cost,
             block_data: core.block_data,
             _history: history,
+            proc_defs: Arc::new(core.proc_defs),
         })
     }
 
@@ -254,6 +268,13 @@ impl RhoRuntime {
             .reset(rchain_rspace::history::history::empty_root_hash_value())
             .await
             .map_err(|e| e.to_string())?;
+        // Re-install the system processes (stdout/crypto/…): the reset above wipes the installed
+        // continuations, so without this the genesis contracts would send to fixed channels with no
+        // consumer (the silent-empty-registry failure mode).
+        let ts: RhoTuplespace = self.space.clone();
+        install_system_processes(&ts, &self.proc_defs)
+            .await
+            .map_err(|e| e.to_string())?;
         let rand = Blake2b512Random::default_random();
         let bootstrap = crate::registry::registry_bootstrap_ast();
         let bootstrap =
@@ -267,6 +288,11 @@ impl RhoRuntime {
 
     pub fn space(&self) -> &RhoSpace {
         &self.space
+    }
+
+    /// The native system-contract store (shared with the system processes).
+    pub fn native_store(&self) -> Arc<InMemNativeStore> {
+        self.space.native_store()
     }
 
     pub fn cost(&self) -> &CostAccounting {
@@ -378,7 +404,8 @@ impl ReplayRhoRuntime {
         mergeable_tag_name: Par,
     ) -> std::io::Result<ReplayRhoRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
-        let core = build_runtime_core(&tuplespace, mergeable_tag_name).await?;
+        let native_store = space.native_store();
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store).await?;
         Ok(ReplayRhoRuntime {
             reducer: core.reducer,
             space,
@@ -438,6 +465,11 @@ impl ReplayRhoRuntime {
 
     pub fn space(&self) -> &RhoReplaySpace {
         &self.space
+    }
+
+    /// The native system-contract store (shared with the wrapped play space).
+    pub fn native_store(&self) -> Arc<InMemNativeStore> {
+        self.space.native_store()
     }
 
     pub fn cost(&self) -> &CostAccounting {

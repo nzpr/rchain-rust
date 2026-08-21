@@ -45,6 +45,7 @@ pub async fn replay_block(
             rand,
             block_data,
             with_cost_accounting,
+            &block.bonds,
         )
         .await?;
     Ok(state_hash)

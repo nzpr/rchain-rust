@@ -18,6 +18,7 @@ use crate::history::key_segment::KeySegment;
 use crate::history::root_repository::RootRepository;
 use crate::hot_store_action::HotStoreAction;
 use crate::hot_store_trie_action::HotStoreTrieAction;
+use crate::native_store::{NativeHistoryReader, NativeStoreAction};
 use crate::serializers::scodec_serialize::{
     encode_continuations, encode_continuations_binary, encode_datums, encode_datums_binary,
     encode_joins, encode_joins_binary,
@@ -117,6 +118,25 @@ where
     }
 }
 
+/// Map a native-state mutation to a cold-store leaf + radix-history action.
+fn calculate_native_storage_action(action: &NativeStoreAction) -> (ColdAction, HistoryAction) {
+    match action {
+        NativeStoreAction::Put { prefix, key, value } => {
+            let leaf = PersistedData::NativeLeaf(value.clone());
+            let leaf_hash =
+                Blake2b256Hash::create(&crate::history::cold_store::encode_persisted_data(&leaf));
+            (
+                (leaf_hash, Some(leaf)),
+                HistoryAction::Insert { key: key_segment(*prefix, *key), hash: leaf_hash },
+            )
+        }
+        NativeStoreAction::Delete { prefix, key } => (
+            (*key, None),
+            HistoryAction::Delete { key: key_segment(*prefix, *key) },
+        ),
+    }
+}
+
 fn transform<C, P, A, K>(action: &HotStoreAction<C, P, A, K>) -> HotStoreTrieAction<C, P, A, K>
 where
     C: Serialize<C> + Clone,
@@ -178,9 +198,25 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         A: Serialize<A> + Clone,
         K: Serialize<K> + Clone,
     {
+        self.checkpoint_with_native(actions, &[]).await
+    }
+
+    /// Checkpoint both hot-store changes and native system-contract mutations into one new history
+    /// root.
+    pub async fn checkpoint_with_native(
+        &self,
+        actions: &[HotStoreAction<C, P, A, K>],
+        native_actions: &[NativeStoreAction],
+    ) -> Result<Arc<Self>, String>
+    where
+        C: Serialize<C> + Clone,
+        P: Serialize<P> + Clone,
+        A: Serialize<A> + Clone,
+        K: Serialize<K> + Clone,
+    {
         let trie_actions: Vec<HotStoreTrieAction<C, P, A, K>> =
             actions.iter().map(transform).collect();
-        self.do_checkpoint(&trie_actions).await
+        self.do_checkpoint_with_native(&trie_actions, native_actions).await
     }
 
     pub async fn do_checkpoint(
@@ -193,10 +229,31 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
         A: Serialize<A> + Clone,
         K: Serialize<K> + Clone,
     {
+        self.do_checkpoint_with_native(trie_actions, &[]).await
+    }
+
+    pub async fn do_checkpoint_with_native(
+        &self,
+        trie_actions: &[HotStoreTrieAction<C, P, A, K>],
+        native_actions: &[NativeStoreAction],
+    ) -> Result<Arc<Self>, String>
+    where
+        C: Serialize<C> + Clone,
+        P: Serialize<P> + Clone,
+        A: Serialize<A> + Clone,
+        K: Serialize<K> + Clone,
+    {
         let mut cold_actions: Vec<(Blake2b256Hash, PersistedData)> = Vec::new();
         let mut history_actions: Vec<HistoryAction> = Vec::new();
         for action in trie_actions {
             let (cold, history) = calculate_storage_action(action);
+            if let Some(leaf) = cold.1 {
+                cold_actions.push((cold.0, leaf));
+            }
+            history_actions.push(history);
+        }
+        for action in native_actions {
+            let (cold, history) = calculate_native_storage_action(action);
             if let Some(leaf) = cold.1 {
                 cold_actions.push((cold.0, leaf));
             }
@@ -256,5 +313,20 @@ impl<C, P, A, K> HistoryRepository<C, P, A, K> {
     {
         let history = self.current_history.reset(state_hash).await;
         Arc::new(RSpaceHistoryReaderImpl::new(history, self.leaf_store.clone()))
+    }
+
+    /// A reader of native system-contract state rooted at `state_hash`.
+    pub async fn get_native_reader(&self, state_hash: Blake2b256Hash) -> Arc<dyn NativeHistoryReader>
+    where
+        C: Serialize<C> + Send + Sync + 'static,
+        P: Serialize<P> + Send + Sync + 'static,
+        A: Serialize<A> + Send + Sync + 'static,
+        K: Serialize<K> + Send + Sync + 'static,
+    {
+        let history = self.current_history.reset(state_hash).await;
+        Arc::new(RSpaceHistoryReaderImpl::<C, P, A, K>::new(
+            history,
+            self.leaf_store.clone(),
+        ))
     }
 }
