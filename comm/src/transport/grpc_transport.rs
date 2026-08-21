@@ -130,4 +130,95 @@ mod tests {
             Err(CommError::WrongNetwork(p.clone(), "Wrong network id".to_string()))
         );
     }
+
+    #[tokio::test]
+    async fn send_round_trips_over_socket() {
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        use crate::rp::protocol_helper;
+        use crate::transport::communication_response::CommunicationResponse;
+        use crate::transport::generate_certificate_if_absent::generate_certificate;
+        use crate::transport::grpc_transport_client::GrpcTransportClient;
+        use crate::transport::grpc_transport_server::TransportLayerServer;
+        use crate::transport::hostname_trust_manager::public_address_of_cert;
+        use crate::transport::transport_layer::TransportLayer;
+        use rustls::pki_types::CertificateDer;
+
+        fn cert_node_id(cert_pem: &str) -> String {
+            let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
+            let der = CertificateDer::from(pem.contents);
+            rchain_shared::base16::encode(&public_address_of_cert(&der).unwrap())
+        }
+
+        let (server_cert, server_key) = generate_certificate().unwrap();
+        let (client_cert, client_key) = generate_certificate().unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+
+        // The server peer id is its cert's CN (base16 of the public address).
+        let server_id = cert_node_id(&server_cert);
+        let server_peer = PeerNode::from(
+            NodeIdentifier::from_hex(&server_id).unwrap(),
+            "127.0.0.1".to_string(),
+            rchain_shared::refined::Port::new(port),
+            rchain_shared::refined::Port::new(port),
+        );
+
+        let server = TransportLayerServer::new(
+            server_peer.clone(),
+            "testnet".to_string(),
+            port,
+            &server_cert,
+            &server_key,
+            16 * 1024 * 1024,
+        )
+        .unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
+        tokio::spawn(async move {
+            let dispatch_tx = tx.clone();
+            let _ = server
+                .serve(
+                    move |protocol: Protocol| {
+                        let tx = dispatch_tx.clone();
+                        Box::pin(async move {
+                            let sender = tx.lock().unwrap_or_else(|p| p.into_inner()).take();
+                            if let Some(sender) = sender {
+                                let _ = sender.send(protocol);
+                            }
+                            CommunicationResponse::handled_without_message()
+                        })
+                    },
+                    |_blob| Box::pin(async {}),
+                )
+                .await;
+        });
+
+        // Give the server a moment to bind before the client connects.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let client = GrpcTransportClient::new(
+            "testnet".to_string(),
+            &client_cert,
+            &client_key,
+            16 * 1024 * 1024,
+            64 * 1024,
+            100,
+        )
+        .unwrap();
+
+        let heartbeat = protocol_helper::heartbeat(&server_peer, "testnet");
+        client.send(&server_peer, heartbeat.clone()).await.unwrap();
+
+        let received = tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, heartbeat);
+    }
 }

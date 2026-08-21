@@ -116,6 +116,6 @@ For each gap: **code location** → **current test state** → **the seam a regr
 | G8 finalizer | ✅ `calculate_finalization` fork/lockstep |
 | G9 malformed input | ✅ `NodeIdentifier`/`KeySegment` |
 | G10 TLS trust-manager | ✅ wrong-hostname + stale-cert rejection |
-| G11 transport socket | ⏸ no socket-level round-trip yet (mutual-TLS gRPC harness) |
+| G11 transport socket | ✅ loopback mutual-TLS gRPC send round-trip (`grpc_transport.rs`) |
 
 *(✅ = covered; ⏸ = deferred with the seam documented above.)*
