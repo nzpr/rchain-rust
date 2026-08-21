@@ -15,6 +15,7 @@ use rchain_models::sorter::{
     sort_receive_term, sort_send_term,
 };
 
+use crate::accounting::{Chargeable, Cost, CostAccounting};
 use crate::env::Env;
 use crate::errors::RholangError;
 
@@ -163,6 +164,27 @@ pub fn substitute_par_no_sort<S: Sort>(
 
 pub fn substitute_par<S: Sort>(par: &Par<S>, depth: i32, env: &Env<Par>) -> Result<Par<S>, RholangError> {
     Ok(sort_par_term(&substitute_par_no_sort(par, depth, env)?))
+}
+
+/// `substituteAndCharge` (Law 3 + gas): charge the substitution by the substituted term's wire size
+/// (or, on failure, the original term's size).
+pub fn substitute_par_and_charge<S: Sort>(
+    par: &Par<S>,
+    depth: i32,
+    env: &Env<Par>,
+    cost: &CostAccounting,
+) -> Result<Par<S>, RholangError> {
+    let failure_cost = Cost::new(<Par<S> as Chargeable<Par<S>>>::cost(par), "substitution");
+    match substitute_par(par, depth, env) {
+        Ok(subst) => {
+            cost.charge(Cost::new(<Par<S> as Chargeable<Par<S>>>::cost(&subst), "substitution"))?;
+            Ok(subst)
+        }
+        Err(e) => {
+            cost.charge(failure_cost)?;
+            Err(e)
+        }
+    }
 }
 
 pub fn substitute_send_no_sort(

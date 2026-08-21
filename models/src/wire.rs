@@ -620,11 +620,11 @@ pub fn tagged_continuation_from_proto(p: &p::TaggedContinuation) -> Result<Tagge
 
 // --- Serialize instances ------------------------------------------------------------------------
 
-impl Serialize<a::Par> for a::Par {
-    fn encode(a: &a::Par) -> Vec<u8> {
+impl<S: a::Sort> Serialize<a::Par<S>> for a::Par<S> {
+    fn encode(a: &a::Par<S>) -> Vec<u8> {
         par_to_proto(a).encode_to_vec()
     }
-    fn decode(bytes: &[u8]) -> Result<a::Par, String> {
+    fn decode(bytes: &[u8]) -> Result<a::Par<S>, String> {
         let proto = <p::Par as ::prost::Message>::decode(bytes).map_err(|e| e.to_string())?;
         par_from_proto(&proto).map_err(|e| e.to_string())
     }

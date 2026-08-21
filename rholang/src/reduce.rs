@@ -23,7 +23,7 @@ use crate::accounting::{CostAccounting, Costs};
 use crate::env::Env;
 use crate::errors::RholangError;
 use crate::matcher::spatial_match_result;
-use crate::substitute::{substitute_par, substitute_par_no_sort};
+use crate::substitute::{substitute_par_and_charge, substitute_par_no_sort};
 
 fn union_free(a: Vec<i32>, b: Vec<i32>) -> Vec<i32> {
     let mut set: BTreeSet<i32> = a.into_iter().collect();
@@ -392,16 +392,16 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
         Expr::EEq(p1, p2) => {
             let v1 = eval_expr(p1, env, cost)?;
             let v2 = eval_expr(p2, env, cost)?;
-            let sv1 = substitute_par(&v1, 0, env)?;
-            let sv2 = substitute_par(&v2, 0, env)?;
+            let sv1 = substitute_par_and_charge(&v1, 0, env, cost)?;
+            let sv2 = substitute_par_and_charge(&v2, 0, env, cost)?;
             cost.charge(Costs::equality_check_cost(&sv1, &sv2))?;
             Ok(Expr::GBool(sv1 == sv2))
         }
         Expr::ENeq(p1, p2) => {
             let v1 = eval_expr(p1, env, cost)?;
             let v2 = eval_expr(p2, env, cost)?;
-            let sv1 = substitute_par(&v1, 0, env)?;
-            let sv2 = substitute_par(&v2, 0, env)?;
+            let sv1 = substitute_par_and_charge(&v1, 0, env, cost)?;
+            let sv2 = substitute_par_and_charge(&v2, 0, env, cost)?;
             cost.charge(Costs::equality_check_cost(&sv1, &sv2))?;
             Ok(Expr::GBool(sv1 != sv2))
         }
@@ -431,8 +431,8 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
         }
         Expr::EMatches(target, pattern) => {
             let evaled_target = eval_expr(target, env, cost)?;
-            let subst_target = substitute_par(&evaled_target, 0, env)?;
-            let subst_pattern = substitute_par(pattern, 1, env)?;
+            let subst_target = substitute_par_and_charge(&evaled_target, 0, env, cost)?;
+            let subst_pattern = substitute_par_and_charge(pattern, 1, env, cost)?;
             let m = spatial_match_result(&subst_target, &subst_pattern)?;
             Ok(Expr::GBool(m.is_some()))
         }
@@ -789,7 +789,7 @@ fn eval_method(
             // `toByteArray` = `Serialize[Par].encode`, where `Serialize[Par]` is
             // `mkProtobufInstance(Par)` — the protobuf serialization, not UTF-8).
             check_arity("toByteArray", 0, args.len())?;
-            let substituted = substitute_par(target, 0, env)?;
+            let substituted = substitute_par_and_charge(target, 0, env, cost)?;
             let bytes =
                 <Par as rchain_shared::serialize::Serialize<Par>>::encode(&substituted);
             cost.charge(Costs::to_byte_array_cost(&substituted))?;
@@ -1304,7 +1304,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
     ) -> Result<(), RholangError> {
         cost.charge(Costs::send_eval_cost())?;
         let eval_chan = eval_expr(send.chan.as_ref(), env, cost)?;
-        let sub_chan = substitute_par(&eval_chan, 0, env)?;
+        let sub_chan = substitute_par_and_charge(&eval_chan, 0, env, cost)?;
         let unbundled = match single_bundle(&sub_chan) {
             Some(value) => {
                 if !value.write_flag {
@@ -1323,7 +1323,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             .collect::<Result<_, _>>()?;
         let subst_data: Vec<Name> = data
             .iter()
-            .map(|d| substitute_par(d, 0, env))
+            .map(|d| substitute_par_and_charge(d, 0, env, cost))
             .collect::<Result<_, _>>()?;
         self.produce(
             &unbundled,
@@ -1351,7 +1351,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             let subst_patterns: Vec<Name> = rb
                 .patterns
                 .iter()
-                .map(|p| substitute_par(p, 1, env))
+                .map(|p| substitute_par_and_charge(p, 1, env, cost))
                 .collect::<Result<_, _>>()?;
             binds.push((
                 BindPattern {
@@ -1383,7 +1383,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost: &CostAccounting,
     ) -> Result<Par, RholangError> {
         let eval_src = eval_expr(rb.source.as_ref(), env, cost)?;
-        let subst = substitute_par(&eval_src, 0, env)?;
+        let subst = substitute_par_and_charge(&eval_src, 0, env, cost)?;
         match single_bundle(&subst) {
             Some(value) => {
                 if !value.read_flag {
@@ -1460,7 +1460,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
     ) -> Result<(), RholangError> {
         cost.charge(Costs::match_eval_cost())?;
         let evaled_target = eval_expr(m.target.as_ref(), env, cost)?;
-        let subst_target = substitute_par(&evaled_target, 0, env)?;
+        let subst_target = substitute_par_and_charge(&evaled_target, 0, env, cost)?;
         self.first_match(&subst_target.eval(), &m.cases, env, rand, cost)
             .await
     }
@@ -1474,7 +1474,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         for case in cases {
-            let pattern = substitute_par(&case.pattern, 1, env)?;
+            let pattern = substitute_par_and_charge(&case.pattern, 1, env, cost)?;
             if let Some(free_map) = spatial_match_result(target, &pattern.eval())? {
                 let mut new_env = env.clone();
                 for e in 0..i32::from(case.free_count) {
