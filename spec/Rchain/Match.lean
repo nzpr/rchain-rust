@@ -7,7 +7,8 @@ import Rchain.FreeVars
 The matcher consumes a datum against a `BindPattern`; every free variable in the pattern is bound to
 a sub-term at most once (`addedVars.distinct`, carried in Rust as the `free_count` of `BindPattern`).
 The Scala oracle is `SpatialMatcher.scala` + `ParCount.scala`; the Rust realization is
-`rholang::matcher::spatial_match` + `BindsAtMostOnce`.
+`rholang::matcher::spatial_match` plus the `free_count: FreeCount` fields on `ReceiveBind`/`MatchCase`
+(`BindsAtMostOnce` here is the Lean predicate, not a Rust type).
 -/
 
 namespace Rchain

@@ -120,7 +120,8 @@ so you can also reach a node from the host (HTTP, `curl`, etc.):
 |---|---|---|
 | protocol (TLS peer transport) | 40400 | not mapped (network-internal) |
 | discovery (Kademlia) | 40404 | not mapped |
-| gRPC API (Deploy/Propose/Repl) | 40402 | 40402 / 40402 + 1000·N |
+| gRPC API — Deploy | 40401 | not mapped |
+| gRPC API — Propose/Repl | 40402 | 40402 / 40402 + 1000·N |
 | HTTP | 40403 | not mapped |
 | admin HTTP | 40405 | not mapped |
 
@@ -137,4 +138,4 @@ tools/docker-network.sh cli peer1 status
 
 The `deploy` / `eval` subcommands read a file on the client; to use them with the containerized
 client, bind-mount the file, e.g. `docker run --rm -i -v "$PWD:/work" --network rnode-net rnode:local
---grpc-host bootstrap --grpc-port 40402 deploy /work/demo.rho`.
+--grpc-host bootstrap --grpc-port 40401 deploy /work/demo.rho`.
