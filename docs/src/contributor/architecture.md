@@ -102,7 +102,7 @@ Remaining:
 - **Formalization** — Law 1 (canonical order), Law 2 core (`≡`), Law 4 core (`⟶`), and Law 6
   (`Closed`) are **proven** in Lean (`spec/Rchain/`); Laws 3, 4-full, 5, and 7–19 are **stated** with
   precise signatures (`Subst`/`Reduce`/`Match`/`FreeVars`/`RSpace/*`/`Casper/*`/`Crypto/*`), and Law
-  19's crypto primitives are axiomatized by design. Law 1's 69 comparator `axiom`s remain to discharge
+  19's crypto primitives are axiomatized by design. Law 1's 30 element-comparator `axiom`s remain to discharge
   (blocked on a mutual-recursion refactor). Laws 12–13 (Rosette) are **orphaned** (the VM is out of
   scope). See [`spec/README.md`](../../../spec/README.md) and
   [`spec/INVENTORY.md`](../../../spec/INVENTORY.md).

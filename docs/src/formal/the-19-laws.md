@@ -13,7 +13,7 @@ deferred); **axiom** = postulated by design (a cryptographic primitive).
 
 | Law | Invariant | Surface feature | Lean | Coq | K rule |
 |---|---|---|---|---|---|
-| **1** | canonicalization is idempotent & commutative: `sort(sort p)=sort p`, `sort(p\|q)=sort(q\|p)` | the sorted `Par`, commutative `ESet`/`EMap` | `Sort.lean` — `sortPar_idempotent` / `sortPar_comm` (**proven**, mod 69 comparator axioms) | `Sort.v` — `sortPar_idempotent` / `sortPar_comm` (axioms) | normalization (α + canonical `\|` sort) |
+| **1** | canonicalization is idempotent & commutative: `sort(sort p)=sort p`, `sort(p\|q)=sort(q\|p)` | the sorted `Par`, commutative `ESet`/`EMap` | `Sort.lean` — `sortPar_idempotent` / `sortPar_comm` (**proven**, mod 30 element-comparator axioms) | `Sort.v` — `sortPar_idempotent` / `sortPar_comm` (axioms) | normalization (α + canonical `\|` sort) |
 | **2** | α / name equivalence: par order, `\| Nil`, associativity, top-level arithmetic, α, `@`/`*` | `@`/`*`, `@{P\|Q}=@{Q\|P}` | `Rho.lean` — `StrCong` `≡` (**proven** core) | `Laws.v` — `alpha_equiv` (axiom) | `name-equivalence.k`, `alpha-equivalence.k` |
 | **3** | capture-avoiding de Bruijn substitution; `sort(subst t)=subst(sort t)` | variable binding | `Subst.lean` — `substPar`, `sort_subst`, `subst_closed` (**stated**) | `Laws.v` — `substPar`, `subst_commutes_sort` (axiom) | `free.k` (substitution; `substitution.k` referenced) |
 | **4** | reduction (COMM), first-match-wins, `new` freshness | send/receive, `match` | `Rho.lean` `Reduce` ⟶ (**proven** core) + `Reduce.lean` `reduce_deterministic`/`reduce_freeVars_subset` (**stated**) | `Laws.v` — `reduce` (axiom) | `processes-semantics.k`, `sending-receiving.k`, `persistent-sending-receiving.k` |

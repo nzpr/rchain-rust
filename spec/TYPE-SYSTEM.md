@@ -126,7 +126,7 @@ spelling is `def Refined α P := { a : α // P a }` with `totalOn_lifts_to_refin
 
 Each theorem is named and `sorry`-free; `#print axioms` on `Rchain.Rho`/`Rchain.Ty` reports only the
 core axioms `propext`, `Classical.choice`, `Quot.sound` (no residual custom axioms — those live in
-`Rchain.Sort`'s 33 element-comparator axioms, which `Ty.lean` does **not** import).
+`Rchain.Sort`'s 30 element-comparator axioms, which `Ty.lean` does **not** import).
 
 ### F1. Sort classification is functional and decidable
 
@@ -286,7 +286,7 @@ round-trip tests are excluded). The typed fix is either a proven-total refinemen
 - `cd spec && lake build` — green (includes `Rchain.Sort`, `Rchain.Rho`, `Rchain.Ty`).
 - `#print axioms Rchain.Rho` / `#print axioms Rchain.Ty` — only `propext`, `Classical.choice`,
   `Quot.sound`; **0 `sorry`** and **0 residual axioms** in `Rho.lean`/`Ty.lean`.
-- `Ty.lean` imports only `Par`/`Cmp`/`Rho` (not `Sort`), so it is independent of the 33 residual element-comparator
+- `Ty.lean` imports only `Par`/`Cmp`/`Rho` (not `Sort`), so it is independent of the 30 residual element-comparator
   comparator-law axioms in `Rchain/Sort.lean`.
 - Each of the six fundamentals has a named theorem (Part II), with no uncited theorem and no
   uncitable claim.
@@ -295,5 +295,5 @@ round-trip tests are excluded). The typed fix is either a proven-total refinemen
 
 - **No Rust code changes** — Part III is the catalogue; refactoring `crates/` is a follow-on.
 - **No self-hosting CoC** — embedded in Lean, not a bespoke type theory as data.
-- **No discharge of the 33 residual element-comparator `Sort.lean` axioms** — the type system is independent of Law 1's
+- **No discharge of the 30 residual element-comparator `Sort.lean` axioms** — the type system is independent of Law 1's
   total-order bundle.

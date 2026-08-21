@@ -24,7 +24,7 @@ Install Coq if needed: `opam install coq` (or `apt install coq`).
 with `subst_commutes_sort`, `reduce`, `spatial_matches` + `binds_at_most_once`, `closed` +
 `closed_decidable`) as **axioms** — Coq owns the *definitions* (capture-avoiding de Bruijn
 substitution, α-equivalence, Autosubst-style), which remain the Phase-1 obligations. This mirrors the
-Lean track: Law 1's 33 element-comparator `axiom`s in [`../Rchain/Sort.lean`](../Rchain/Sort.lean), and
+Lean track: Law 1's 30 element-comparator `axiom`s in [`../Rchain/Sort.lean`](../Rchain/Sort.lean), and
 the stated-but-not-defined laws in `Rchain/{Subst,Reduce,Match,FreeVars}.lean`.
 
 ## Mapping to the Scala source of truth

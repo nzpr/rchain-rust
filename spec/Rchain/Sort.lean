@@ -230,10 +230,177 @@ mutual
   termination_by l l' => sizeOf l + sizeOf l'
 end
 
-/-! ## Lawfulness: `eq_iff` (RESIDUAL AXIOMS)
+/-! ## Sum-type comparator (single well-founded recursion)
 
-The structural comparators reflect equality (`cmp a b = .eq ↔ a = b`). These are part of the 69
-residual "the order is total" axioms; see the `lt_trans` note for why the 23-function mutual
+The comparator family above is a *mutual* recursion over the AST; proving its laws by mutual induction
+hangs Lean's termination checker. This section re-expresses it as a single well-founded function over a
+sum type, which supports standard structural induction on the sum type's `SizeOf`.
+-/
+
+inductive Sortable where
+  | par : Par → Sortable
+  | send : Send → Sortable
+  | receiveBind : ReceiveBind → Sortable
+  | receive : Receive → Sortable
+  | new : New → Sortable
+  | matchCase : MatchCase → Sortable
+  | match : Match → Sortable
+  | expr : Expr → Sortable
+  | bundle : Bundle → Sortable
+  | gUnforgeable : GUnforgeable → Sortable
+  | connective : Connective → Sortable
+  | parPair : Par × Par → Sortable
+  | listSend : List Send → Sortable
+  | listReceive : List Receive → Sortable
+  | listNew : List New → Sortable
+  | listExpr : List Expr → Sortable
+  | listMatch : List Match → Sortable
+  | listGUnforgeable : List GUnforgeable → Sortable
+  | listBundle : List Bundle → Sortable
+  | listConnective : List Connective → Sortable
+  | listPar : List Par → Sortable
+  | listReceiveBind : List ReceiveBind → Sortable
+  | listMatchCase : List MatchCase → Sortable
+  | listParPair : List (Par × Par) → Sortable
+
+/-- Structural size of a `Sortable` (for the well-founded termination of `cmpSortable`). -/
+noncomputable def sortableSize : Sortable → Nat
+  | .par p => sizeOf p
+  | .send s => sizeOf s
+  | .receiveBind rb => sizeOf rb
+  | .receive r => sizeOf r
+  | .new n => sizeOf n
+  | .matchCase mc => sizeOf mc
+  | .match m => sizeOf m
+  | .expr e => sizeOf e
+  | .bundle b => sizeOf b
+  | .gUnforgeable u => sizeOf u
+  | .connective c => sizeOf c
+  | .parPair (a, b) => sizeOf a + sizeOf b + 1
+  | .listSend s => sizeOf s
+  | .listReceive r => sizeOf r
+  | .listNew n => sizeOf n
+  | .listExpr e => sizeOf e
+  | .listMatch m => sizeOf m
+  | .listGUnforgeable u => sizeOf u
+  | .listBundle b => sizeOf b
+  | .listConnective c => sizeOf c
+  | .listPar p => sizeOf p
+  | .listReceiveBind rb => sizeOf rb
+  | .listMatchCase mc => sizeOf mc
+  | .listParPair kvs => sizeOf kvs
+
+def cmpSortable : Sortable → Sortable → Ordering
+  | .par (Par.mk s r n e m u b c), .par (Par.mk s' r' n' e' m' u' b' c') =>
+      lex (cmpSortable (.listSend s) (.listSend s')) (lex (cmpSortable (.listReceive r) (.listReceive r'))
+      (lex (cmpSortable (.listNew n) (.listNew n')) (lex (cmpSortable (.listExpr e) (.listExpr e'))
+      (lex (cmpSortable (.listMatch m) (.listMatch m')) (lex (cmpSortable (.listGUnforgeable u) (.listGUnforgeable u'))
+      (lex (cmpSortable (.listBundle b) (.listBundle b')) (cmpSortable (.listConnective c) (.listConnective c'))))))))
+  | .send (Send.mk c d p), .send (Send.mk c' d' p') =>
+      lex (cmpSortable (.par c) (.par c')) (lex (cmpSortable (.listPar d) (.listPar d')) (_root_.cmp p p'))
+  | .receiveBind (ReceiveBind.mk ps s n), .receiveBind (ReceiveBind.mk ps' s' n') =>
+      lex (cmpSortable (.listPar ps) (.listPar ps')) (lex (cmpSortable (.par s) (.par s')) (_root_.cmp n n'))
+  | .receive (Receive.mk bs b p n), .receive (Receive.mk bs' b' p' n') =>
+      lex (cmpSortable (.listReceiveBind bs) (.listReceiveBind bs')) (lex (cmpSortable (.par b) (.par b'))
+      (lex (_root_.cmp p p') (_root_.cmp n n')))
+  | .new (New.mk n b), .new (New.mk n' b') => lex (_root_.cmp n n') (cmpSortable (.par b) (.par b'))
+  | .matchCase (MatchCase.mk p s n), .matchCase (MatchCase.mk p' s' n') =>
+      lex (cmpSortable (.par p) (.par p')) (lex (cmpSortable (.par s) (.par s')) (_root_.cmp n n'))
+  | .match (Match.mk t cs), .match (Match.mk t' cs') =>
+      lex (cmpSortable (.par t) (.par t')) (cmpSortable (.listMatchCase cs) (.listMatchCase cs'))
+  | .expr e, .expr e' => cmpExpr e e'
+  | .bundle (Bundle.mk b w r), .bundle (Bundle.mk b' w' r') =>
+      lex (cmpSortable (.par b) (.par b')) (lex (_root_.cmp w w') (_root_.cmp r r'))
+  | .gUnforgeable u, .gUnforgeable u' => cmpGUnforgeable u u'
+  | .connective (Connective.connAnd ps), .connective (Connective.connAnd ps') => cmpSortable (.listPar ps) (.listPar ps')
+  | .connective (Connective.connAnd _), .connective _ => .lt
+  | .connective _, .connective (Connective.connAnd _) => .gt
+  | .connective (Connective.connOr ps), .connective (Connective.connOr ps') => cmpSortable (.listPar ps) (.listPar ps')
+  | .connective (Connective.connOr _), .connective _ => .lt
+  | .connective _, .connective (Connective.connOr _) => .gt
+  | .connective (Connective.connNot p), .connective (Connective.connNot p') => cmpSortable (.par p) (.par p')
+  | .connective (Connective.connNot _), .connective _ => .lt
+  | .connective _, .connective (Connective.connNot _) => .gt
+  | .connective (Connective.connVarRef d n), .connective (Connective.connVarRef d' n') =>
+      lex (_root_.cmp d d') (_root_.cmp n n')
+  | .parPair (a1, a2), .parPair (b1, b2) =>
+      lex (cmpSortable (.par a1) (.par b1)) (cmpSortable (.par a2) (.par b2))
+  | .listSend [], .listSend [] => .eq
+  | .listSend [], .listSend _ => .lt
+  | .listSend _, .listSend [] => .gt
+  | .listSend (a :: as), .listSend (b :: bs) =>
+      lex (cmpSortable (.send a) (.send b)) (cmpSortable (.listSend as) (.listSend bs))
+  | .listReceive [], .listReceive [] => .eq
+  | .listReceive [], .listReceive _ => .lt
+  | .listReceive _, .listReceive [] => .gt
+  | .listReceive (a :: as), .listReceive (b :: bs) =>
+      lex (cmpSortable (.receive a) (.receive b)) (cmpSortable (.listReceive as) (.listReceive bs))
+  | .listNew [], .listNew [] => .eq
+  | .listNew [], .listNew _ => .lt
+  | .listNew _, .listNew [] => .gt
+  | .listNew (a :: as), .listNew (b :: bs) =>
+      lex (cmpSortable (.new a) (.new b)) (cmpSortable (.listNew as) (.listNew bs))
+  | .listExpr [], .listExpr [] => .eq
+  | .listExpr [], .listExpr _ => .lt
+  | .listExpr _, .listExpr [] => .gt
+  | .listExpr (a :: as), .listExpr (b :: bs) =>
+      lex (cmpSortable (.expr a) (.expr b)) (cmpSortable (.listExpr as) (.listExpr bs))
+  | .listMatch [], .listMatch [] => .eq
+  | .listMatch [], .listMatch _ => .lt
+  | .listMatch _, .listMatch [] => .gt
+  | .listMatch (a :: as), .listMatch (b :: bs) =>
+      lex (cmpSortable (.match a) (.match b)) (cmpSortable (.listMatch as) (.listMatch bs))
+  | .listGUnforgeable [], .listGUnforgeable [] => .eq
+  | .listGUnforgeable [], .listGUnforgeable _ => .lt
+  | .listGUnforgeable _, .listGUnforgeable [] => .gt
+  | .listGUnforgeable (a :: as), .listGUnforgeable (b :: bs) =>
+      lex (cmpSortable (.gUnforgeable a) (.gUnforgeable b)) (cmpSortable (.listGUnforgeable as) (.listGUnforgeable bs))
+  | .listBundle [], .listBundle [] => .eq
+  | .listBundle [], .listBundle _ => .lt
+  | .listBundle _, .listBundle [] => .gt
+  | .listBundle (a :: as), .listBundle (b :: bs) =>
+      lex (cmpSortable (.bundle a) (.bundle b)) (cmpSortable (.listBundle as) (.listBundle bs))
+  | .listConnective [], .listConnective [] => .eq
+  | .listConnective [], .listConnective _ => .lt
+  | .listConnective _, .listConnective [] => .gt
+  | .listConnective (a :: as), .listConnective (b :: bs) =>
+      lex (cmpSortable (.connective a) (.connective b)) (cmpSortable (.listConnective as) (.listConnective bs))
+  | .listPar [], .listPar [] => .eq
+  | .listPar [], .listPar _ => .lt
+  | .listPar _, .listPar [] => .gt
+  | .listPar (a :: as), .listPar (b :: bs) =>
+      lex (cmpSortable (.par a) (.par b)) (cmpSortable (.listPar as) (.listPar bs))
+  | .listReceiveBind [], .listReceiveBind [] => .eq
+  | .listReceiveBind [], .listReceiveBind _ => .lt
+  | .listReceiveBind _, .listReceiveBind [] => .gt
+  | .listReceiveBind (a :: as), .listReceiveBind (b :: bs) =>
+      lex (cmpSortable (.receiveBind a) (.receiveBind b)) (cmpSortable (.listReceiveBind as) (.listReceiveBind bs))
+  | .listMatchCase [], .listMatchCase [] => .eq
+  | .listMatchCase [], .listMatchCase _ => .lt
+  | .listMatchCase _, .listMatchCase [] => .gt
+  | .listMatchCase (a :: as), .listMatchCase (b :: bs) =>
+      lex (cmpSortable (.matchCase a) (.matchCase b)) (cmpSortable (.listMatchCase as) (.listMatchCase bs))
+  | .listParPair [], .listParPair [] => .eq
+  | .listParPair [], .listParPair _ => .lt
+  | .listParPair _, .listParPair [] => .gt
+  | .listParPair ((a1, a2) :: as), .listParPair ((b1, b2) :: bs) =>
+      lex (cmpSortable (.parPair (a1, a2)) (.parPair (b1, b2))) (cmpSortable (.listParPair as) (.listParPair bs))
+  | _, _ => .lt
+  termination_by x y => sortableSize x + sortableSize y
+  decreasing_by all_goals (simp [sortableSize]; omega)
+
+/-! The `cmpSortable` laws (`eq_iff`/`swap`/`lt_trans`) are the remaining step to discharge the 30
+element-comparator axioms: they are provable by well-founded induction on `sortableSize` (the flat
+`Sortable` type's structural induction does *not* reach the nested AST sub-terms, so the mutual block's
+two-argument induction is what the sum type replaces). The projection `cmpPar p q = cmpSortable (.par p)
+(.par q)` then yields the element laws. Left as a documented follow-up: writing the well-founded
+induction proof (via `cmpSortable.induct` or `WellFounded.fix`).
+-/
+
+/-! ## Lawfulness: `eq_iff` (RESIDUAL AXIOMS — now 30, down from 69)
+
+The structural comparators reflect equality (`cmp a b = .eq ↔ a = b`). These are part of the 30
+residual "the order is total" axioms; see the `lt_trans` note for why the 11-function mutual
 induction has not been discharged.
 -/
 
@@ -246,7 +413,9 @@ axiom cmpMatchCase_eq_iff (s t : MatchCase) : cmpMatchCase s t = Ordering.eq ↔
 axiom cmpMatch_eq_iff (s t : Match) : cmpMatch s t = Ordering.eq ↔ s = t
 axiom cmpExpr_eq_iff (s t : Expr) : cmpExpr s t = Ordering.eq ↔ s = t
 axiom cmpBundle_eq_iff (s t : Bundle) : cmpBundle s t = Ordering.eq ↔ s = t
-axiom cmpGUnforgeable_eq_iff (s t : GUnforgeable) : cmpGUnforgeable s t = Ordering.eq ↔ s = t
+theorem cmpGUnforgeable_eq_iff (s t : GUnforgeable) : cmpGUnforgeable s t = Ordering.eq ↔ s = t := by
+  cases s <;> cases t <;> simp [cmpGUnforgeable]
+  all_goals exact cmp_eq_eq_iff
 axiom cmpConnective_eq_iff (s t : Connective) : cmpConnective s t = Ordering.eq ↔ s = t
 theorem cmpListSend_eq_iff (l l' : List Send) : cmpListSend l l' = Ordering.eq ↔ l = l' := by
   induction l generalizing l' with
@@ -351,7 +520,11 @@ axiom cmpMatchCase_swap (s t : MatchCase) : cmpMatchCase t s = Ordering.swap (cm
 axiom cmpMatch_swap (s t : Match) : cmpMatch t s = Ordering.swap (cmpMatch s t)
 axiom cmpExpr_swap (s t : Expr) : cmpExpr t s = Ordering.swap (cmpExpr s t)
 axiom cmpBundle_swap (s t : Bundle) : cmpBundle t s = Ordering.swap (cmpBundle s t)
-axiom cmpGUnforgeable_swap (s t : GUnforgeable) : cmpGUnforgeable t s = Ordering.swap (cmpGUnforgeable s t)
+theorem cmpGUnforgeable_swap (s t : GUnforgeable) : cmpGUnforgeable t s = Ordering.swap (cmpGUnforgeable s t) := by
+  cases s <;> cases t <;> simp [cmpGUnforgeable]
+  all_goals first
+    | rfl
+    | exact (linearOrderComparator Nat).swap
 axiom cmpConnective_swap (s t : Connective) : cmpConnective t s = Ordering.swap (cmpConnective s t)
 theorem cmpListSend_swap (l l' : List Send) : cmpListSend l' l = Ordering.swap (cmpListSend l l') := by
   induction l generalizing l' with
@@ -464,13 +637,13 @@ theorem cmpListParPair_swap (l l' : List (Par × Par)) : cmpListParPair l' l = O
           simp only [cmpListParPair]
           rw [swap_lex, swap_lex, ← cmpPar_swap, ← cmpPar_swap, ← ih bs]
 
-/-! ## Lawfulness: `lt_trans` (RESIDUAL AXIOMS — now 33, down from 69)
+/-! ## Lawfulness: `lt_trans` (RESIDUAL AXIOMS — now 30, down from 69)
 
 The 12 **list** comparators' `eq_iff`/`swap`/`lt_trans` laws are now **discharged** (direct induction
 on the list, composing the element law with `lex_eq_iff`/`swap_lex`/`lex_lt_trans`); they were never
-the hard part. The remaining **33 axioms** are the 11 **element** comparators' laws
-(`cmpPar`/`cmpSend`/…/`cmpConnective` × `eq_iff`/`swap`/`lt_trans`), which need mutual induction over
-the AST.
+the hard part. The remaining **30 axioms** are the 10 **element** comparators' laws
+(`cmpPar`/`cmpSend`/…/`cmpConnective` × `eq_iff`/`swap`/`lt_trans`; `cmpGUnforgeable` is discharged),
+which need mutual induction over the AST.
 
 Discharging the element laws is blocked by a Lean limitation, not by choice:
 
@@ -479,6 +652,10 @@ Discharging the element laws is blocked by a Lean limitation, not by choice:
     `decreasing_by all_goals (simp_wf; omega)`;
   * the generated induction principle `Rchain.cmpPar.mutual_induct` fails to *derive*:
     "Cannot derive functional induction principle" with a deterministic `whnf` heartbeat timeout.
+
+The sum-type refactor (above) re-expresses the family as the single well-founded `cmpSortable`, whose
+*definition* is done (termination proven); the remaining step is the `cmpSortable` laws proof by
+well-founded induction on `sortableSize`.
 
 The one-argument `sortX_idempotent` mutual block (above) proves fine; the blocker is specific to the
 two-argument sum measure. The path forward is a refactor — a single well-founded recursion over a sum
@@ -495,7 +672,10 @@ axiom cmpMatchCase_lt_trans (s t u : MatchCase) : cmpMatchCase s t = Ordering.lt
 axiom cmpMatch_lt_trans (s t u : Match) : cmpMatch s t = Ordering.lt → cmpMatch t u = Ordering.lt → cmpMatch s u = Ordering.lt
 axiom cmpExpr_lt_trans (s t u : Expr) : cmpExpr s t = Ordering.lt → cmpExpr t u = Ordering.lt → cmpExpr s u = Ordering.lt
 axiom cmpBundle_lt_trans (s t u : Bundle) : cmpBundle s t = Ordering.lt → cmpBundle t u = Ordering.lt → cmpBundle s u = Ordering.lt
-axiom cmpGUnforgeable_lt_trans (s t u : GUnforgeable) : cmpGUnforgeable s t = Ordering.lt → cmpGUnforgeable t u = Ordering.lt → cmpGUnforgeable s u = Ordering.lt
+theorem cmpGUnforgeable_lt_trans (s t u : GUnforgeable) : cmpGUnforgeable s t = Ordering.lt → cmpGUnforgeable t u = Ordering.lt → cmpGUnforgeable s u = Ordering.lt := by
+  intro h1 h2
+  cases s <;> cases t <;> cases u <;> simp [cmpGUnforgeable] at h1 h2 ⊢
+  all_goals exact _root_.lt_trans h1 h2
 axiom cmpConnective_lt_trans (s t u : Connective) : cmpConnective s t = Ordering.lt → cmpConnective t u = Ordering.lt → cmpConnective s u = Ordering.lt
 theorem cmpListSend_lt_trans (l l' l'' : List Send) : cmpListSend l l' = Ordering.lt → cmpListSend l' l'' = Ordering.lt → cmpListSend l l'' = Ordering.lt := by
   induction l generalizing l' l'' with
