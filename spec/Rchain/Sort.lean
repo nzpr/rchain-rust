@@ -248,22 +248,98 @@ axiom cmpExpr_eq_iff (s t : Expr) : cmpExpr s t = Ordering.eq ↔ s = t
 axiom cmpBundle_eq_iff (s t : Bundle) : cmpBundle s t = Ordering.eq ↔ s = t
 axiom cmpGUnforgeable_eq_iff (s t : GUnforgeable) : cmpGUnforgeable s t = Ordering.eq ↔ s = t
 axiom cmpConnective_eq_iff (s t : Connective) : cmpConnective s t = Ordering.eq ↔ s = t
-axiom cmpListSend_eq_iff (l l' : List Send) : cmpListSend l l' = Ordering.eq ↔ l = l'
-axiom cmpListReceive_eq_iff (l l' : List Receive) : cmpListReceive l l' = Ordering.eq ↔ l = l'
-axiom cmpListNew_eq_iff (l l' : List New) : cmpListNew l l' = Ordering.eq ↔ l = l'
-axiom cmpListExpr_eq_iff (l l' : List Expr) : cmpListExpr l l' = Ordering.eq ↔ l = l'
-axiom cmpListMatch_eq_iff (l l' : List Match) : cmpListMatch l l' = Ordering.eq ↔ l = l'
-axiom cmpListGUnforgeable_eq_iff (l l' : List GUnforgeable) : cmpListGUnforgeable l l' = Ordering.eq ↔ l = l'
-axiom cmpListBundle_eq_iff (l l' : List Bundle) : cmpListBundle l l' = Ordering.eq ↔ l = l'
-axiom cmpListConnective_eq_iff (l l' : List Connective) : cmpListConnective l l' = Ordering.eq ↔ l = l'
-axiom cmpListPar_eq_iff (l l' : List Par) : cmpListPar l l' = Ordering.eq ↔ l = l'
-axiom cmpListReceiveBind_eq_iff (l l' : List ReceiveBind) : cmpListReceiveBind l l' = Ordering.eq ↔ l = l'
-axiom cmpListMatchCase_eq_iff (l l' : List MatchCase) : cmpListMatchCase l l' = Ordering.eq ↔ l = l'
-axiom cmpListParPair_eq_iff (l l' : List (Par × Par)) : cmpListParPair l l' = Ordering.eq ↔ l = l'
+theorem cmpListSend_eq_iff (l l' : List Send) : cmpListSend l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListSend]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListSend]
+      | cons b bs => simp [cmpListSend, lex_eq_iff, cmpSend_eq_iff, ih, List.cons.injEq]
+theorem cmpListReceive_eq_iff (l l' : List Receive) : cmpListReceive l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListReceive]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListReceive]
+      | cons b bs => simp [cmpListReceive, lex_eq_iff, cmpReceive_eq_iff, ih, List.cons.injEq]
+theorem cmpListNew_eq_iff (l l' : List New) : cmpListNew l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListNew]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListNew]
+      | cons b bs => simp [cmpListNew, lex_eq_iff, cmpNew_eq_iff, ih, List.cons.injEq]
+theorem cmpListExpr_eq_iff (l l' : List Expr) : cmpListExpr l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListExpr]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListExpr]
+      | cons b bs => simp [cmpListExpr, lex_eq_iff, cmpExpr_eq_iff, ih, List.cons.injEq]
+theorem cmpListMatch_eq_iff (l l' : List Match) : cmpListMatch l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListMatch]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListMatch]
+      | cons b bs => simp [cmpListMatch, lex_eq_iff, cmpMatch_eq_iff, ih, List.cons.injEq]
+theorem cmpListGUnforgeable_eq_iff (l l' : List GUnforgeable) : cmpListGUnforgeable l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListGUnforgeable]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListGUnforgeable]
+      | cons b bs => simp [cmpListGUnforgeable, lex_eq_iff, cmpGUnforgeable_eq_iff, ih, List.cons.injEq]
+theorem cmpListBundle_eq_iff (l l' : List Bundle) : cmpListBundle l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListBundle]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListBundle]
+      | cons b bs => simp [cmpListBundle, lex_eq_iff, cmpBundle_eq_iff, ih, List.cons.injEq]
+theorem cmpListConnective_eq_iff (l l' : List Connective) : cmpListConnective l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListConnective]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListConnective]
+      | cons b bs => simp [cmpListConnective, lex_eq_iff, cmpConnective_eq_iff, ih, List.cons.injEq]
+theorem cmpListPar_eq_iff (l l' : List Par) : cmpListPar l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListPar]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListPar]
+      | cons b bs => simp [cmpListPar, lex_eq_iff, cmpPar_eq_iff, ih, List.cons.injEq]
+theorem cmpListReceiveBind_eq_iff (l l' : List ReceiveBind) : cmpListReceiveBind l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListReceiveBind]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListReceiveBind]
+      | cons b bs => simp [cmpListReceiveBind, lex_eq_iff, cmpReceiveBind_eq_iff, ih, List.cons.injEq]
+theorem cmpListMatchCase_eq_iff (l l' : List MatchCase) : cmpListMatchCase l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListMatchCase]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListMatchCase]
+      | cons b bs => simp [cmpListMatchCase, lex_eq_iff, cmpMatchCase_eq_iff, ih, List.cons.injEq]
+theorem cmpListParPair_eq_iff (l l' : List (Par × Par)) : cmpListParPair l l' = Ordering.eq ↔ l = l' := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListParPair]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListParPair]
+      | cons b bs =>
+          cases a with | mk a1 a2 =>
+          cases b with | mk b1 b2 =>
+          simp [cmpListParPair, lex_eq_iff, cmpPar_eq_iff, ih, List.cons.injEq, Prod.ext_iff]
 
 /-! ## Lawfulness: `swap` (RESIDUAL AXIOMS)
 
-Residual: part of the 69 "total order" axioms; see the `lt_trans` note for the Lean limitation.
+Residual: the 11 element-comparator `swap` laws (the 12 list-comparator `swap` laws are discharged
+below); see the `lt_trans` note for the Lean limitation.
 -/
 
 axiom cmpPar_swap (p q : Par) : cmpPar q p = Ordering.swap (cmpPar p q)
@@ -277,26 +353,126 @@ axiom cmpExpr_swap (s t : Expr) : cmpExpr t s = Ordering.swap (cmpExpr s t)
 axiom cmpBundle_swap (s t : Bundle) : cmpBundle t s = Ordering.swap (cmpBundle s t)
 axiom cmpGUnforgeable_swap (s t : GUnforgeable) : cmpGUnforgeable t s = Ordering.swap (cmpGUnforgeable s t)
 axiom cmpConnective_swap (s t : Connective) : cmpConnective t s = Ordering.swap (cmpConnective s t)
-axiom cmpListSend_swap (l l' : List Send) : cmpListSend l' l = Ordering.swap (cmpListSend l l')
-axiom cmpListReceive_swap (l l' : List Receive) : cmpListReceive l' l = Ordering.swap (cmpListReceive l l')
-axiom cmpListNew_swap (l l' : List New) : cmpListNew l' l = Ordering.swap (cmpListNew l l')
-axiom cmpListExpr_swap (l l' : List Expr) : cmpListExpr l' l = Ordering.swap (cmpListExpr l l')
-axiom cmpListMatch_swap (l l' : List Match) : cmpListMatch l' l = Ordering.swap (cmpListMatch l l')
-axiom cmpListGUnforgeable_swap (l l' : List GUnforgeable) : cmpListGUnforgeable l' l = Ordering.swap (cmpListGUnforgeable l l')
-axiom cmpListBundle_swap (l l' : List Bundle) : cmpListBundle l' l = Ordering.swap (cmpListBundle l l')
-axiom cmpListConnective_swap (l l' : List Connective) : cmpListConnective l' l = Ordering.swap (cmpListConnective l l')
-axiom cmpListPar_swap (l l' : List Par) : cmpListPar l' l = Ordering.swap (cmpListPar l l')
-axiom cmpListReceiveBind_swap (l l' : List ReceiveBind) : cmpListReceiveBind l' l = Ordering.swap (cmpListReceiveBind l l')
-axiom cmpListMatchCase_swap (l l' : List MatchCase) : cmpListMatchCase l' l = Ordering.swap (cmpListMatchCase l l')
-axiom cmpListParPair_swap (l l' : List (Par × Par)) : cmpListParPair l' l = Ordering.swap (cmpListParPair l l')
+theorem cmpListSend_swap (l l' : List Send) : cmpListSend l' l = Ordering.swap (cmpListSend l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListSend, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListSend, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListSend]
+          rw [swap_lex, ← cmpSend_swap, ← ih bs]
+theorem cmpListReceive_swap (l l' : List Receive) : cmpListReceive l' l = Ordering.swap (cmpListReceive l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListReceive, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListReceive, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListReceive]
+          rw [swap_lex, ← cmpReceive_swap, ← ih bs]
+theorem cmpListNew_swap (l l' : List New) : cmpListNew l' l = Ordering.swap (cmpListNew l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListNew, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListNew, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListNew]
+          rw [swap_lex, ← cmpNew_swap, ← ih bs]
+theorem cmpListExpr_swap (l l' : List Expr) : cmpListExpr l' l = Ordering.swap (cmpListExpr l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListExpr, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListExpr, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListExpr]
+          rw [swap_lex, ← cmpExpr_swap, ← ih bs]
+theorem cmpListMatch_swap (l l' : List Match) : cmpListMatch l' l = Ordering.swap (cmpListMatch l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListMatch, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListMatch, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListMatch]
+          rw [swap_lex, ← cmpMatch_swap, ← ih bs]
+theorem cmpListGUnforgeable_swap (l l' : List GUnforgeable) : cmpListGUnforgeable l' l = Ordering.swap (cmpListGUnforgeable l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListGUnforgeable, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListGUnforgeable, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListGUnforgeable]
+          rw [swap_lex, ← cmpGUnforgeable_swap, ← ih bs]
+theorem cmpListBundle_swap (l l' : List Bundle) : cmpListBundle l' l = Ordering.swap (cmpListBundle l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListBundle, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListBundle, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListBundle]
+          rw [swap_lex, ← cmpBundle_swap, ← ih bs]
+theorem cmpListConnective_swap (l l' : List Connective) : cmpListConnective l' l = Ordering.swap (cmpListConnective l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListConnective, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListConnective, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListConnective]
+          rw [swap_lex, ← cmpConnective_swap, ← ih bs]
+theorem cmpListPar_swap (l l' : List Par) : cmpListPar l' l = Ordering.swap (cmpListPar l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListPar, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListPar, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListPar]
+          rw [swap_lex, ← cmpPar_swap, ← ih bs]
+theorem cmpListReceiveBind_swap (l l' : List ReceiveBind) : cmpListReceiveBind l' l = Ordering.swap (cmpListReceiveBind l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListReceiveBind, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListReceiveBind, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListReceiveBind]
+          rw [swap_lex, ← cmpReceiveBind_swap, ← ih bs]
+theorem cmpListMatchCase_swap (l l' : List MatchCase) : cmpListMatchCase l' l = Ordering.swap (cmpListMatchCase l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListMatchCase, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListMatchCase, Ordering.swap]
+      | cons b bs =>
+          simp only [cmpListMatchCase]
+          rw [swap_lex, ← cmpMatchCase_swap, ← ih bs]
+theorem cmpListParPair_swap (l l' : List (Par × Par)) : cmpListParPair l' l = Ordering.swap (cmpListParPair l l') := by
+  induction l generalizing l' with
+  | nil => cases l' <;> simp [cmpListParPair, Ordering.swap]
+  | cons a as ih =>
+      cases l' with
+      | nil => simp [cmpListParPair, Ordering.swap]
+      | cons b bs =>
+          cases a with | mk a1 a2 =>
+          cases b with | mk b1 b2 =>
+          simp only [cmpListParPair]
+          rw [swap_lex, swap_lex, ← cmpPar_swap, ← cmpPar_swap, ← ih bs]
 
-/-! ## Lawfulness: `lt_trans` (RESIDUAL AXIOMS)
+/-! ## Lawfulness: `lt_trans` (RESIDUAL AXIOMS — now 33, down from 69)
 
-These 69 axioms (`eq_iff`/`swap`/`lt_trans` × the 23-function comparator family
-`cmpPar`/`cmpSend`/…/`cmpListParPair`) are the remaining "the order is total" obligation. Law 1's
-`sortPar_idempotent` and `sortPar_comm` (proven below) are conditional on them.
+The 12 **list** comparators' `eq_iff`/`swap`/`lt_trans` laws are now **discharged** (direct induction
+on the list, composing the element law with `lex_eq_iff`/`swap_lex`/`lex_lt_trans`); they were never
+the hard part. The remaining **33 axioms** are the 11 **element** comparators' laws
+(`cmpPar`/`cmpSend`/…/`cmpConnective` × `eq_iff`/`swap`/`lt_trans`), which need mutual induction over
+the AST.
 
-Discharging them is blocked by a Lean limitation, not by choice:
+Discharging the element laws is blocked by a Lean limitation, not by choice:
 
   * a `mutual` theorem block over the **two-argument** `cmpX` family hangs the termination checker —
     both with bare `termination_by p q => sizeOf p + sizeOf q` and with
@@ -321,18 +497,179 @@ axiom cmpExpr_lt_trans (s t u : Expr) : cmpExpr s t = Ordering.lt → cmpExpr t 
 axiom cmpBundle_lt_trans (s t u : Bundle) : cmpBundle s t = Ordering.lt → cmpBundle t u = Ordering.lt → cmpBundle s u = Ordering.lt
 axiom cmpGUnforgeable_lt_trans (s t u : GUnforgeable) : cmpGUnforgeable s t = Ordering.lt → cmpGUnforgeable t u = Ordering.lt → cmpGUnforgeable s u = Ordering.lt
 axiom cmpConnective_lt_trans (s t u : Connective) : cmpConnective s t = Ordering.lt → cmpConnective t u = Ordering.lt → cmpConnective s u = Ordering.lt
-axiom cmpListSend_lt_trans (l l' l'' : List Send) : cmpListSend l l' = Ordering.lt → cmpListSend l' l'' = Ordering.lt → cmpListSend l l'' = Ordering.lt
-axiom cmpListReceive_lt_trans (l l' l'' : List Receive) : cmpListReceive l l' = Ordering.lt → cmpListReceive l' l'' = Ordering.lt → cmpListReceive l l'' = Ordering.lt
-axiom cmpListNew_lt_trans (l l' l'' : List New) : cmpListNew l l' = Ordering.lt → cmpListNew l' l'' = Ordering.lt → cmpListNew l l'' = Ordering.lt
-axiom cmpListExpr_lt_trans (l l' l'' : List Expr) : cmpListExpr l l' = Ordering.lt → cmpListExpr l' l'' = Ordering.lt → cmpListExpr l l'' = Ordering.lt
-axiom cmpListMatch_lt_trans (l l' l'' : List Match) : cmpListMatch l l' = Ordering.lt → cmpListMatch l' l'' = Ordering.lt → cmpListMatch l l'' = Ordering.lt
-axiom cmpListGUnforgeable_lt_trans (l l' l'' : List GUnforgeable) : cmpListGUnforgeable l l' = Ordering.lt → cmpListGUnforgeable l' l'' = Ordering.lt → cmpListGUnforgeable l l'' = Ordering.lt
-axiom cmpListBundle_lt_trans (l l' l'' : List Bundle) : cmpListBundle l l' = Ordering.lt → cmpListBundle l' l'' = Ordering.lt → cmpListBundle l l'' = Ordering.lt
-axiom cmpListConnective_lt_trans (l l' l'' : List Connective) : cmpListConnective l l' = Ordering.lt → cmpListConnective l' l'' = Ordering.lt → cmpListConnective l l'' = Ordering.lt
-axiom cmpListPar_lt_trans (l l' l'' : List Par) : cmpListPar l l' = Ordering.lt → cmpListPar l' l'' = Ordering.lt → cmpListPar l l'' = Ordering.lt
-axiom cmpListReceiveBind_lt_trans (l l' l'' : List ReceiveBind) : cmpListReceiveBind l l' = Ordering.lt → cmpListReceiveBind l' l'' = Ordering.lt → cmpListReceiveBind l l'' = Ordering.lt
-axiom cmpListMatchCase_lt_trans (l l' l'' : List MatchCase) : cmpListMatchCase l l' = Ordering.lt → cmpListMatchCase l' l'' = Ordering.lt → cmpListMatchCase l l'' = Ordering.lt
-axiom cmpListParPair_lt_trans (l l' l'' : List (Par × Par)) : cmpListParPair l l' = Ordering.lt → cmpListParPair l' l'' = Ordering.lt → cmpListParPair l l'' = Ordering.lt
+theorem cmpListSend_lt_trans (l l' l'' : List Send) : cmpListSend l l' = Ordering.lt → cmpListSend l' l'' = Ordering.lt → cmpListSend l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListSend] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListSend] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListSend] at h2
+          | cons c cs =>
+              simp [cmpListSend] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpSend) (h_eq := fun {a b} => cmpSend_eq_iff a b) (h_lt := fun {a b c} => cmpSend_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListReceive_lt_trans (l l' l'' : List Receive) : cmpListReceive l l' = Ordering.lt → cmpListReceive l' l'' = Ordering.lt → cmpListReceive l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListReceive] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListReceive] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListReceive] at h2
+          | cons c cs =>
+              simp [cmpListReceive] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpReceive) (h_eq := fun {a b} => cmpReceive_eq_iff a b) (h_lt := fun {a b c} => cmpReceive_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListNew_lt_trans (l l' l'' : List New) : cmpListNew l l' = Ordering.lt → cmpListNew l' l'' = Ordering.lt → cmpListNew l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListNew] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListNew] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListNew] at h2
+          | cons c cs =>
+              simp [cmpListNew] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpNew) (h_eq := fun {a b} => cmpNew_eq_iff a b) (h_lt := fun {a b c} => cmpNew_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListExpr_lt_trans (l l' l'' : List Expr) : cmpListExpr l l' = Ordering.lt → cmpListExpr l' l'' = Ordering.lt → cmpListExpr l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListExpr] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListExpr] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListExpr] at h2
+          | cons c cs =>
+              simp [cmpListExpr] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpExpr) (h_eq := fun {a b} => cmpExpr_eq_iff a b) (h_lt := fun {a b c} => cmpExpr_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListMatch_lt_trans (l l' l'' : List Match) : cmpListMatch l l' = Ordering.lt → cmpListMatch l' l'' = Ordering.lt → cmpListMatch l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListMatch] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListMatch] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListMatch] at h2
+          | cons c cs =>
+              simp [cmpListMatch] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpMatch) (h_eq := fun {a b} => cmpMatch_eq_iff a b) (h_lt := fun {a b c} => cmpMatch_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListGUnforgeable_lt_trans (l l' l'' : List GUnforgeable) : cmpListGUnforgeable l l' = Ordering.lt → cmpListGUnforgeable l' l'' = Ordering.lt → cmpListGUnforgeable l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListGUnforgeable] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListGUnforgeable] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListGUnforgeable] at h2
+          | cons c cs =>
+              simp [cmpListGUnforgeable] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpGUnforgeable) (h_eq := fun {a b} => cmpGUnforgeable_eq_iff a b) (h_lt := fun {a b c} => cmpGUnforgeable_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListBundle_lt_trans (l l' l'' : List Bundle) : cmpListBundle l l' = Ordering.lt → cmpListBundle l' l'' = Ordering.lt → cmpListBundle l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListBundle] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListBundle] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListBundle] at h2
+          | cons c cs =>
+              simp [cmpListBundle] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpBundle) (h_eq := fun {a b} => cmpBundle_eq_iff a b) (h_lt := fun {a b c} => cmpBundle_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListConnective_lt_trans (l l' l'' : List Connective) : cmpListConnective l l' = Ordering.lt → cmpListConnective l' l'' = Ordering.lt → cmpListConnective l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListConnective] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListConnective] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListConnective] at h2
+          | cons c cs =>
+              simp [cmpListConnective] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpConnective) (h_eq := fun {a b} => cmpConnective_eq_iff a b) (h_lt := fun {a b c} => cmpConnective_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListPar_lt_trans (l l' l'' : List Par) : cmpListPar l l' = Ordering.lt → cmpListPar l' l'' = Ordering.lt → cmpListPar l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListPar] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListPar] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListPar] at h2
+          | cons c cs =>
+              simp [cmpListPar] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpPar) (h_eq := fun {a b} => cmpPar_eq_iff a b) (h_lt := fun {a b c} => cmpPar_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListReceiveBind_lt_trans (l l' l'' : List ReceiveBind) : cmpListReceiveBind l l' = Ordering.lt → cmpListReceiveBind l' l'' = Ordering.lt → cmpListReceiveBind l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListReceiveBind] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListReceiveBind] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListReceiveBind] at h2
+          | cons c cs =>
+              simp [cmpListReceiveBind] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpReceiveBind) (h_eq := fun {a b} => cmpReceiveBind_eq_iff a b) (h_lt := fun {a b c} => cmpReceiveBind_lt_trans a b c) (hD := ih bs cs) h1 h2
+theorem cmpListMatchCase_lt_trans (l l' l'' : List MatchCase) : cmpListMatchCase l l' = Ordering.lt → cmpListMatchCase l' l'' = Ordering.lt → cmpListMatchCase l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListMatchCase] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListMatchCase] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListMatchCase] at h2
+          | cons c cs =>
+              simp [cmpListMatchCase] at h1 h2 ⊢
+              exact lex_lt_trans (f := cmpMatchCase) (h_eq := fun {a b} => cmpMatchCase_eq_iff a b) (h_lt := fun {a b c} => cmpMatchCase_lt_trans a b c) (hD := ih bs cs) h1 h2
+private theorem cmpParPair_eq_iff (x y : Par × Par) :
+    lex (cmpPar x.1 y.1) (cmpPar x.2 y.2) = Ordering.eq ↔ x = y := by
+  rw [lex_eq_iff, cmpPar_eq_iff, cmpPar_eq_iff, Prod.ext_iff]
+
+private theorem cmpParPair_lt_trans (x y z : Par × Par) :
+    lex (cmpPar x.1 y.1) (cmpPar x.2 y.2) = Ordering.lt →
+    lex (cmpPar y.1 z.1) (cmpPar y.2 z.2) = Ordering.lt →
+    lex (cmpPar x.1 z.1) (cmpPar x.2 z.2) = Ordering.lt := by
+  intro h1 h2
+  exact lex_lt_trans (f := cmpPar) (h_eq := fun {a b} => cmpPar_eq_iff a b) (h_lt := fun {a b c} => cmpPar_lt_trans a b c)
+    (hD := cmpPar_lt_trans x.2 y.2 z.2) h1 h2
+theorem cmpListParPair_lt_trans (l l' l'' : List (Par × Par)) : cmpListParPair l l' = Ordering.lt → cmpListParPair l' l'' = Ordering.lt → cmpListParPair l l'' = Ordering.lt := by
+  induction l generalizing l' l'' with
+  | nil => intro h1 h2; cases l' <;> cases l'' <;> simp [cmpListParPair] at h1 h2 ⊢
+  | cons a as ih =>
+      intro h1 h2
+      cases l' with
+      | nil => simp [cmpListParPair] at h1
+      | cons b bs =>
+          cases l'' with
+          | nil => simp [cmpListParPair] at h2
+          | cons c cs =>
+              cases a with | mk a1 a2 =>
+              cases b with | mk b1 b2 =>
+              cases c with | mk c1 c2 =>
+              simp [cmpListParPair] at h1 h2 ⊢
+              exact lex_lt_trans (f := fun x y => lex (cmpPar x.1 y.1) (cmpPar x.2 y.2))
+                (h_eq := fun {a b} => cmpParPair_eq_iff a b) (h_lt := fun {a b c} => cmpParPair_lt_trans a b c)
+                (a := (a1, a2)) (b := (b1, b2)) (c := (c1, c2)) (x := as) (y := bs) (z := cs)
+                (hD := ih bs cs) h1 h2
 
 /-! ## The `Comparator` instances for the 11 element types -/
 
