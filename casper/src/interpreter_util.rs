@@ -34,7 +34,7 @@ pub async fn replay_block(
     block: &BlockMessage,
     rand: &Blake2b512Random,
 ) -> Result<Blake2b256Hash, ReplayFailure> {
-    let start_hash = Blake2b256Hash::from_byte_array(&block.pre_state_hash);
+    let start_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
     let block_data = BlockData::from_block(block);
     let with_cost_accounting = !block.justifications.is_empty();
     let (state_hash, _mergeable) = runtime
@@ -147,14 +147,14 @@ where
         }
     };
 
-    let incoming_pre_state_hash = Blake2b256Hash::from_byte_array(&block.pre_state_hash);
+    let incoming_pre_state_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
     let result: Result<bool, BlockStatus> = if incoming_pre_state_hash != pre_state.pre_state_hash {
         Ok(false)
     } else if pre_state.fringe_rejected_deploys != block.rejected_deploys {
         Err(BlockStatus::InvalidRejectedDeploy)
     } else {
         let rand = BlockRandomSeed::random_generator_from_block(block);
-        let post_state_hash = Blake2b256Hash::from_byte_array(&block.post_state_hash);
+        let post_state_hash = Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
         let replay_result = replay_block(runtime, block, &rand).await;
         let handled = handle_errors(&post_state_hash, replay_result)?;
         Ok(handled.is_some())

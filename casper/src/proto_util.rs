@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, RholangState};
@@ -68,8 +69,8 @@ pub fn unsigned_block_proto(
     block_number: BlockHeight,
     sender: Validator,
     seq_num: SeqNum,
-    pre_state_hash: Vec<u8>,
-    post_state_hash: Vec<u8>,
+    pre_state_hash: StateHash,
+    post_state_hash: StateHash,
     justifications: Vec<BlockHash>,
     bonds: BTreeMap<Validator, NonNegI64>,
     rejected_deploys: BTreeSet<Vec<u8>>,
@@ -112,8 +113,8 @@ mod tests {
             block_number: 0.try_into().unwrap(),
             sender: Validator::new([0x11; 65]),
             seq_num: 0.try_into().unwrap(),
-            pre_state_hash: vec![0x01],
-            post_state_hash: vec![0x02],
+            pre_state_hash: StateHash::new([0x01; 32]),
+            post_state_hash: StateHash::new([0x02; 32]),
             justifications: vec![],
             bonds: BTreeMap::new(),
             rejected_deploys: BTreeSet::new(),

@@ -438,16 +438,18 @@ impl BlockIndex {
 
         let block = get_block_unsafe(block_store, &block_hash).await?;
         let sender = block.sender.as_bytes().to_vec();
+        let pre_state_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
+        let post_state_hash = Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
         let mergeable_chs = runtime
-            .load_mergeable_channels(&block.post_state_hash, &sender, i64::from(block.seq_num))
+            .load_mergeable_channels(post_state_hash.as_bytes(), &sender, i64::from(block.seq_num))
             .await?;
 
         let index = BlockIndex::apply(
             block.block_hash,
             &block.state.deploys,
             &block.state.system_deploys,
-            Blake2b256Hash::from_byte_array(&block.pre_state_hash),
-            Blake2b256Hash::from_byte_array(&block.post_state_hash),
+            pre_state_hash,
+            post_state_hash,
             runtime.get_history_repo(),
             &mergeable_chs,
         )

@@ -128,8 +128,8 @@ fn construct_light_block_info(block: &BlockMessage) -> LightBlockInfo {
         block_number: i64::from(block.block_number),
         sender: base16::encode(block.sender.as_bytes()),
         seq_num: i64::from(block.seq_num),
-        pre_state_hash: base16::encode(&block.pre_state_hash),
-        post_state_hash: base16::encode(&block.post_state_hash),
+        pre_state_hash: base16::encode(block.pre_state_hash.as_bytes()),
+        post_state_hash: base16::encode(block.post_state_hash.as_bytes()),
         justifications: block
             .justifications
             .iter()
@@ -167,8 +167,8 @@ mod tests {
             block_number: 5.try_into().unwrap(),
             sender: Validator::new([2u8; 65]),
             seq_num: 3.try_into().unwrap(),
-            pre_state_hash: vec![0xab; 32],
-            post_state_hash: vec![0xcd; 32],
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0xab; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0xcd; 32]),
             justifications: vec![BlockHash::new([9u8; 32])],
             bonds: BTreeMap::from([(Validator::new([2u8; 65]), 100.try_into().unwrap())]),
             rejected_deploys: BTreeSet::new(),

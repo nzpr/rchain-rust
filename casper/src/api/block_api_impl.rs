@@ -14,7 +14,6 @@ use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_graphz::ListSerializer;
 use rchain_models::ast::Par;
-use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
@@ -130,9 +129,9 @@ impl BlockApiImpl {
         let block = self.get_block_unsafe(block_hash).await?;
         let sorted_par = sort_par_term(par);
         let state_hash = if use_pre_state_hash {
-            StateHash::from_slice(&block.pre_state_hash)
+            block.pre_state_hash
         } else {
-            StateHash::from_slice(&block.post_state_hash)
+            block.post_state_hash
         };
         let data = self.runtime.get_data(&state_hash, &sorted_par).await?;
         let lbi = get_light_block_info(&block);
@@ -145,7 +144,7 @@ impl BlockApiImpl {
         block: &BlockMessage,
     ) -> Result<Option<DataWithBlockInfo>, String> {
         if self.is_listening_name_reduced(block, &[sorted_name.clone()]) {
-            let state_hash = StateHash::from_slice(&block.post_state_hash);
+            let state_hash = block.post_state_hash;
             let data = self.runtime.get_data(&state_hash, sorted_name).await?;
             let block_info = get_light_block_info(block);
             Ok(Some(DataWithBlockInfo {
@@ -163,7 +162,7 @@ impl BlockApiImpl {
         block: &BlockMessage,
     ) -> Result<Option<ContinuationsWithBlockInfo>, String> {
         if self.is_listening_name_reduced(block, sorted_names) {
-            let state_hash = StateHash::from_slice(&block.post_state_hash);
+            let state_hash = block.post_state_hash;
             let continuations = self.runtime.get_continuation(&state_hash, sorted_names).await?;
             let continuation_infos = continuations
                 .into_iter()
@@ -587,7 +586,7 @@ impl BlockApi for BlockApiImpl {
         let dag = self.dag.get_representation().await;
         let hash = dag.last_finalized_block_unsafe()?;
         let block = self.get_block_unsafe(&hash).await?;
-        let state_hash = StateHash::from_slice(&block.post_state_hash);
+        let state_hash = block.post_state_hash;
         let bonds = self.runtime.compute_bonds(&state_hash).await?;
         Ok(bonds.contains_key(
             &Validator::try_from(public_key).map_err(|e| e.to_string())?,
@@ -626,9 +625,9 @@ impl BlockApi for BlockApiImpl {
             None => Err(format!("Can not find block {block_hash:?}")),
             Some(b) => {
                 let state_hash = if use_pre_state_hash {
-                    StateHash::from_slice(&b.pre_state_hash)
+                    b.pre_state_hash
                 } else {
-                    StateHash::from_slice(&b.post_state_hash)
+                    b.post_state_hash
                 };
                 let res = self.runtime.play_exploratory_deploy(term, &state_hash).await?;
                 let lbi = get_light_block_info(&b);
@@ -710,8 +709,8 @@ mod tests {
             block_number: 0.try_into().unwrap(),
             sender: Validator::new([0u8; 65]),
             seq_num: 0.try_into().unwrap(),
-            pre_state_hash: vec![],
-            post_state_hash: vec![],
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
             justifications: vec![],
             bonds: std::collections::BTreeMap::new(),
             rejected_deploys: std::collections::BTreeSet::new(),

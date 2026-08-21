@@ -17,8 +17,6 @@ pub fn format_of_fields(b: &BlockMessage) -> bool {
         false
     } else if b.shard_id.is_empty() {
         false
-    } else if b.post_state_hash.is_empty() {
-        false
     } else {
         true
     }
@@ -98,7 +96,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
 use rchain_block_storage::dag::finalizer::Message;
-use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::validator::Validator;
 
@@ -288,7 +285,7 @@ pub async fn bonds_cache(
     runtime: &RuntimeManager,
     block: &BlockMessage,
 ) -> Result<ValidBlockProcessing, String> {
-    let tuplespace_hash = StateHash::from_slice(&block.post_state_hash);
+    let tuplespace_hash = block.post_state_hash;
     let computed_bonds = runtime.compute_bonds(&tuplespace_hash).await?;
     if block.bonds == computed_bonds {
         Ok(Ok(()))
@@ -367,8 +364,8 @@ mod tests {
             block_number: 10.try_into().unwrap(),
             sender: Validator::new([0x11; 65]),
             seq_num: 0.try_into().unwrap(),
-            pre_state_hash: vec![1],
-            post_state_hash: vec![2],
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([1u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([2u8; 32]),
             justifications: vec![],
             bonds: BTreeMap::new(),
             rejected_deploys: BTreeSet::new(),
@@ -515,8 +512,8 @@ mod effectful_tests {
             block_number: rchain_shared::refined::BlockHeight::try_from(block_num).unwrap(),
             sender: Validator::new([sender_byte; 65]),
             seq_num: rchain_shared::refined::SeqNum::try_from(seq).unwrap(),
-            pre_state_hash: vec![1],
-            post_state_hash: vec![2],
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([1u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([2u8; 32]),
             justifications,
             bonds: BTreeMap::new(),
             rejected_deploys: BTreeSet::new(),

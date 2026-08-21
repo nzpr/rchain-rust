@@ -3,7 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, FinalizedFringe};
@@ -81,6 +80,6 @@ pub async fn insert_genesis(
     bmd.validated = true;
     bmd.validation_failed = false;
     bmd.fringe = BTreeSet::new();
-    bmd.fringe_state_hash = StateHash::from_slice(&genesis_block.pre_state_hash);
+    bmd.fringe_state_hash = genesis_block.pre_state_hash;
     bds.insert(bmd, genesis_block).await
 }

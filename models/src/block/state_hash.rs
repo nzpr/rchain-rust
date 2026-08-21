@@ -41,3 +41,16 @@ impl TryFrom<&[u8]> for StateHash {
         Ok(Self::from_slice(bytes))
     }
 }
+
+/// Total conversion from the canonical hash type (both are fixed 32-byte wrappers).
+impl From<rchain_crypto::hash::blake2b256_hash::Blake2b256Hash> for StateHash {
+    fn from(h: rchain_crypto::hash::blake2b256_hash::Blake2b256Hash) -> Self {
+        StateHash::from_slice(h.as_bytes())
+    }
+}
+
+impl From<StateHash> for rchain_crypto::hash::blake2b256_hash::Blake2b256Hash {
+    fn from(h: StateHash) -> Self {
+        rchain_crypto::hash::blake2b256_hash::Blake2b256Hash::from_byte_array(h.as_bytes())
+    }
+}

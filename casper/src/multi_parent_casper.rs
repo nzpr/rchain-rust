@@ -174,7 +174,7 @@ where
             let base_state = match base_opt {
                 Some(h) => {
                     Blake2b256Hash::from_byte_array(
-                        &get_block_unsafe(block_store, &h).await?.post_state_hash,
+                        get_block_unsafe(block_store, &h).await?.post_state_hash.as_bytes(),
                     )
                 }
                 None => prev_fringe_state,
@@ -212,7 +212,7 @@ where
             .ok_or_else(|| "expected one parent".to_string())?;
         let block = get_block_unsafe(block_store, parent).await?;
         (
-            Blake2b256Hash::from_byte_array(&block.post_state_hash),
+            Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes()),
             BTreeSet::new(),
         )
     } else {
@@ -221,7 +221,7 @@ where
         let base_state = match base_opt {
             Some(h) => {
                 Blake2b256Hash::from_byte_array(
-                    &get_block_unsafe(block_store, &h).await?.post_state_hash,
+                    get_block_unsafe(block_store, &h).await?.post_state_hash.as_bytes(),
                 )
             }
             None => fringe_state,

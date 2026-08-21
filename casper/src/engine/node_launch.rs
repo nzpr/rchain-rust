@@ -14,7 +14,6 @@ use rchain_block_storage::syntax::{insert_genesis, put_approved_block, put_block
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
-use rchain_models::block::state_hash::StateHash;
 use rchain_models::casper::protocol::casper_message::{
     BlockMessage, CasperMessage, FinalizedFringe,
 };
@@ -166,7 +165,7 @@ async fn create_store_broadcast_genesis(
 
     let genesis_fringe = FinalizedFringe {
         hashes: Vec::new(),
-        state_hash: StateHash::from_slice(&genesis_block.pre_state_hash),
+        state_hash: genesis_block.pre_state_hash,
     };
 
     put_block(block_store, genesis_block.clone()).await?;

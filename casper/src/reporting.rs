@@ -163,7 +163,7 @@ impl ReportingCasper for RhoReporter {
             .await
             .map_err(|e| e.to_string())?;
 
-        let pre_state_hash = Blake2b256Hash::from_byte_array(&block.pre_state_hash);
+        let pre_state_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
         let with_cost_accounting = !block.justifications.is_empty();
         runtime.set_block_data(BlockData::from_block(&block));
         runtime.reset(pre_state_hash).await?;
@@ -255,8 +255,8 @@ mod tests {
             block_number: 0.try_into().unwrap(),
             sender: Validator::new([0u8; 65]),
             seq_num: 0.try_into().unwrap(),
-            pre_state_hash: vec![],
-            post_state_hash: vec![],
+            pre_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
+            post_state_hash: rchain_models::block::state_hash::StateHash::new([0u8; 32]),
             justifications: vec![],
             bonds: BTreeMap::new(),
             rejected_deploys: BTreeSet::new(),

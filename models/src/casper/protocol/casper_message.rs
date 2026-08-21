@@ -508,8 +508,8 @@ pub struct BlockMessage {
     pub block_number: BlockHeight,
     pub sender: Validator,
     pub seq_num: SeqNum,
-    pub pre_state_hash: Vec<u8>,
-    pub post_state_hash: Vec<u8>,
+    pub pre_state_hash: StateHash,
+    pub post_state_hash: StateHash,
     pub justifications: Vec<BlockHash>,
     pub bonds: BTreeMap<Validator, NonNegI64>,
     pub rejected_deploys: std::collections::BTreeSet<Vec<u8>>,
@@ -535,8 +535,8 @@ impl BlockMessage {
             sender: Validator::try_from(bm.sender.as_slice())?,
             seq_num: SeqNum::try_from(bm.seq_num)
                 .map_err(|_| crate::errors::ModelsError::Malformed("negative sequence number"))?,
-            pre_state_hash: bm.pre_state_hash.clone(),
-            post_state_hash: bm.post_state_hash.clone(),
+            pre_state_hash: StateHash::try_from(bm.pre_state_hash.as_slice())?,
+            post_state_hash: StateHash::try_from(bm.post_state_hash.as_slice())?,
             justifications: bm
                 .justifications
                 .iter()
@@ -591,8 +591,8 @@ impl BlockMessage {
             block_number: i64::from(self.block_number),
             sender: self.sender.as_bytes().to_vec(),
             seq_num: i64::from(self.seq_num),
-            pre_state_hash: self.pre_state_hash.clone(),
-            post_state_hash: self.post_state_hash.clone(),
+            pre_state_hash: self.pre_state_hash.as_bytes().to_vec(),
+            post_state_hash: self.post_state_hash.as_bytes().to_vec(),
             justifications: justifications
                 .into_iter()
                 .map(|b| b.as_bytes().to_vec())
@@ -1080,8 +1080,8 @@ mod tests {
             block_number: 0.try_into().unwrap(),
             sender: validator(1),
             seq_num: 0.try_into().unwrap(),
-            pre_state_hash: vec![0u8; 32],
-            post_state_hash: vec![0u8; 32],
+            pre_state_hash: StateHash::new([0u8; 32]),
+            post_state_hash: StateHash::new([0u8; 32]),
             justifications: Vec::new(),
             bonds: BTreeMap::new(),
             rejected_deploys: std::collections::BTreeSet::new(),

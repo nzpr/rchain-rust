@@ -6,6 +6,7 @@ pub mod standard_deploys;
 use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::public_key::PublicKey;
+use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_version::CURRENT;
 use rchain_models::casper::protocol::casper_message::{
     BlockMessage, ProcessedDeploy, RholangState, SignedDeployData,
@@ -45,8 +46,8 @@ fn build_bonds_map(proof_of_stake: &ProofOfStake) -> BTreeMap<ModelsValidator, N
 /// `createBlockWithProcessedDeploys`).
 fn create_block_with_processed_deploys(
     genesis: &Genesis,
-    pre_state_hash: Vec<u8>,
-    post_state_hash: Vec<u8>,
+    pre_state_hash: StateHash,
+    post_state_hash: StateHash,
     processed_deploys: Vec<ProcessedDeploy>,
 ) -> Result<BlockMessage, String> {
     if let Some(failed) = processed_deploys.iter().find(|d| d.is_failed) {
@@ -125,8 +126,8 @@ pub async fn create_genesis_block(
 
     let unsigned_block = create_block_with_processed_deploys(
         genesis,
-        start_hash.to_byte_array().to_vec(),
-        state_hash.to_byte_array().to_vec(),
+        start_hash.into(),
+        state_hash.into(),
         processed_deploys,
     )?;
     let signed_block = validator.sign_block(&unsigned_block).map_err(|e| e.to_string())?;
