@@ -9,8 +9,10 @@
 #   tools/docker-network.sh logs <node>    tail a node's logs
 #   tools/docker-network.sh cli <node> <rnode subcommand...>
 #
-# Nodes serve Deploy+Propose+Repl all on the internal gRPC port 40402. `cli` runs the Rust
-# `rnode` client inside the network (via `docker run`), so the host needs only docker + openssl.
+# Nodes serve Deploy on the external gRPC port 40401 and Propose+Repl on the loopback-only
+# internal port 40402. `cli` runs the Rust `rnode` client *inside* the node container (via
+# `docker exec`) so it can reach the loopback-bound propose/repl server; the host needs only
+# docker + openssl.
 #
 # Prereqs: docker, openssl (to read the bootstrap node-id from its generated TLS cert).
 
@@ -146,12 +148,13 @@ cmd_logs() {
 cmd_cli() {
   local node="$1"
   shift
-  # Run the Rust client in a container on the network (reaching the node by name);
-  # the Rust client speaks the same gRPC protocol as the image's node binary.
+  # Run the Rust client *inside* the node container (via `docker exec`) so it can reach the
+  # loopback-bound internal propose/repl server (127.0.0.1:40402) as well as the deploy server
+  # (0.0.0.0:40401). No --grpc-port is passed: the client defaults to 40401 (deploy) or 40402
+  # (repl/propose), matching the node's port split.
   local tty=""
   [[ "${1:-}" == "repl" ]] && tty="-t"
-  docker run --rm -i $tty --network "$NETWORK" "$IMAGE" \
-    --grpc-host "$node" --grpc-port 40402 "$@"
+  docker exec -i $tty "$node" rnode --grpc-host localhost "$@"
 }
 
 case "${1:-}" in

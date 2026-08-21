@@ -127,8 +127,9 @@ so you can also reach a node from the host (HTTP, `curl`, etc.):
 
 ### Interacting from the CLI
 
-`cli <node> <subcommand…>` runs the Rust client **inside the network** (so it matches the image's
-node protocol), reaching `<node>` by name:
+`cli <node> <subcommand…>` runs the Rust client **inside the node container** via `docker exec`, so it
+can reach both the deploy server (external port **40401**) and the loopback-only propose/repl server
+(`127.0.0.1:40402`):
 
 ```sh
 tools/docker-network.sh cli bootstrap status
@@ -136,6 +137,12 @@ tools/docker-network.sh cli bootstrap repl          # interactive REPL against t
 tools/docker-network.sh cli peer1 status
 ```
 
-The `deploy` / `eval` subcommands read a file on the client; to use them with the containerized
-client, bind-mount the file, e.g. `docker run --rm -i -v "$PWD:/work" --network rnode-net rnode:local
---grpc-host bootstrap --grpc-port 40401 deploy /work/demo.rho`.
+No `--grpc-port` is passed: the client defaults to the right port per subcommand (`deploy`/`status`/
+`show-block`/… → 40401; `repl`/`eval`/`propose` → 40402), matching the node's port split.
+
+`deploy` / `eval` read a file at a path inside the container; copy a local file in first:
+
+```sh
+docker cp demo.rho bootstrap:/tmp/demo.rho
+tools/docker-network.sh cli bootstrap deploy /tmp/demo.rho
+```
