@@ -41,16 +41,28 @@ impl FringeData {
         Blake2b256Hash::create_many(&parts)
     }
 
-    pub fn from_proto(b: &FringeDataProto) -> Self {
-        FringeData {
-            fringe_hash: Blake2b256Hash::from_byte_array(&b.fringe_hash),
-            fringe: b.fringe.iter().map(|f| BlockHash::from_slice(f)).collect(),
-            fringe_diff: b.fringe_diff.iter().map(|f| BlockHash::from_slice(f)).collect(),
-            state_hash: Blake2b256Hash::from_byte_array(&b.state_hash),
+    pub fn from_proto(b: &FringeDataProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(FringeData {
+            fringe_hash: Blake2b256Hash::try_from(b.fringe_hash.as_slice())?,
+            fringe: b
+                .fringe
+                .iter()
+                .map(|f| BlockHash::try_from(f.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
+            fringe_diff: b
+                .fringe_diff
+                .iter()
+                .map(|f| BlockHash::try_from(f.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
+            state_hash: Blake2b256Hash::try_from(b.state_hash.as_slice())?,
             rejected_deploys: b.rejected_deploys.iter().cloned().collect(),
-            rejected_blocks: b.rejected_blocks.iter().map(|f| BlockHash::from_slice(f)).collect(),
+            rejected_blocks: b
+                .rejected_blocks
+                .iter()
+                .map(|f| BlockHash::try_from(f.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
             rejected_senders: b.rejected_senders.iter().cloned().collect(),
-        }
+        })
     }
 
     pub fn to_proto(&self) -> FringeDataProto {
@@ -71,7 +83,7 @@ impl FringeData {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
         let proto = FringeDataProto::decode(bytes).map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
-        Ok(FringeData::from_proto(&proto))
+        FringeData::from_proto(&proto)
     }
 }
 

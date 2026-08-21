@@ -82,6 +82,22 @@ impl Blake2b256Hash {
     }
 }
 
+/// Checked counterpart of [`Blake2b256Hash::from_byte_array`] for validate-on-ingress (a wrong-length
+/// wire/store key returns `Err` instead of panicking).
+impl TryFrom<&[u8]> for Blake2b256Hash {
+    type Error = CryptoError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != LENGTH {
+            return Err(CryptoError::InvalidLength {
+                expected: LENGTH,
+                actual: bytes.len(),
+            });
+        }
+        Ok(Self::from_byte_array(bytes))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

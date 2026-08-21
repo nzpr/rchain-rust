@@ -189,7 +189,8 @@ impl DeployGrpcServiceV1 {
                 request.hash
             ))
         })?;
-        let hash = BlockHash::from_slice(&bytes);
+        let hash = BlockHash::try_from(bytes.as_slice())
+            .map_err(|e| ServiceError::new(e.to_string()))?;
         self.block_report_api
             .block_report(&hash, request.force_replay)
             .await

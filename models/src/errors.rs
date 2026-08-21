@@ -35,3 +35,17 @@ impl fmt::Display for ModelsError {
 }
 
 impl std::error::Error for ModelsError {}
+
+impl From<rchain_crypto::errors::CryptoError> for ModelsError {
+    fn from(e: rchain_crypto::errors::CryptoError) -> Self {
+        match e {
+            rchain_crypto::errors::CryptoError::InvalidLength { expected, actual } => {
+                ModelsError::Length {
+                    got: actual,
+                    expected,
+                }
+            }
+            other => ModelsError::Decode(other.to_string()),
+        }
+    }
+}

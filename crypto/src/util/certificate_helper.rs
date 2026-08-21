@@ -294,8 +294,14 @@ mod tests {
         assert_eq!(addr, crate::hash::keccak256::hash(input)[12..].to_vec());
     }
 
-    fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("rchain_cert_helper_{}", std::process::id()));
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        // A unique per-test suffix avoids the shared-dir race when libtest runs these tests in
+        // parallel (a previous pid-only name made `remove_dir_all` delete another test's dir).
+        let dir = std::env::temp_dir().join(format!(
+            "rchain_cert_helper_{}_{}",
+            std::process::id(),
+            tag
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -327,7 +333,7 @@ mod tests {
         assert_eq!(Certificate::from_pem(&pem).expect("parse PEM"), cert);
 
         // Both file branches of `from_file` round-trip (PEM and DER).
-        let dir = temp_dir();
+        let dir = temp_dir("cert");
         let pem_path = dir.join("cert.pem");
         let der_path = dir.join("cert.der");
         fs::write(&pem_path, &pem).unwrap();
@@ -340,7 +346,7 @@ mod tests {
     #[test]
     fn read_key_pair_round_trips_private_key() {
         let key_pair = generate_key_pair();
-        let dir = temp_dir();
+        let dir = temp_dir("key_pair");
         let key_file = dir.join("private.pem");
 
         let pem = print_private_key(&key_pair.private_key).expect("print private key");

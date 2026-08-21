@@ -44,37 +44,45 @@ impl Hash for BlockMetadata {
 impl BlockMetadata {
     pub fn from_proto(b: &BlockMetadataProto) -> Result<Self, crate::errors::ModelsError> {
         Ok(BlockMetadata {
-            block_hash: BlockHash::from_slice(&b.block_hash),
+            block_hash: BlockHash::try_from(b.block_hash.as_slice())?,
             block_num: BlockHeight::try_from(b.block_num)
                 .map_err(|_| crate::errors::ModelsError::Malformed("negative block number"))?,
-            sender: Validator::from_slice(&b.sender),
+            sender: Validator::try_from(b.sender.as_slice())?,
             seq_num: SeqNum::try_from(b.seq_num)
                 .map_err(|_| crate::errors::ModelsError::Malformed("negative sequence number"))?,
-            justifications: b.justifications.iter().map(|j| BlockHash::from_slice(j)).collect(),
+            justifications: b
+                .justifications
+                .iter()
+                .map(|j| BlockHash::try_from(j.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
             bonds_map: b
                 .bonds
                 .iter()
                 .map(|bond| {
                     let stake = NonNegI64::try_from(bond.stake)
                         .map_err(|_| crate::errors::ModelsError::Malformed("negative bond stake"))?;
-                    Ok((Validator::from_slice(&bond.validator), stake))
+                    Ok((Validator::try_from(bond.validator.as_slice())?, stake))
                 })
                 .collect::<Result<_, crate::errors::ModelsError>>()?,
             validated: b.validated,
             validation_failed: b.validation_failed,
-            fringe: b.fringe.iter().map(|f| BlockHash::from_slice(f)).collect(),
+            fringe: b
+                .fringe
+                .iter()
+                .map(|f| BlockHash::try_from(f.as_slice()))
+                .collect::<Result<BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
             // The Scala `StateHash` is a `ByteString`, so `fromBlock` can produce an empty
             // `fringeStateHash`; the Rust fixed-width `StateHash` maps that to zero-fill (the empty
             // value is a transient pre-validation placeholder, never a real hash).
             fringe_state_hash: if b.fringe_state_hash.is_empty() {
                 StateHash::new([0u8; 32])
             } else {
-                StateHash::from_slice(&b.fringe_state_hash)
+                StateHash::try_from(b.fringe_state_hash.as_slice())?
             },
             member_of_fringe: if b.member_of_fringe.is_empty() {
                 None
             } else {
-                Some(Blake2b256Hash::from_byte_array(&b.member_of_fringe))
+                Some(Blake2b256Hash::try_from(b.member_of_fringe.as_slice())?)
             },
         })
     }

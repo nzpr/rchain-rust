@@ -457,7 +457,7 @@ fn system_deploy_info_with_event_data_from_wire(
         report.push(single_report_from_wire(r)?);
     }
     Ok(SystemDeployInfoWithEventData {
-        system_deploy: SystemDeployData::from_proto(system_deploy),
+        system_deploy: SystemDeployData::from_proto(system_deploy).map_err(|e| e.to_string())?,
         report,
     })
 }

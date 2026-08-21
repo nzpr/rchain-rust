@@ -61,9 +61,10 @@ TEST_ONLY_FILE_RE='(_tests?|test_)\.rs$|/property_tests\.rs$'
 #
 # The following are `assert!`/`assert_eq!` **internal invariants** on internally-produced data
 # (fixed-size-array constructor length checks, radix-tree corrupt-node detection, empty-channels /
-# channels==patterns, DAG-state contiguity, config buffer-size). NOTE: the `from_slice` length
-# asserts in block_hash/state_hash/validator are reachable from untrusted input at a few API
-# boundaries and remain a "validate-on-ingress" follow-up (tracked in spec/AUDIT.md).
+# channels==patterns, DAG-state contiguity, config buffer-size). The `from_slice` length asserts in
+# block_hash/state_hash/validator (and `Blake2b256Hash::from_byte_array`) are now reachable only from
+# internally-produced data: untrusted wire/API bytes use the checked `TryFrom<&[u8]>`/`try_from_hex`
+# constructors (validate-on-ingress, see spec/AUDIT.md §11 R12).
 WHITELIST_PANIC=(
   '/sdk/src/primitive.rs'
   '/regex/src/regex_pattern.rs'

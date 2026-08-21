@@ -309,15 +309,17 @@ pub enum SystemDeployData {
 }
 
 impl SystemDeployData {
-    pub fn from_proto(p: &SystemDeployDataProto) -> Self {
+    pub fn from_proto(p: &SystemDeployDataProto) -> Result<Self, crate::errors::ModelsError> {
         match &p.system_deploy {
             Some(system_deploy_data_proto::SystemDeploy::SlashSystemDeploy(sd)) => {
-                SystemDeployData::Slash(Validator::from_slice(&sd.slashed_validator))
+                Ok(SystemDeployData::Slash(Validator::try_from(
+                    sd.slashed_validator.as_slice(),
+                )?))
             }
             Some(system_deploy_data_proto::SystemDeploy::CloseBlockSystemDeploy(_)) => {
-                SystemDeployData::CloseBlock
+                Ok(SystemDeployData::CloseBlock)
             }
-            None => SystemDeployData::Empty,
+            None => Ok(SystemDeployData::Empty),
         }
     }
 
@@ -361,11 +363,10 @@ impl ProcessedSystemDeploy {
             p.deploy_log.iter().map(Event::from_proto).collect();
         let deploy_log = deploy_log?;
         if p.error_msg.is_empty() {
-            let system_deploy = p
-                .system_deploy
-                .as_ref()
-                .map(SystemDeployData::from_proto)
-                .unwrap_or(SystemDeployData::Empty);
+            let system_deploy = match p.system_deploy.as_ref() {
+                Some(sd) => SystemDeployData::from_proto(sd)?,
+                None => SystemDeployData::Empty,
+            };
             Ok(ProcessedSystemDeploy::Succeeded {
                 event_list: deploy_log,
                 system_deploy,
@@ -528,10 +529,10 @@ impl BlockMessage {
         Ok(BlockMessage {
             version: bm.version,
             shard_id: bm.shard_id.clone(),
-            block_hash: BlockHash::from_slice(&bm.block_hash),
+            block_hash: BlockHash::try_from(bm.block_hash.as_slice())?,
             block_number: BlockHeight::try_from(bm.block_number)
                 .map_err(|_| crate::errors::ModelsError::Malformed("negative block number"))?,
-            sender: Validator::from_slice(&bm.sender),
+            sender: Validator::try_from(bm.sender.as_slice())?,
             seq_num: SeqNum::try_from(bm.seq_num)
                 .map_err(|_| crate::errors::ModelsError::Malformed("negative sequence number"))?,
             pre_state_hash: bm.pre_state_hash.clone(),
@@ -539,19 +540,23 @@ impl BlockMessage {
             justifications: bm
                 .justifications
                 .iter()
-                .map(|b| BlockHash::from_slice(b))
-                .collect(),
+                .map(|b| BlockHash::try_from(b.as_slice()))
+                .collect::<Result<Vec<BlockHash>, crate::errors::ModelsError>>()?,
             bonds: bm
                 .bonds
                 .iter()
                 .map(|b| {
                     let stake = NonNegI64::try_from(b.stake)
                         .map_err(|_| crate::errors::ModelsError::Malformed("negative bond stake"))?;
-                    Ok((Validator::from_slice(&b.validator), stake))
+                    Ok((Validator::try_from(b.validator.as_slice())?, stake))
                 })
                 .collect::<Result<_, crate::errors::ModelsError>>()?,
             rejected_deploys: bm.rejected_deploys.iter().cloned().collect(),
-            rejected_blocks: bm.rejected_blocks.iter().map(|b| BlockHash::from_slice(b)).collect(),
+            rejected_blocks: bm
+                .rejected_blocks
+                .iter()
+                .map(|b| BlockHash::try_from(b.as_slice()))
+                .collect::<Result<std::collections::BTreeSet<BlockHash>, crate::errors::ModelsError>>()?,
             rejected_senders: bm.rejected_senders.iter().cloned().collect(),
             state: RholangState::from_proto(state)?,
             sig_algorithm: bm.sig_algorithm.clone(),
@@ -627,11 +632,15 @@ pub struct FinalizedFringe {
 }
 
 impl FinalizedFringe {
-    pub fn from_proto(f: &FinalizedFringeProto) -> Self {
-        FinalizedFringe {
-            hashes: f.hashes.iter().map(|h| BlockHash::from_slice(h)).collect(),
-            state_hash: StateHash::from_slice(&f.state_hash),
-        }
+    pub fn from_proto(f: &FinalizedFringeProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(FinalizedFringe {
+            hashes: f
+                .hashes
+                .iter()
+                .map(|h| BlockHash::try_from(h.as_slice()))
+                .collect::<Result<Vec<BlockHash>, crate::errors::ModelsError>>()?,
+            state_hash: StateHash::try_from(f.state_hash.as_slice())?,
+        })
     }
     pub fn to_proto(&self) -> FinalizedFringeProto {
         FinalizedFringeProto {
@@ -644,7 +653,7 @@ impl FinalizedFringe {
     }
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
         let proto = FinalizedFringeProto::decode(bytes).map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
-        Ok(FinalizedFringe::from_proto(&proto))
+        FinalizedFringe::from_proto(&proto)
     }
 }
 
@@ -780,11 +789,11 @@ impl BlockRequest {
 }
 
 impl BlockHashMessage {
-    pub fn from_proto(m: &BlockHashMessageProto) -> Self {
-        BlockHashMessage {
-            block_hash: BlockHash::from_slice(&m.hash),
+    pub fn from_proto(m: &BlockHashMessageProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(BlockHashMessage {
+            block_hash: BlockHash::try_from(m.hash.as_slice())?,
             block_creator: m.block_creator.clone(),
-        }
+        })
     }
     pub fn to_proto(&self) -> BlockHashMessageProto {
         BlockHashMessageProto {
@@ -798,7 +807,7 @@ impl BlockHashMessage {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
         let proto = BlockHashMessageProto::decode(bytes)
             .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
-        Ok(BlockHashMessage::from_proto(&proto))
+        BlockHashMessage::from_proto(&proto)
     }
 }
 
@@ -810,14 +819,16 @@ impl BlockHashMessage {
 const STORE_NODE_KEY_NONE_INDEX: i32 = 0x100;
 
 /// Decode a `(hash, index)` store-node key (port of `StoreNodeKey.from`).
-fn store_node_key_from_proto(s: &StoreNodeKeyProto) -> (Blake2b256Hash, Option<u8>) {
-    let hash = Blake2b256Hash::from_byte_array(&s.hash);
+fn store_node_key_from_proto(
+    s: &StoreNodeKeyProto,
+) -> Result<(Blake2b256Hash, Option<u8>), crate::errors::ModelsError> {
+    let hash = Blake2b256Hash::try_from(s.hash.as_slice())?;
     let idx = if s.index == STORE_NODE_KEY_NONE_INDEX {
         None
     } else {
         Some(s.index as u8)
     };
-    (hash, idx)
+    Ok((hash, idx))
 }
 
 /// Encode a `(hash, index)` store-node key (port of `StoreNodeKey.toProto`).
@@ -837,12 +848,16 @@ pub struct StoreItemsMessageRequest {
 }
 
 impl StoreItemsMessageRequest {
-    pub fn from_proto(m: &StoreItemsMessageRequestProto) -> Self {
-        StoreItemsMessageRequest {
-            start_path: m.start_path.iter().map(store_node_key_from_proto).collect(),
+    pub fn from_proto(m: &StoreItemsMessageRequestProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(StoreItemsMessageRequest {
+            start_path: m
+                .start_path
+                .iter()
+                .map(store_node_key_from_proto)
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
             skip: m.skip,
             take: m.take,
-        }
+        })
     }
     pub fn to_proto(&self) -> StoreItemsMessageRequestProto {
         StoreItemsMessageRequestProto {
@@ -857,7 +872,7 @@ impl StoreItemsMessageRequest {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
         let proto = StoreItemsMessageRequestProto::decode(bytes)
             .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
-        Ok(Self::from_proto(&proto))
+        Self::from_proto(&proto)
     }
 }
 
@@ -871,21 +886,29 @@ pub struct StoreItemsMessage {
 }
 
 impl StoreItemsMessage {
-    pub fn from_proto(m: &StoreItemsMessageProto) -> Self {
-        StoreItemsMessage {
-            start_path: m.start_path.iter().map(store_node_key_from_proto).collect(),
-            last_path: m.last_path.iter().map(store_node_key_from_proto).collect(),
+    pub fn from_proto(m: &StoreItemsMessageProto) -> Result<Self, crate::errors::ModelsError> {
+        Ok(StoreItemsMessage {
+            start_path: m
+                .start_path
+                .iter()
+                .map(store_node_key_from_proto)
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
+            last_path: m
+                .last_path
+                .iter()
+                .map(store_node_key_from_proto)
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
             history_items: m
                 .history_items
                 .iter()
-                .map(|y| (Blake2b256Hash::from_byte_array(&y.key), y.value.clone()))
-                .collect(),
+                .map(|y| Ok((Blake2b256Hash::try_from(y.key.as_slice())?, y.value.clone())))
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
             data_items: m
                 .data_items
                 .iter()
-                .map(|y| (Blake2b256Hash::from_byte_array(&y.key), y.value.clone()))
-                .collect(),
-        }
+                .map(|y| Ok((Blake2b256Hash::try_from(y.key.as_slice())?, y.value.clone())))
+                .collect::<Result<_, crate::errors::ModelsError>>()?,
+        })
     }
     pub fn to_proto(&self) -> StoreItemsMessageProto {
         StoreItemsMessageProto {
@@ -915,7 +938,7 @@ impl StoreItemsMessage {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::errors::ModelsError> {
         let proto = StoreItemsMessageProto::decode(bytes)
             .map_err(|e| crate::errors::ModelsError::Decode(e.to_string()))?;
-        Ok(Self::from_proto(&proto))
+        Self::from_proto(&proto)
     }
 }
 
@@ -963,10 +986,7 @@ impl CasperMessage {
                 hash: m.hash.clone(),
             })),
             CasperMessageProto::BlockHashMessage(m) => Ok(CasperMessage::BlockHashMessage(
-                BlockHashMessage {
-                    block_hash: BlockHash::from_slice(&m.hash),
-                    block_creator: m.block_creator.clone(),
-                },
+                BlockHashMessage::from_proto(m)?,
             )),
             CasperMessageProto::HasBlock(m) => {
                 Ok(CasperMessage::HasBlock(HasBlock { hash: m.hash.clone() }))
@@ -980,7 +1000,7 @@ impl CasperMessage {
                 Ok(CasperMessage::ForkChoiceTipRequest(ForkChoiceTipRequest))
             }
             CasperMessageProto::FinalizedFringe(m) => Ok(CasperMessage::FinalizedFringe(
-                FinalizedFringe::from_proto(m),
+                FinalizedFringe::from_proto(m)?,
             )),
             CasperMessageProto::FinalizedFringeRequest(m) => Ok(
                 CasperMessage::FinalizedFringeRequest(FinalizedFringeRequest {
@@ -990,11 +1010,11 @@ impl CasperMessage {
             ),
             CasperMessageProto::StoreItemsMessageRequest(m) => {
                 Ok(CasperMessage::StoreItemsMessageRequest(
-                    StoreItemsMessageRequest::from_proto(m),
+                    StoreItemsMessageRequest::from_proto(m)?,
                 ))
             }
             CasperMessageProto::StoreItemsMessage(m) => {
-                Ok(CasperMessage::StoreItemsMessage(StoreItemsMessage::from_proto(m)))
+                Ok(CasperMessage::StoreItemsMessage(StoreItemsMessage::from_proto(m)?))
             }
         }
     }

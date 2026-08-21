@@ -428,8 +428,13 @@ deviation) → verification.
   `from_slice` panicked on wrong-length wire input (whitelisted in the gate); `BlockHash::from_hex`
   used lax `unsafe_decode`. **Fix:** `TryFrom<&[u8]>` checked constructors (a new `ModelsError::Length`
   variant) + `BlockHash::try_from_hex` (via `base16::try_decode`); the `/reporting/trace` ingress now
-  returns 400 instead of panicking. Remaining internal `from_slice` call sites are a tracked follow-up
-  (shrink the `tools/audit-type-system.sh` whitelist as they migrate). **Pure bug fix.**
+  returns 400 instead of panicking. Completed in the follow-up pass: the wire-ingress decoders
+  (`BlockMessage`/`BlockMetadata`/`FringeData`/`FinalizedFringe`/`BlockHashMessage`/`StoreItemsMessage*`/
+  `SystemDeployData` `from_proto`/`from_bytes`) and the API hex-query sites (`block_api_impl`,
+  `deploy_grpc_service_v1`) now use `TryFrom` and return `Result`; `Blake2b256Hash::from_byte_array`
+  gained a `TryFrom<&[u8]>` and the state-sync `StoreItemsMessage` path uses it. The panicking
+  `from_slice`/`from_byte_array` are now reachable only from internally-produced fixed-width data
+  (internal invariants). **Pure bug fix.**
 
 **Verification (this pass):** `cargo check --workspace` clean; `tools/audit-type-system.sh` zero hard
 violations (the `expect(Tok::…)` parser exclusion was widened to cover the `with_depth` receiver `p`);

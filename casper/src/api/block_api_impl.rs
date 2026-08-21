@@ -557,7 +557,8 @@ impl BlockApi for BlockApiImpl {
             .ok_or_else(|| format!("Input hash value is not valid hex string: {hash}"))?;
         let block_opt = if hash.len() == 64 {
             self.block_store
-                .get(&[BlockHash::from_slice(&hash_bytes)])
+                .get(&[BlockHash::try_from(hash_bytes.as_slice())
+                    .map_err(|e| e.to_string())?])
                 .await?
                 .pop()
                 .flatten()
@@ -588,7 +589,9 @@ impl BlockApi for BlockApiImpl {
         let block = self.get_block_unsafe(&hash).await?;
         let state_hash = StateHash::from_slice(&block.post_state_hash);
         let bonds = self.runtime.compute_bonds(&state_hash).await?;
-        Ok(bonds.contains_key(&Validator::from_slice(public_key)))
+        Ok(bonds.contains_key(
+            &Validator::try_from(public_key).map_err(|e| e.to_string())?,
+        ))
     }
 
     async fn exploratory_deploy(
@@ -612,7 +615,8 @@ impl BlockApi for BlockApiImpl {
                 let bytes = base16::decode(h)
                     .ok_or_else(|| format!("Input hash value is not valid hex string: {h}"))?;
                 self.block_store
-                    .get(&[BlockHash::from_slice(&bytes)])
+                    .get(&[BlockHash::try_from(bytes.as_slice())
+                        .map_err(|e| e.to_string())?])
                     .await?
                     .pop()
                     .flatten()
@@ -641,7 +645,7 @@ impl BlockApi for BlockApiImpl {
     ) -> ApiErr<(Vec<Par>, LightBlockInfo)> {
         let bytes = base16::decode(block_hash)
             .ok_or_else(|| format!("Invalid block hash base 16 encoding, {block_hash}"))?;
-        let hash = BlockHash::from_slice(&bytes);
+        let hash = BlockHash::try_from(bytes.as_slice()).map_err(|e| e.to_string())?;
         self.get_data_at_par_raw(par, &hash, use_pre_state_hash).await
     }
 
@@ -654,7 +658,8 @@ impl BlockApi for BlockApiImpl {
 
     async fn is_finalized(&self, hash: &str) -> ApiErr<bool> {
         let dag = self.dag.get_representation().await;
-        let given = BlockHash::from_slice(&base16::try_decode(hash)?);
+        let given =
+            BlockHash::try_from(base16::try_decode(hash)?.as_slice()).map_err(|e| e.to_string())?;
         Ok(dag.is_finalized(&given))
     }
 
