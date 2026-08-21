@@ -88,3 +88,25 @@ impl KeySegment {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_from_rejects_oversized_segment() {
+        // ≤127 bytes is the radix-tree wire invariant; 128 must be rejected, not truncated.
+        assert!(KeySegment::try_from(vec![0u8; 127]).is_ok());
+        assert!(KeySegment::try_from(vec![0u8; 128]).is_err());
+    }
+
+    #[test]
+    fn common_prefix_splits_into_prefix_and_remainders() {
+        let a = KeySegment::new(vec![1, 2, 3]);
+        let b = KeySegment::new(vec![1, 2, 4]);
+        let (prefix, ra, rb) = KeySegment::common_prefix(&a, &b);
+        assert_eq!(prefix.as_bytes(), &[1, 2]);
+        assert_eq!(ra.as_bytes(), &[3]);
+        assert_eq!(rb.as_bytes(), &[4]);
+    }
+}

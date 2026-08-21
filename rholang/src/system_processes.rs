@@ -1117,4 +1117,75 @@ mod tests {
         let map = RhoMap::unapply(&produced[0].1.pars[0]).expect("getBonds returns a map");
         assert_eq!(map.len(), 2);
     }
+
+    #[tokio::test]
+    async fn rev_vault_deposit_transfer_and_get_balance() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+        let vault = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REV_VAULT)
+            .expect("revVault definition");
+
+        let alice = "alice".to_string();
+        let bob = "bob".to_string();
+
+        // deposit(alice, 100, _) and deposit(bob, 50, _)
+        for (addr, amt) in [(&alice, 100), (&bob, 50)] {
+            let ret = FixedChannels::stdout();
+            (vault.handler)(vec![lpw(vec![
+                RhoString::apply("deposit".to_string()),
+                RhoList::apply(vec![RhoString::apply(addr.clone()), RhoNumber::apply(amt), ret]),
+            ])])
+            .await
+            .unwrap();
+        }
+
+        // transfer(alice, bob, 30, _)
+        let ret = FixedChannels::stdout();
+        (vault.handler)(vec![lpw(vec![
+            RhoString::apply("transfer".to_string()),
+            RhoList::apply(vec![
+                RhoString::apply(alice.clone()),
+                RhoString::apply(bob.clone()),
+                RhoNumber::apply(30),
+                ret,
+            ]),
+        ])])
+        .await
+        .unwrap();
+
+        // getBalance(alice, ret) and getBalance(bob, ret)
+        let alice_ret = FixedChannels::stdout_ack();
+        (vault.handler)(vec![lpw(vec![
+            RhoString::apply("getBalance".to_string()),
+            RhoList::apply(vec![RhoString::apply(alice.clone()), alice_ret.clone()]),
+        ])])
+        .await
+        .unwrap();
+        let bob_ret = FixedChannels::stdout();
+        (vault.handler)(vec![lpw(vec![
+            RhoString::apply("getBalance".to_string()),
+            RhoList::apply(vec![RhoString::apply(bob.clone()), bob_ret.clone()]),
+        ])])
+        .await
+        .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        // 2 deposits + 1 transfer + 2 getBalance = 5 produces.
+        assert_eq!(produced.len(), 5);
+        // The last two are the getBalance replies.
+        assert_eq!(produced[3].0, alice_ret);
+        assert_eq!(
+            RhoNumber::unapply(&produced[3].1.pars[0]).expect("alice balance"),
+            70
+        );
+        assert_eq!(produced[4].0, bob_ret);
+        assert_eq!(
+            RhoNumber::unapply(&produced[4].1.pars[0]).expect("bob balance"),
+            80
+        );
+    }
 }

@@ -163,13 +163,105 @@ impl Tuplespace for ChargingRSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
     use rchain_models::ast::Par;
+    use rchain_rspace::errors::RSpaceError;
+    use std::sync::Mutex;
+
+    use crate::accounting::Cost;
 
     fn par(exprs: Vec<Expr>) -> Par {
         Par {
             exprs,
             ..Default::default()
         }
+    }
+
+    fn lpw(pars: Vec<Par>) -> ListParWithRandom {
+        ListParWithRandom {
+            pars,
+            random_state: Blake2b512Random::new_random(128),
+        }
+    }
+
+    struct MockSpace {
+        produced: Mutex<Vec<(Par, ListParWithRandom, bool)>>,
+    }
+
+    #[async_trait]
+    impl RSpaceTuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for MockSpace {
+        async fn consume(
+            &self,
+            _channels: &[Par],
+            _patterns: &[BindPattern],
+            _continuation: TaggedContinuation,
+            _persist: bool,
+            _peeks: BTreeSet<usize>,
+        ) -> Result<
+            Option<(
+                ContResult<Par, BindPattern, TaggedContinuation>,
+                Vec<RSpaceResult<Par, ListParWithRandom>>,
+            )>,
+            RSpaceError,
+        > {
+            Ok(None)
+        }
+
+        async fn produce(
+            &self,
+            channel: Par,
+            data: ListParWithRandom,
+            persist: bool,
+        ) -> Result<
+            Option<(
+                ContResult<Par, BindPattern, TaggedContinuation>,
+                Vec<RSpaceResult<Par, ListParWithRandom>>,
+            )>,
+            RSpaceError,
+        > {
+            self.produced
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push((channel, data, persist));
+            Ok(None)
+        }
+
+        async fn install(
+            &self,
+            _channels: &[Par],
+            _patterns: &[BindPattern],
+            _continuation: TaggedContinuation,
+        ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn charging_rspace_charges_and_enforces_balance() {
+        let mock: RhoTuplespace = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let cost = Arc::new(CostAccounting::from_initial(Cost::new(1_000_000, "init")));
+        let charging = ChargingRSpace::new(mock, cost.clone());
+
+        charging
+            .produce(&par(vec![Expr::GInt(1)]), lpw(vec![par(vec![Expr::GInt(2)])]), false)
+            .await
+            .unwrap();
+        assert!(cost.total_charged() > 0, "produce must charge storage/event cost");
+
+        // A near-zero balance is exhausted by the upfront storage charge.
+        let tiny_cost = Arc::new(CostAccounting::from_initial(Cost::new(1, "tiny")));
+        let tiny = ChargingRSpace::new(
+            Arc::new(MockSpace {
+                produced: Mutex::new(Vec::new()),
+            }),
+            tiny_cost,
+        );
+        let err = tiny
+            .produce(&par(vec![Expr::GInt(1)]), lpw(vec![par(vec![Expr::GInt(2)])]), false)
+            .await;
+        assert!(err.is_err(), "exhausted balance must fail produce");
     }
 
     #[test]

@@ -22,6 +22,7 @@ IV.
 | How Rust made the Scala fragility explicit (bugs caught, production-readiness) | [`spec/RUST-VS-SCALA.md`](spec/RUST-VS-SCALA.md) |
 | Adversarial-audit findings register (incl. §9 rust-first fragility audit) | [`spec/AUDIT.md`](spec/AUDIT.md) |
 | Native system contracts (registry/PoS/vault state model + replay determinism) | [`spec/RUST-FIRST.md`](spec/RUST-FIRST.md) |
+| Test-coverage audit & gap analysis | [`spec/TEST-COVERAGE.md`](spec/TEST-COVERAGE.md) |
 | Machine-checked Lean/Coq definitions & proofs | [`spec/`](spec/) |
 | Why the rewrite + layer map / module status (port appendix) | [`docs/src/contributor/why-rust.md`](docs/src/contributor/why-rust.md), [`docs/src/contributor/architecture.md`](docs/src/contributor/architecture.md) |
 

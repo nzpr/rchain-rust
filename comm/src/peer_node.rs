@@ -184,4 +184,17 @@ mod tests {
         );
         assert_eq!(PeerNode::from_address(&peer.to_address()).unwrap(), peer);
     }
+
+    #[test]
+    fn from_hex_rejects_malformed_input() {
+        assert!(NodeIdentifier::from_hex("abc").is_err(), "odd-length must be rejected");
+        assert!(NodeIdentifier::from_hex("zz").is_err(), "non-hex must be rejected");
+    }
+
+    #[test]
+    fn from_address_rejects_malformed_uris() {
+        assert!(PeerNode::from_address("not-an-rnode-uri").is_err());
+        assert!(PeerNode::from_address("rnode://zz@example.com?protocol=1&discovery=2").is_err());
+        assert!(PeerNode::from_address("rnode://0102@example.com").is_err(), "missing query");
+    }
 }

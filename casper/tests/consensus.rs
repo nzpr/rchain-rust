@@ -15,12 +15,16 @@ fn fixed_rand() -> Blake2b512Random {
 /// A minimal signed deploy with the given term (signature verification is deferred to the
 /// deploy-acceptance path, so the sig/deployer fields are left empty here).
 fn deploy(term: &str) -> SignedDeployData {
+    deploy_with_limit(term, 90_000)
+}
+
+fn deploy_with_limit(term: &str, limit: i64) -> SignedDeployData {
     SignedDeployData {
         data: DeployData {
             term: term.to_string(),
             timestamp: 0,
             phlo_price: 1,
-            phlo_limit: 90_000,
+            phlo_limit: limit,
             valid_after_block_number: 0,
             shard_id: "root".to_string(),
         },
@@ -72,4 +76,35 @@ async fn empty_state_hash_fixed_matches_runtime() {
         rchain_casper::interpreter_util::empty_state_hash_fixed(),
         "the hard-coded genesis pre-state hash must match the computed empty state"
     );
+}
+
+#[tokio::test]
+async fn deploy_exceeding_phlo_limit_fails_and_next_runs() {
+    let rm = build_runtime_manager().await;
+    let rand = fixed_rand();
+    let starving = deploy_with_limit(r#"@"chan"!(42)"#, 1);
+    let normal = deploy(r#"@"chan2"!(43)"#);
+
+    let (_, _, results) = rm
+        .compute_genesis(
+            &[starving, normal],
+            &rand,
+            BlockData::empty(),
+            &std::collections::BTreeMap::new(),
+        )
+        .await
+        .expect("compute_genesis");
+
+    assert!(results[0].deploy.is_failed, "phlo-exhausted deploy must be failed");
+    assert!(
+        results[0]
+            .eval_result
+            .errors
+            .iter()
+            .any(|e| matches!(e, rchain_rholang::errors::RholangError::OutOfPhlogistonsError)),
+        "failure must be an OutOfPhlogistonsError"
+    );
+
+    // The next deploy still runs: the per-deploy phlo `set` resets the balance.
+    assert!(!results[1].deploy.is_failed, "subsequent deploy must succeed");
 }

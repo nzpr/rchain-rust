@@ -282,4 +282,56 @@ mod tests {
         assert_eq!(next[&1].id, 1);
         assert_eq!(next[&2].id, 2);
     }
+
+    #[test]
+    fn calculate_finalization_advances_fringe_on_fork() {
+        // Genesis by a non-bonded sender (99); three bonded senders 0/1/2.
+        let genesis = msg(99, 99, 0, &[], &[99]);
+        // Layer 1: a three-way fork — each sees only genesis.
+        let a1 = msg(10, 0, 1, &[99], &[99, 10]);
+        let b1 = msg(11, 1, 1, &[99], &[99, 11]);
+        let c1 = msg(12, 2, 1, &[99], &[99, 12]);
+        // Layer 2 + 3: convergence.
+        let a2 = msg(20, 0, 2, &[10, 11, 12], &[99, 10, 11, 12, 20]);
+        let b2 = msg(21, 1, 2, &[10, 11, 12], &[99, 10, 11, 12, 21]);
+        let c2 = msg(22, 2, 2, &[10, 11, 12], &[99, 10, 11, 12, 22]);
+        let a3 = msg(30, 0, 3, &[20, 21, 22], &[99, 10, 11, 12, 20, 21, 22, 30]);
+        let b3 = msg(31, 1, 3, &[20, 21, 22], &[99, 10, 11, 12, 20, 21, 22, 31]);
+        let c3 = msg(32, 2, 3, &[20, 21, 22], &[99, 10, 11, 12, 20, 21, 22, 32]);
+
+        let map: BTreeMap<i32, Message<i32, i32>> = [
+            genesis.clone(), a1.clone(), b1.clone(), c1.clone(), a2.clone(), b2.clone(), c2.clone(),
+            a3.clone(), b3.clone(), c3.clone(),
+        ]
+        .into_iter()
+        .map(|m| (m.id, m))
+        .collect();
+        let bonds: BTreeMap<i32, NonNegI64> =
+            [(0, 10), (1, 10), (2, 10)].into_iter().map(|(k, v)| (k, NonNegI64::try_from(v).unwrap())).collect();
+
+        let justifications: BTreeSet<Message<i32, i32>> =
+            [a3, b3, c3].into_iter().collect();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let (_parent, new_fringe) = finalizer.calculate_finalization(&justifications, &bonds);
+        let ids: BTreeSet<i32> = new_fringe.expect("fringe should advance").into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, [10, 11, 12].into_iter().collect());
+    }
+
+    #[test]
+    fn calculate_finalization_returns_none_without_supermajority_support() {
+        // A lockstep chain: only one sender's message per layer, so no full-partition support.
+        let genesis = msg(99, 99, 0, &[], &[99]);
+        let a1 = msg(10, 0, 1, &[99], &[99, 10]);
+        let b1 = msg(11, 1, 1, &[10], &[99, 10, 11]);
+        let c1 = msg(12, 2, 1, &[11], &[99, 10, 11, 12]);
+        let map: BTreeMap<i32, Message<i32, i32>> =
+            [genesis, a1, b1, c1].into_iter().map(|m| (m.id, m)).collect();
+        let bonds: BTreeMap<i32, NonNegI64> =
+            [(0, 10), (1, 10), (2, 10)].into_iter().map(|(k, v)| (k, NonNegI64::try_from(v).unwrap())).collect();
+        let justifications: BTreeSet<Message<i32, i32>> =
+            [map[&10].clone(), map[&11].clone(), map[&12].clone()].into_iter().collect();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let (_parent, new_fringe) = finalizer.calculate_finalization(&justifications, &bonds);
+        assert!(new_fringe.is_none(), "lockstep chain must not finalize");
+    }
 }

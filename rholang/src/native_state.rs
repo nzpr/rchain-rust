@@ -221,4 +221,40 @@ mod tests {
     fn decode_bonds_rejects_trailing_bytes() {
         assert!(decode_bonds(&[0u8; 3]).is_err());
     }
+
+    #[tokio::test]
+    async fn slash_removes_validator_from_bonds() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let v1 = validator(1);
+        let v2 = validator(2);
+        let mut bonds = BTreeMap::new();
+        bonds.insert(v1.clone(), NonNegI64::try_from(10).unwrap());
+        bonds.insert(v2.clone(), NonNegI64::try_from(20).unwrap());
+        native.set_bonds(&bonds);
+
+        native.slash(&v1).await.unwrap().unwrap();
+
+        let after = native.bonds().await.unwrap();
+        assert!(!after.contains_key(&v1), "slashed validator removed");
+        assert_eq!(after[&v2], NonNegI64::try_from(20).unwrap());
+    }
+
+    #[tokio::test]
+    async fn pre_charge_deducts_and_rejects_insufficient() {
+        let native = NativeSystemState::new(Arc::new(InMemNativeStore::empty()));
+        let pk = PublicKey::new(vec![1u8; 65]);
+        let addr = RevAddress::from_public_key(&pk).unwrap().to_base58();
+        native.set_vault_balance(&addr, NonNegI64::try_from(100).unwrap());
+
+        // Deduct 40 -> 60.
+        native.pre_charge(&pk, 40).await.unwrap().unwrap();
+        assert_eq!(
+            i64::from(native.vault_balance(&addr).await.unwrap().unwrap()),
+            60
+        );
+
+        // Deducting more than the balance fails via the user-error branch.
+        let result = native.pre_charge(&pk, 100).await.unwrap();
+        assert!(result.is_err(), "insufficient funds must be rejected");
+    }
 }

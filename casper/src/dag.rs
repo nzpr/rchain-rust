@@ -406,6 +406,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn insert_rejects_equivocation_same_seq_num() {
+        let storage = build_storage().await;
+        let first = hash(1);
+        let second = hash(2);
+
+        storage
+            .insert(meta(first, &[], 0), block(first))
+            .await
+            .unwrap();
+
+        // A second, distinct block by the same sender reusing `seq_num` is rejected (H-1), before
+        // any partial write.
+        let err = storage.insert(meta(second, &[], 0), block(second)).await;
+        assert!(err.is_err(), "equivocation must be rejected");
+        assert!(
+            err.unwrap_err().contains("equivocation"),
+            "error should mention equivocation"
+        );
+
+        // The first block's metadata is still present and unchanged.
+        let stored = storage.lookup(&first).await.unwrap().unwrap();
+        assert_eq!(stored.block_hash, first);
+    }
+
+    #[tokio::test]
     async fn deploy_pool_round_trip() {
         let storage = build_storage().await;
         let deploy = SignedDeployData {

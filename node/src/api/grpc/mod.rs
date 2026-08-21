@@ -124,3 +124,19 @@ pub async fn serve_internal(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limiter_throttles_over_capacity() {
+        let limiter = RateLimiter::new(3);
+        // The first `max_per_sec` requests within the same window are admitted…
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        // …and the next is rejected (the 4 calls happen well within one second).
+        assert!(!limiter.allow());
+    }
+}
