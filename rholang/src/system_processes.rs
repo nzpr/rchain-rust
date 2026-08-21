@@ -12,9 +12,10 @@ use rchain_crypto::signatures::ed25519::Ed25519;
 use rchain_crypto::signatures::secp256k1::Secp256k1;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
-use rchain_shared::refined::{BlockHeight, SeqNum};
+use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 use rchain_models::rholang::RhoType::{
-    RhoBoolean, RhoByteArray, RhoDeployerId, RhoName, RhoNumber, RhoString, RhoSysAuthToken, RhoUri,
+    RhoBoolean, RhoByteArray, RhoDeployerId, RhoList, RhoMap, RhoName, RhoNil, RhoNumber, RhoSet,
+    RhoString, RhoSysAuthToken, RhoTupleN, RhoUri,
 };
 use rchain_models::runtime::ListParWithRandom;
 
@@ -89,6 +90,15 @@ impl FixedChannels {
     pub fn sys_auth_token_ops() -> Par {
         byte_name(18)
     }
+    pub fn pos() -> Par {
+        byte_name(19)
+    }
+    pub fn rev_vault() -> Par {
+        byte_name(20)
+    }
+    pub fn multi_sig_rev_vault() -> Par {
+        byte_name(21)
+    }
 }
 
 /// The dispatch-table ids (port of `SystemProcesses.BodyRefs`).
@@ -109,6 +119,12 @@ impl BodyRefs {
     pub const DEPLOYER_ID_OPS: i64 = 14;
     pub const REG_OPS: i64 = 15;
     pub const SYS_AUTHTOKEN_OPS: i64 = 16;
+    pub const REG_LOOKUP: i64 = 17;
+    pub const REG_INSERT_RANDOM: i64 = 18;
+    pub const REG_INSERT_SIGNED: i64 = 19;
+    pub const POS: i64 = 20;
+    pub const REV_VAULT: i64 = 21;
+    pub const MULTI_SIG_REV_VAULT: i64 = 22;
 }
 
 /// Per-block data exposed to the `rho:block:data` contract (port of `SystemProcesses.BlockData`).
@@ -143,6 +159,8 @@ pub struct Definition {
     pub urn: String,
     pub fixed_channel: Par,
     pub arity: i32,
+    /// Whether the last argument is a remainder (variable-arity method dispatch).
+    pub remainder: bool,
     pub body_ref: i64,
     pub handler: ScalaBodyFn,
 }
@@ -182,6 +200,7 @@ impl SystemProcesses {
                 urn: "rho:io:stdout".to_string(),
                 fixed_channel: FixedChannels::stdout(),
                 arity: 1,
+                remainder: false,
                 body_ref: BodyRefs::STDOUT,
                 handler: self.stdout(),
             },
@@ -189,6 +208,7 @@ impl SystemProcesses {
                 urn: "rho:io:stdoutAck".to_string(),
                 fixed_channel: FixedChannels::stdout_ack(),
                 arity: 2,
+                remainder: false,
                 body_ref: BodyRefs::STDOUT_ACK,
                 handler: self.stdout_ack(),
             },
@@ -196,6 +216,7 @@ impl SystemProcesses {
                 urn: "rho:io:stderr".to_string(),
                 fixed_channel: FixedChannels::stderr(),
                 arity: 1,
+                remainder: false,
                 body_ref: BodyRefs::STDERR,
                 handler: self.stderr(),
             },
@@ -203,6 +224,7 @@ impl SystemProcesses {
                 urn: "rho:io:stderrAck".to_string(),
                 fixed_channel: FixedChannels::stderr_ack(),
                 arity: 2,
+                remainder: false,
                 body_ref: BodyRefs::STDERR_ACK,
                 handler: self.stderr_ack(),
             },
@@ -210,6 +232,7 @@ impl SystemProcesses {
                 urn: "rho:block:data".to_string(),
                 fixed_channel: FixedChannels::get_block_data(),
                 arity: 1,
+                remainder: false,
                 body_ref: BodyRefs::GET_BLOCK_DATA,
                 handler: self.get_block_data(),
             },
@@ -217,6 +240,7 @@ impl SystemProcesses {
                 urn: "rho:rev:address".to_string(),
                 fixed_channel: FixedChannels::rev_address(),
                 arity: 3,
+                remainder: false,
                 body_ref: BodyRefs::REV_ADDRESS,
                 handler: self.rev_address(),
             },
@@ -224,6 +248,7 @@ impl SystemProcesses {
                 urn: "rho:rchain:deployerId:ops".to_string(),
                 fixed_channel: FixedChannels::deployer_id_ops(),
                 arity: 3,
+                remainder: false,
                 body_ref: BodyRefs::DEPLOYER_ID_OPS,
                 handler: self.deployer_id_ops(),
             },
@@ -231,6 +256,7 @@ impl SystemProcesses {
                 urn: "rho:registry:ops".to_string(),
                 fixed_channel: FixedChannels::reg_ops(),
                 arity: 3,
+                remainder: false,
                 body_ref: BodyRefs::REG_OPS,
                 handler: self.registry_ops(),
             },
@@ -238,13 +264,63 @@ impl SystemProcesses {
                 urn: "sys:authToken:ops".to_string(),
                 fixed_channel: FixedChannels::sys_auth_token_ops(),
                 arity: 3,
+                remainder: false,
                 body_ref: BodyRefs::SYS_AUTHTOKEN_OPS,
                 handler: self.sys_auth_token_ops(),
+            },
+            Definition {
+                urn: "rho:registry:lookup".to_string(),
+                fixed_channel: FixedChannels::reg_lookup(),
+                arity: 2,
+                remainder: false,
+                body_ref: BodyRefs::REG_LOOKUP,
+                handler: self.registry_lookup(),
+            },
+            Definition {
+                urn: "rho:registry:insertArbitrary".to_string(),
+                fixed_channel: FixedChannels::reg_insert_random(),
+                arity: 2,
+                remainder: false,
+                body_ref: BodyRefs::REG_INSERT_RANDOM,
+                handler: self.registry_insert_arbitrary(),
+            },
+            Definition {
+                urn: "rho:registry:insertSigned:secp256k1".to_string(),
+                fixed_channel: FixedChannels::reg_insert_signed(),
+                arity: 3,
+                remainder: false,
+                body_ref: BodyRefs::REG_INSERT_SIGNED,
+                handler: self.registry_insert_signed(),
+            },
+            Definition {
+                urn: "rho:rchain:pos".to_string(),
+                fixed_channel: FixedChannels::pos(),
+                arity: 1,
+                remainder: true,
+                body_ref: BodyRefs::POS,
+                handler: self.pos(),
+            },
+            Definition {
+                urn: "rho:rchain:revVault".to_string(),
+                fixed_channel: FixedChannels::rev_vault(),
+                arity: 1,
+                remainder: true,
+                body_ref: BodyRefs::REV_VAULT,
+                handler: self.rev_vault(),
+            },
+            Definition {
+                urn: "rho:rchain:multiSigRevVault".to_string(),
+                fixed_channel: FixedChannels::multi_sig_rev_vault(),
+                arity: 1,
+                remainder: true,
+                body_ref: BodyRefs::MULTI_SIG_REV_VAULT,
+                handler: self.rev_vault(),
             },
             Definition {
                 urn: "rho:crypto:secp256k1Verify".to_string(),
                 fixed_channel: FixedChannels::secp256k1_verify(),
                 arity: 4,
+                remainder: false,
                 body_ref: BodyRefs::SECP256K1_VERIFY,
                 handler: self.secp256k1_verify(),
             },
@@ -252,6 +328,7 @@ impl SystemProcesses {
                 urn: "rho:crypto:blake2b256Hash".to_string(),
                 fixed_channel: FixedChannels::blake2b256_hash(),
                 arity: 2,
+                remainder: false,
                 body_ref: BodyRefs::BLAKE2B256_HASH,
                 handler: self.blake2b256_hash(),
             },
@@ -259,6 +336,7 @@ impl SystemProcesses {
                 urn: "rho:crypto:keccak256Hash".to_string(),
                 fixed_channel: FixedChannels::keccak256_hash(),
                 arity: 2,
+                remainder: false,
                 body_ref: BodyRefs::KECCAK256_HASH,
                 handler: self.keccak256_hash(),
             },
@@ -266,6 +344,7 @@ impl SystemProcesses {
                 urn: "rho:crypto:sha256Hash".to_string(),
                 fixed_channel: FixedChannels::sha256_hash(),
                 arity: 2,
+                remainder: false,
                 body_ref: BodyRefs::SHA256_HASH,
                 handler: self.sha256_hash(),
             },
@@ -273,6 +352,7 @@ impl SystemProcesses {
                 urn: "rho:crypto:ed25519Verify".to_string(),
                 fixed_channel: FixedChannels::ed25519_verify(),
                 arity: 4,
+                remainder: false,
                 body_ref: BodyRefs::ED25519_VERIFY,
                 handler: self.ed25519_verify(),
             },
@@ -593,6 +673,252 @@ impl SystemProcesses {
             })
         })
     }
+
+    // --- native registry -------------------------------------------------
+
+    /// `rho:registry:lookup(uri, ret)` — return `(uri, value)` or `Nil` from the native registry.
+    fn registry_lookup(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("registry lookup expects a uri and return channel"))?;
+                let [uri, ret] = pars.as_slice() else {
+                    return Err(illegal_arg("registry lookup expects a uri and return channel"));
+                };
+                let uri_str = RhoUri::unapply(uri)
+                    .or_else(|| RhoString::unapply(uri))
+                    .ok_or_else(|| illegal_arg("registry lookup expects a uri string"))?
+                    .to_string();
+                match native.registry_lookup(&uri_str).await.map_err(|e| illegal_arg(&e))? {
+                    Some(value) => {
+                        cc.produce(&rand, &[RhoTupleN::apply(vec![uri.clone(), value])], ret)
+                            .await
+                    }
+                    None => cc.produce(&rand, &[RhoNil::apply()], ret).await,
+                }
+            })
+        })
+    }
+
+    /// `rho:registry:insertArbitrary(data, ret)` — store `data` under a fresh URI and return it.
+    fn registry_insert_arbitrary(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("insertArbitrary expects data and a return channel"))?;
+                let [data, ret] = pars.as_slice() else {
+                    return Err(illegal_arg("insertArbitrary expects data and a return channel"));
+                };
+                let uri = registry::build_uri(&blake2b256::hash(&rand.to_bytes()));
+                native.registry_insert(&uri, data);
+                cc.produce(&rand, &[RhoUri::apply(uri)], ret).await
+            })
+        })
+    }
+
+    /// `rho:registry:insertSigned:secp256k1((nonce, data), deployerID, ret)` — store `(nonce, data)`
+    /// under the deployer-derived URI, or `Nil` when the nonce is stale.
+    fn registry_insert_signed(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc.unapply(&args).ok_or_else(|| {
+                    illegal_arg("insertSigned expects (nonce, data), deployerID and a return channel")
+                })?;
+                let [signed, deployer_id, ret] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "insertSigned expects (nonce, data), deployerID and a return channel",
+                    ));
+                };
+                let tuple = RhoTupleN::unapply(signed).ok_or_else(|| {
+                    illegal_arg("insertSigned expects a (nonce, data) tuple")
+                })?;
+                let [nonce_par, data] = tuple else {
+                    return Err(illegal_arg("insertSigned expects a (nonce, data) tuple"));
+                };
+                let nonce = RhoNumber::unapply(nonce_par)
+                    .ok_or_else(|| illegal_arg("insertSigned nonce must be a number"))?;
+                let pub_key = RhoDeployerId::unapply(deployer_id)
+                    .ok_or_else(|| illegal_arg("insertSigned expects a deployerID"))?;
+                let uri = registry::build_uri(&blake2b256::hash(pub_key));
+
+                if let Some(stored) = native.registry_lookup(&uri).await.map_err(|e| illegal_arg(&e))? {
+                    let old_nonce = RhoTupleN::unapply(&stored)
+                        .and_then(|ps| ps.first())
+                        .and_then(|n| RhoNumber::unapply(n))
+                        .unwrap_or(0);
+                    if nonce <= old_nonce {
+                        return cc.produce(&rand, &[RhoNil::apply()], ret).await;
+                    }
+                }
+                native.registry_insert(
+                    &uri,
+                    &RhoTupleN::apply(vec![RhoNumber::apply(nonce), data.clone()]),
+                );
+                cc.produce(&rand, &[RhoUri::apply(uri)], ret).await
+            })
+        })
+    }
+
+    // --- native PoS ------------------------------------------------------
+
+    /// `rho:rchain:pos` — native method dispatch over the PoS state (`getBonds`, `getActiveValidators`).
+    fn pos(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("pos expects a method and arguments"))?;
+                let [op, rest_par] = pars.as_slice() else {
+                    return Err(illegal_arg("pos expects a method and arguments"));
+                };
+                let op = RhoString::unapply(op)
+                    .ok_or_else(|| illegal_arg("pos method must be a string"))?;
+                let rest = RhoList::unapply(rest_par)
+                    .ok_or_else(|| illegal_arg("pos arguments must be a list"))?;
+                match op {
+                    "getBonds" => {
+                        let [ret] = rest else {
+                            return Err(illegal_arg("getBonds expects a return channel"));
+                        };
+                        let bonds = native.bonds().await.map_err(|e| illegal_arg(&e))?;
+                        let kvs: Vec<(Par, Par)> = bonds
+                            .iter()
+                            .map(|(v, stake)| {
+                                (
+                                    RhoByteArray::apply(v.as_bytes().to_vec()),
+                                    RhoNumber::apply(i64::from(*stake)),
+                                )
+                            })
+                            .collect();
+                        cc.produce(&rand, &[RhoMap::apply(kvs)], ret).await
+                    }
+                    "getActiveValidators" => {
+                        let [ret] = rest else {
+                            return Err(illegal_arg("getActiveValidators expects a return channel"));
+                        };
+                        let validators =
+                            native.active_validators().await.map_err(|e| illegal_arg(&e))?;
+                        let ps: Vec<Par> = validators
+                            .iter()
+                            .map(|v| RhoByteArray::apply(v.as_bytes().to_vec()))
+                            .collect();
+                        cc.produce(&rand, &[RhoSet::apply(ps)], ret).await
+                    }
+                    _ => Err(illegal_arg(&format!("pos: unknown method {op}"))),
+                }
+            })
+        })
+    }
+
+    // --- native vault ----------------------------------------------------
+
+    /// `rho:rchain:revVault` — native method dispatch over the vault balance map.
+    fn rev_vault(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("revVault expects a method and arguments"))?;
+                let [op, rest_par] = pars.as_slice() else {
+                    return Err(illegal_arg("revVault expects a method and arguments"));
+                };
+                let op = RhoString::unapply(op)
+                    .ok_or_else(|| illegal_arg("revVault method must be a string"))?;
+                let rest = RhoList::unapply(rest_par)
+                    .ok_or_else(|| illegal_arg("revVault arguments must be a list"))?;
+                match op {
+                    "getBalance" => {
+                        let [addr, ret] = rest else {
+                            return Err(illegal_arg("getBalance expects an address and return channel"));
+                        };
+                        let addr = RhoString::unapply(addr)
+                            .ok_or_else(|| illegal_arg("getBalance expects a string address"))?;
+                        let balance = match native.vault_balance(addr).await.map_err(|e| illegal_arg(&e))? {
+                            Some(b) => b,
+                            None => NonNegI64::zero(),
+                        };
+                        cc.produce(&rand, &[RhoNumber::apply(i64::from(balance))], ret)
+                            .await
+                    }
+                    "deposit" => {
+                        let [addr, amount, ret] = rest else {
+                            return Err(illegal_arg("deposit expects an address, amount and return channel"));
+                        };
+                        let addr = RhoString::unapply(addr)
+                            .ok_or_else(|| illegal_arg("deposit expects a string address"))?;
+                        let amount = RhoNumber::unapply(amount)
+                            .ok_or_else(|| illegal_arg("deposit expects a number amount"))?;
+                        let amount =
+                            NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
+                        let current = match native.vault_balance(addr).await.map_err(|e| illegal_arg(&e))? {
+                            Some(b) => b,
+                            None => NonNegI64::zero(),
+                        };
+                        let new_balance = NonNegI64::try_from(i64::from(current) + i64::from(amount))
+                            .map_err(|e| illegal_arg(&e.to_string()))?;
+                        native.set_vault_balance(addr, new_balance);
+                        cc.produce(&rand, &[RhoNil::apply()], ret).await
+                    }
+                    "transfer" => {
+                        let [from, to, amount, ret] = rest else {
+                            return Err(illegal_arg("transfer expects from, to, amount and return channel"));
+                        };
+                        let from = RhoString::unapply(from)
+                            .ok_or_else(|| illegal_arg("transfer expects a string from-address"))?;
+                        let to = RhoString::unapply(to)
+                            .ok_or_else(|| illegal_arg("transfer expects a string to-address"))?;
+                        let amount = RhoNumber::unapply(amount)
+                            .ok_or_else(|| illegal_arg("transfer expects a number amount"))?;
+                        let amount =
+                            NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
+                        let from_balance =
+                            match native.vault_balance(from).await.map_err(|e| illegal_arg(&e))? {
+                                Some(b) => b,
+                                None => NonNegI64::zero(),
+                            };
+                        if i64::from(from_balance) < i64::from(amount) {
+                            return Err(illegal_arg("transfer: insufficient balance"));
+                        }
+                        let to_balance =
+                            match native.vault_balance(to).await.map_err(|e| illegal_arg(&e))? {
+                                Some(b) => b,
+                                None => NonNegI64::zero(),
+                            };
+                        let new_from = NonNegI64::try_from(i64::from(from_balance) - i64::from(amount))
+                            .map_err(|e| illegal_arg(&e.to_string()))?;
+                        let new_to = NonNegI64::try_from(i64::from(to_balance) + i64::from(amount))
+                            .map_err(|e| illegal_arg(&e.to_string()))?;
+                        native.set_vault_balance(from, new_from);
+                        native.set_vault_balance(to, new_to);
+                        cc.produce(&rand, &[RhoNil::apply()], ret).await
+                    }
+                    _ => Err(illegal_arg(&format!("revVault: unknown method {op}"))),
+                }
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -696,5 +1022,89 @@ mod tests {
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0, ack);
         assert_eq!(produced[0].1.pars, vec![RhoByteArray::apply(blake2b256::hash(&input))]);
+    }
+
+    #[tokio::test]
+    async fn registry_insert_arbitrary_then_lookup_round_trips() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let insert = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REG_INSERT_RANDOM)
+            .expect("insertArbitrary definition");
+        let data = RhoNumber::apply(42);
+        let ret = FixedChannels::stdout();
+        (insert.handler)(vec![lpw(vec![data.clone(), ret.clone()])])
+            .await
+            .unwrap();
+
+        let uri = {
+            let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+            assert_eq!(produced.len(), 1);
+            assert_eq!(produced[0].0, ret);
+            produced[0].1.pars[0].clone()
+        };
+        assert!(RhoUri::unapply(&uri).is_some(), "insertArbitrary returns a URI");
+
+        let lookup = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REG_LOOKUP)
+            .expect("lookup definition");
+        let ret2 = FixedChannels::stdout_ack();
+        (lookup.handler)(vec![lpw(vec![uri.clone(), ret2.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 2);
+        assert_eq!(produced[1].0, ret2);
+        let tuple = &produced[1].1.pars[0];
+        let parts = RhoTupleN::unapply(tuple).expect("lookup returns a (uri, value) tuple");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], uri);
+        assert_eq!(parts[1], data);
+    }
+
+    #[tokio::test]
+    async fn pos_get_bonds_returns_bonds_map() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let native = NativeSystemState::new(Arc::new(
+            rchain_rspace::native_store::InMemNativeStore::empty(),
+        ));
+        let mut bonds = std::collections::BTreeMap::new();
+        bonds.insert(
+            rchain_models::validator::Validator::new([1u8; 65]),
+            NonNegI64::try_from(10).unwrap(),
+        );
+        bonds.insert(
+            rchain_models::validator::Validator::new([2u8; 65]),
+            NonNegI64::try_from(20).unwrap(),
+        );
+        native.set_bonds(&bonds);
+
+        let charging = ChargingRSpace::new(mock.clone());
+        let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
+        let block_data = Arc::new(Mutex::new(BlockData::empty()));
+        let sp = SystemProcesses::new(charging, dispatcher, block_data, Arc::new(native));
+        let defs = sp.definitions();
+
+        let pos = defs.iter().find(|d| d.body_ref == BodyRefs::POS).expect("pos definition");
+        let ret = FixedChannels::stdout();
+        let args = vec![lpw(vec![
+            RhoString::apply("getBonds".to_string()),
+            RhoList::apply(vec![ret.clone()]),
+        ])];
+        (pos.handler)(args).await.unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0, ret);
+        let map = RhoMap::unapply(&produced[0].1.pars[0]).expect("getBonds returns a map");
+        assert_eq!(map.len(), 2);
     }
 }

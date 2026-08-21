@@ -69,6 +69,11 @@ impl NonNegI64 {
     pub const fn one() -> Self {
         NonNegI64(1)
     }
+
+    /// The value zero (total: `0` is non-negative).
+    pub const fn zero() -> Self {
+        NonNegI64(0)
+    }
 }
 
 /// A block height (non-negative). Used for `block_number`/`block_num`/`height` across the DAG and

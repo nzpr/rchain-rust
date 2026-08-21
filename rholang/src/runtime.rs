@@ -29,7 +29,7 @@ use crate::evaluate_result::EvaluateResult;
 use crate::native_state::NativeSystemState;
 use crate::reduce::DebruijnInterpreter;
 use crate::storage::{ChargingRSpace, RhoHistoryRepository, RhoTuplespace};
-use crate::system_processes::{BlockData, FixedChannels, SystemProcesses};
+use crate::system_processes::{BlockData, SystemProcesses};
 
 /// The concrete rspace type the runtime operates on.
 pub type RhoSpace = Arc<RSpace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>;
@@ -74,7 +74,7 @@ pub struct RhoRuntime {
     cost: Arc<CostAccounting>,
     block_data: Arc<Mutex<BlockData>>,
     _history: RhoHistoryRepository,
-    proc_defs: Arc<Vec<(Par, i32, i64)>>,
+    proc_defs: Arc<Vec<(Par, i32, bool, i64)>>,
 }
 
 /// A write-only bundle over `channel` (port of `Bundle(channel, writeFlag = true)`).
@@ -94,15 +94,15 @@ fn write_bundle(channel: Par) -> Par {
 /// and the `ReplayRSpace` can be installed into.
 async fn install_system_processes(
     space: &RhoTuplespace,
-    proc_defs: &[(Par, i32, i64)],
+    proc_defs: &[(Par, i32, bool, i64)],
 ) -> Result<(), RholangError> {
-    for (name, arity, body_ref) in proc_defs {
+    for (name, arity, remainder, body_ref) in proc_defs {
         let patterns = vec![BindPattern {
             patterns: (0..*arity)
                 .map(|i| from_expr(Expr::EVar(Box::new(Var::FreeVar(i)))))
                 .collect(),
-            remainder: None,
-            free_count: *arity,
+            remainder: if *remainder { Some(Var::FreeVar(*arity)) } else { None },
+            free_count: if *remainder { *arity + 1 } else { *arity },
         }];
         let continuation = TaggedContinuation::ScalaBodyRef(*body_ref);
         space
@@ -121,7 +121,7 @@ pub(crate) struct RuntimeCore {
     pub(crate) reducer: Arc<RhoReducer>,
     pub(crate) cost: Arc<CostAccounting>,
     pub(crate) block_data: Arc<Mutex<BlockData>>,
-    pub(crate) proc_defs: Vec<(Par, i32, i64)>,
+    pub(crate) proc_defs: Vec<(Par, i32, bool, i64)>,
 }
 
 pub(crate) async fn build_runtime_core(
@@ -145,25 +145,12 @@ pub(crate) async fn build_runtime_core(
 
     let mut dispatch_table = BTreeMap::new();
     let mut urn_map = BTreeMap::new();
-    let mut proc_defs: Vec<(Par, i32, i64)> = Vec::new();
+    let mut proc_defs: Vec<(Par, i32, bool, i64)> = Vec::new();
     for d in system_processes.definitions() {
         dispatch_table.insert(d.body_ref, d.handler);
         urn_map.insert(d.urn, write_bundle(d.fixed_channel.clone()));
-        proc_defs.push((d.fixed_channel, d.arity, d.body_ref));
+        proc_defs.push((d.fixed_channel, d.arity, d.remainder, d.body_ref));
     }
-    // The registry bootstrap channels (port of `basicProcesses`).
-    urn_map.insert(
-        "rho:registry:lookup".to_string(),
-        write_bundle(FixedChannels::reg_lookup()),
-    );
-    urn_map.insert(
-        "rho:registry:insertArbitrary".to_string(),
-        write_bundle(FixedChannels::reg_insert_random()),
-    );
-    urn_map.insert(
-        "rho:registry:insertSigned:secp256k1".to_string(),
-        write_bundle(FixedChannels::reg_insert_signed()),
-    );
 
     dispatcher.set_dispatch_table(dispatch_table);
     install_system_processes(space, &proc_defs)
@@ -268,18 +255,12 @@ impl RhoRuntime {
             .reset(rchain_rspace::history::history::empty_root_hash_value())
             .await
             .map_err(|e| e.to_string())?;
-        // Re-install the system processes (stdout/crypto/…): the reset above wipes the installed
-        // continuations, so without this the genesis contracts would send to fixed channels with no
-        // consumer (the silent-empty-registry failure mode).
+        // Re-install the system processes (stdout/crypto/registry/…): the reset above wipes the
+        // installed continuations, so without this the genesis contracts would send to fixed channels
+        // with no consumer (the silent-empty-registry failure mode). The registry handlers are native
+        // `Definition`s, so there is no separate bootstrap AST to install.
         let ts: RhoTuplespace = self.space.clone();
         install_system_processes(&ts, &self.proc_defs)
-            .await
-            .map_err(|e| e.to_string())?;
-        let rand = Blake2b512Random::default_random();
-        let bootstrap = crate::registry::registry_bootstrap_ast();
-        let bootstrap =
-            Closed::new(bootstrap).ok_or_else(|| "registry bootstrap is not closed".to_string())?;
-        self.inj(&bootstrap, &Env::new(), &rand)
             .await
             .map_err(|e| e.to_string())?;
         let checkpoint = self.space.create_checkpoint().await.map_err(|e| e.to_string())?;
