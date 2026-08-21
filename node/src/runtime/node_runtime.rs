@@ -90,16 +90,7 @@ use crate::configuration::model::NodeConf;
 use crate::diagnostics::NewPrometheusReporter;
 use crate::instances::proposer_instance;
 use crate::web::http::{acquire_admin_http_server, acquire_http_server, StatusProvider};
-use crate::web::transaction::{TransactionApi, TransactionInfo};
-
-/// A no-op transaction API (the cache-backed `TransactionAPI` is deferred).
-struct NoopTransactionApi;
-
-impl TransactionApi for NoopTransactionApi {
-    fn get_transaction(&self, _block_hash: &Blake2b256Hash) -> Vec<TransactionInfo> {
-        Vec::new()
-    }
-}
+use crate::web::transaction::TransactionAPIImpl;
 
 /// Build the real block-reporting casper: each `trace` constructs a fresh, isolated reporting
 /// `ReplayRSpace` over the persistent store (the factory clones the store manager, which shares the
@@ -1051,10 +1042,12 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         block_report_api.clone(),
         eval_runtime,
     );
-    let web_api: Arc<dyn WebApi> = Arc::new(WebApiImpl::new(
-        block_api.clone(),
-        Arc::new(NoopTransactionApi),
+    let transfer_unforgeable = BlockRandomSeed::transfer_unforgeable(&shard_id);
+    let transaction_api = Arc::new(TransactionAPIImpl::new(
+        block_report_api.clone(),
+        transfer_unforgeable,
     ));
+    let web_api: Arc<dyn WebApi> = Arc::new(WebApiImpl::new(block_api.clone(), transaction_api));
     let admin_web_api: Arc<dyn AdminWebApi> = Arc::new(AdminWebApiImpl::new(block_api));
 
     Ok((

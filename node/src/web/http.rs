@@ -213,23 +213,232 @@ async fn api_v1_deploy_status(
     json_result(state.web_api.deploy_status(&deploy_signature).await)
 }
 
-/// `GET /api/v1/openapi.json` — the OpenAPI 3.0 document describing the v1 API (a hand-written
-/// static document; the Scala derives it from the endpoints4s algebra, so we serve an equivalent).
-const OPENAPI_JSON: &str = r#"{
+/// `GET /api/v1/openapi.json` — the OpenAPI 3.0 document describing the v1 API. Hand-written from the
+/// endpoint DTOs (the Scala derives the same schema from its endpoints4s algebra).
+const OPENAPI_JSON: &str = r##"{
   "openapi": "3.0.0",
   "info": { "title": "RNode API", "version": "1.0" },
   "paths": {
-    "/status": { "get": { "summary": "Node status" } },
-    "/deploy": { "post": { "summary": "Deploy a signed rholang term" } },
-    "/deploy-status/{deploySignature}": { "get": { "summary": "Deploy execution status" } },
-    "/explore-deploy": { "post": { "summary": "Run an exploratory deploy" } },
-    "/explore-deploy-by-block-hash": { "post": { "summary": "Exploratory deploy at a block hash" } },
-    "/data-at-name-by-block-hash": { "post": { "summary": "Data at a name, at a block hash" } },
-    "/blocks": { "get": { "summary": "Recent blocks" } },
-    "/block/{hash}": { "get": { "summary": "A block by hash" } },
-    "/propose": { "post": { "summary": "Propose a block" } }
+    "/status": {
+      "get": {
+        "summary": "Node status",
+        "responses": {
+          "200": {
+            "description": "Node version, address and peer/node counts",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiStatus" } } }
+          }
+        }
+      }
+    },
+    "/deploy": {
+      "post": {
+        "summary": "Deploy a signed rholang term",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeployRequest" } } } },
+        "responses": {
+          "200": { "description": "Deploy accepted", "content": { "application/json": { "schema": { "type": "string" } } } },
+          "400": { "description": "Invalid deploy" }
+        }
+      }
+    },
+    "/deploy-status/{deploySignature}": {
+      "get": {
+        "summary": "Deploy execution status",
+        "parameters": [ { "name": "deploySignature", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "Deploy execution status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DeployExecStatus" } } } },
+          "400": { "description": "Invalid deploy signature" }
+        }
+      }
+    },
+    "/explore-deploy": {
+      "post": {
+        "summary": "Run an exploratory deploy",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploreDeployRequest" } } } },
+        "responses": {
+          "200": { "description": "Result expression", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploratoryDeployResponse" } } } },
+          "400": { "description": "Deploy failed" }
+        }
+      }
+    },
+    "/explore-deploy-by-block-hash": {
+      "post": {
+        "summary": "Exploratory deploy at a block hash",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploreDeployRequest" } } } },
+        "responses": {
+          "200": { "description": "Result expression", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExploratoryDeployResponse" } } } },
+          "400": { "description": "Deploy failed" }
+        }
+      }
+    },
+    "/data-at-name-by-block-hash": {
+      "post": {
+        "summary": "Data at a name, at a block hash",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataAtNameByBlockHashRequest" } } } },
+        "responses": {
+          "200": { "description": "Data at the name", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RhoDataResponse" } } } },
+          "400": { "description": "Invalid request" }
+        }
+      }
+    },
+    "/blocks": {
+      "get": {
+        "summary": "Recent blocks",
+        "responses": {
+          "200": { "description": "Recent lightweight block info", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/LightBlockInfo" } } } } }
+        }
+      }
+    },
+    "/block/{hash}": {
+      "get": {
+        "summary": "A block by hash",
+        "parameters": [ { "name": "hash", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "Block and its deploys", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BlockInfo" } } } },
+          "400": { "description": "Invalid block hash" }
+        }
+      }
+    },
+    "/propose": {
+      "post": {
+        "summary": "Propose a block",
+        "responses": {
+          "200": { "description": "Proposal result", "content": { "application/json": { "schema": { "type": "string" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "VersionInfo": {
+        "type": "object",
+        "properties": {
+          "api": { "type": "string" },
+          "node": { "type": "string" }
+        }
+      },
+      "ApiStatus": {
+        "type": "object",
+        "properties": {
+          "version": { "$ref": "#/components/schemas/VersionInfo" },
+          "address": { "type": "string" },
+          "networkId": { "type": "string" },
+          "shardId": { "type": "string" },
+          "peers": { "type": "integer", "format": "int32" },
+          "nodes": { "type": "integer", "format": "int32" },
+          "minPhloPrice": { "type": "integer", "format": "int64" },
+          "latestBlockNumber": { "type": "integer", "format": "int64" }
+        }
+      },
+      "DeployData": {
+        "type": "object",
+        "properties": {
+          "term": { "type": "string" },
+          "timestamp": { "type": "integer", "format": "int64" },
+          "phloPrice": { "type": "integer", "format": "int64" },
+          "phloLimit": { "type": "integer", "format": "int64" },
+          "validAfterBlockNumber": { "type": "integer", "format": "int64" },
+          "shardId": { "type": "string" }
+        }
+      },
+      "DeployRequest": {
+        "type": "object",
+        "properties": {
+          "data": { "$ref": "#/components/schemas/DeployData" },
+          "deployer": { "type": "string" },
+          "signature": { "type": "string" },
+          "sigAlgorithm": { "type": "string" }
+        }
+      },
+      "BondInfo": {
+        "type": "object",
+        "properties": {
+          "validator": { "type": "string" },
+          "stake": { "type": "integer", "format": "int64" }
+        }
+      },
+      "LightBlockInfo": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "integer", "format": "int32" },
+          "shardId": { "type": "string" },
+          "blockHash": { "type": "string" },
+          "blockNumber": { "type": "integer", "format": "int64" },
+          "sender": { "type": "string" },
+          "seqNum": { "type": "integer", "format": "int64" },
+          "preStateHash": { "type": "string" },
+          "postStateHash": { "type": "string" },
+          "justifications": { "type": "array", "items": { "type": "string" } },
+          "bonds": { "type": "array", "items": { "$ref": "#/components/schemas/BondInfo" } },
+          "sigAlgorithm": { "type": "string" },
+          "sig": { "type": "string" },
+          "blockSize": { "type": "string" },
+          "deployCount": { "type": "integer", "format": "int32" },
+          "rejectedDeploys": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "DeployInfo": {
+        "type": "object",
+        "properties": {
+          "deployer": { "type": "string" },
+          "term": { "type": "string" },
+          "timestamp": { "type": "integer", "format": "int64" },
+          "sig": { "type": "string" },
+          "sigAlgorithm": { "type": "string" },
+          "phloPrice": { "type": "integer", "format": "int64" },
+          "phloLimit": { "type": "integer", "format": "int64" },
+          "validAfterBlockNumber": { "type": "integer", "format": "int64" },
+          "cost": { "type": "integer", "format": "int64" },
+          "errored": { "type": "boolean" },
+          "systemDeployError": { "type": "string" }
+        }
+      },
+      "BlockInfo": {
+        "type": "object",
+        "properties": {
+          "blockInfo": { "$ref": "#/components/schemas/LightBlockInfo" },
+          "deploys": { "type": "array", "items": { "$ref": "#/components/schemas/DeployInfo" } }
+        }
+      },
+      "ExploreDeployRequest": {
+        "type": "object",
+        "properties": {
+          "term": { "type": "string" },
+          "blockHash": { "type": "string" },
+          "usePreStateHash": { "type": "boolean" }
+        }
+      },
+      "DataAtNameByBlockHashRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "object", "description": "A rholang expression" },
+          "blockHash": { "type": "string" },
+          "usePreStateHash": { "type": "boolean" }
+        }
+      },
+      "RhoDataResponse": {
+        "type": "object",
+        "properties": {
+          "expr": { "type": "array", "items": { "type": "object", "description": "A rholang expression" } },
+          "block": { "$ref": "#/components/schemas/LightBlockInfo" }
+        }
+      },
+      "ExploratoryDeployResponse": {
+        "type": "object",
+        "properties": {
+          "expr": { "type": "array", "items": { "type": "object", "description": "A rholang expression" } },
+          "block": { "$ref": "#/components/schemas/LightBlockInfo" }
+        }
+      },
+      "DeployExecStatus": {
+        "oneOf": [
+          { "type": "object", "properties": { "deployResult": { "type": "array", "items": { "type": "object" } }, "block": { "$ref": "#/components/schemas/LightBlockInfo" } } },
+          { "type": "object", "properties": { "deployError": { "type": "string" }, "block": { "$ref": "#/components/schemas/LightBlockInfo" } } },
+          { "type": "object", "properties": { "status": { "type": "string" } } }
+        ]
+      }
+    }
   }
-}"#;
+}"##;
 
 async fn api_v1_openapi() -> Response {
     let doc: serde_json::Value = serde_json::from_str(OPENAPI_JSON)
@@ -580,6 +789,14 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["address"], "addr");
         assert_eq!(json["version"]["api"], "1.0");
+    }
+
+    #[test]
+    fn openapi_json_is_valid() {
+        let doc: serde_json::Value = serde_json::from_str(OPENAPI_JSON).expect("OPENAPI_JSON parses");
+        assert_eq!(doc["openapi"], "3.0.0");
+        assert!(doc["paths"].is_object());
+        assert!(doc["components"]["schemas"].is_object());
     }
 
     fn status_provider() -> StatusProvider {

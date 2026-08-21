@@ -160,7 +160,11 @@ impl WebApi for WebApiImpl {
         }
         let blake =
             Blake2b256Hash::from_hex_either(hash).map_err(|e| BlockApiException(e.to_string()))?;
-        let data = self.transaction_api.get_transaction(&blake);
+        let data = self
+            .transaction_api
+            .get_transaction(&blake)
+            .await
+            .map_err(BlockApiException)?;
         Ok(TransactionResponse { data })
     }
 }
