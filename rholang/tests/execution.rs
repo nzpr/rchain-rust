@@ -119,7 +119,6 @@ async fn peek_and_persistent_work() {
 }
 
 #[tokio::test]
-#[ignore = "list-as-channel hash/equality bug: @[node, *storeToken] (node bound) does not match @[\"key\", *storeToken] (literal)"]
 async fn list_channel_matches() {
     let (rt, _) = build_runtime_pair().await;
     let rand = fixed_rand();

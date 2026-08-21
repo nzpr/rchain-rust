@@ -34,14 +34,15 @@ proptest, 7 bench). Only **3 of 12 crates have integration tests** (`rholang`, `
   the parser/reducer are only exercised against inline strings (and, historically, the now-native
   genesis contracts).
 
-## The 2 `#[ignore]`d tests
+## The 1 remaining `#[ignore]`d test
 
-1. **`rholang/tests/execution.rs:122` `list_channel_matches`** — a genuine list-as-channel
-   hash/equality bug: `@[node, *storeToken]` (bound) does not match `@["key", *storeToken]` (literal).
-   This blocks the `MakeNode` blessed-contract shape. *(remediation: fix + un-ignore.)*
-2. **`casper/tests/finalization.rs:303` `round_robin_finalizes_common_prefix`** — a lockstep/round-robin
-   DAG never advances the fringe (the Scala `MultiParentCasperFinalizationSpec` is itself `ignore`d).
-   The finalizing shape is covered by `fork_structure_advances_fringe` (active).
+- **`casper/tests/finalization.rs:303` `round_robin_finalizes_common_prefix`** — a lockstep/round-robin
+  DAG never advances the fringe (the Scala `MultiParentCasperFinalizationSpec` is itself `ignore`d).
+  The finalizing shape is covered by `fork_structure_advances_fringe` (active).
+
+*(The former second ignored test, `rholang/tests/execution.rs` `list_channel_matches`, was a
+list-as-channel hash/equality bug that was resolved during the reimplementation; it is now
+un-ignored and passing.)*
 
 ## Gap analysis (severity-ordered)
 
