@@ -113,17 +113,18 @@ each peer's bootstrap URL.
 
 ### Ports
 
-Each node binds the same in-container ports; `up` maps each node's gRPC port to a distinct host port
-so you can also reach a node from the host (HTTP, `curl`, etc.):
+Each node binds the same in-container ports; `up` maps each node's **deploy** gRPC port — the only
+network-reachable gRPC service — to a distinct host port so you can also reach a node from the host.
+Propose/repl bind loopback-only (`127.0.0.1:40402`), so they are not host-mapped:
 
 | Service | In-container | Host (bootstrap / peerN) |
 |---|---|---|
 | protocol (TLS peer transport) | 40400 | not mapped (network-internal) |
 | discovery (Kademlia) | 40404 | not mapped |
-| gRPC API — Deploy | 40401 | not mapped |
-| gRPC API — Propose/Repl | 40402 | 40402 / 40402 + 1000·N |
+| gRPC API — Deploy | 40401 | 40402 / 40402 + 1000·N |
+| gRPC API — Propose/Repl | 40402 | not mapped (loopback-only) |
 | HTTP | 40403 | not mapped |
-| admin HTTP | 40405 | not mapped |
+| admin HTTP | 40405 | not mapped (loopback-only) |
 
 ### Interacting from the CLI
 

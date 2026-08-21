@@ -31,7 +31,8 @@ VALIDATOR_PRIV_HEX="a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d800
 VALIDATOR_PUB_HEX="04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
 STAKE=100
 
-# Host port for the bootstrap's gRPC; peers get 40402 + 1000*i (for optional host-side access).
+# Host port mapped to the bootstrap's deploy gRPC service (in-container 40401); peers get
+# 40402 + 1000*i. Propose/repl bind loopback-only (127.0.0.1:40402) and are never host-mapped.
 GRPC_BASE=40402
 
 usage() {
@@ -83,7 +84,7 @@ cmd_up() {
 
   echo "==> starting bootstrap (standalone, creates genesis)"
   docker run -d --name "$BOOTSTRAP" --network "$NETWORK" \
-    -p "${GRPC_BASE}:40402" \
+    -p "${GRPC_BASE}:40401" \
     -v "${BOOTSTRAP}-data:/var/lib/rnode" \
     -v "${genesis_dir}:/genesis:ro" \
     "$IMAGE" run -s \
@@ -106,7 +107,7 @@ cmd_up() {
     local host_port=$((GRPC_BASE + i * 1000))
     echo "==> starting ${name} (bootstraps from ${BOOTSTRAP})"
     docker run -d --name "$name" --network "$NETWORK" \
-      -p "${host_port}:40402" \
+      -p "${host_port}:40401" \
       -v "${name}-data:/var/lib/rnode" \
       "$IMAGE" run \
         --host "$name" \
