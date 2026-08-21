@@ -114,11 +114,13 @@ impl DagRepresentation {
 
     /// Find a block hash by (possibly truncated) hex prefix.
     pub fn find(&self, truncated_hash: &str) -> Option<BlockHash> {
+        // Validate-on-ingress: reject non-hex input (`decode` returns `None`) rather than silently
+        // dropping invalid chars via `unsafe_decode`.
         if truncated_hash.len().is_multiple_of(2) {
-            let bytes = base16::unsafe_decode(truncated_hash);
+            let bytes = base16::decode(truncated_hash)?;
             self.dag_set.iter().find(|h| h.starts_with(&bytes)).copied()
         } else {
-            let bytes = base16::unsafe_decode(&truncated_hash[..truncated_hash.len() - 1]);
+            let bytes = base16::decode(&truncated_hash[..truncated_hash.len() - 1])?;
             self.dag_set
                 .iter()
                 .filter(|h| h.starts_with(&bytes))

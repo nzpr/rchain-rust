@@ -20,7 +20,7 @@ pub struct Validator {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Vault {
     pub rev_address: RevAddress,
-    pub initial_balance: i64,
+    pub initial_balance: NonNegI64,
 }
 
 /// Proof-of-stake genesis parameters (port of `contracts.ProofOfStake`).
@@ -74,7 +74,7 @@ pub struct Registry {
 pub fn rev_generator_code(vaults: &[Vault], is_last_batch: bool) -> String {
     let vault_balance_list = vaults
         .iter()
-        .map(|v| format!("(\"{}\", {})", v.rev_address.to_base58(), v.initial_balance))
+        .map(|v| format!("(\"{}\", {})", v.rev_address.to_base58(), i64::from(v.initial_balance)))
         .collect::<Vec<_>>()
         .join(", ");
     let init_continue = if is_last_batch { "" } else { "| initContinue!()" };
@@ -147,7 +147,7 @@ mod tests {
         let rev_address = RevAddress::from_public_key(&PublicKey::new(vec![1; 65])).unwrap();
         let vaults = vec![Vault {
             rev_address: rev_address.clone(),
-            initial_balance: 42,
+            initial_balance: NonNegI64::try_from(42).unwrap(),
         }];
         let not_last = rev_generator_code(&vaults, false);
         assert!(not_last.contains("initContinue!()"));

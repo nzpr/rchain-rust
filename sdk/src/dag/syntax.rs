@@ -3,6 +3,8 @@
 //! Scala's implicit-resolution boilerplate for field-like access to the opaque `M`/`S` types; the
 //! Rust port delegates straight to `DagData`.
 
+use rchain_shared::refined::NonNegI64;
+
 use crate::dag::data::DagData;
 
 /// Field accessors on a message `M` (port of `DagDataMessageOps`).
@@ -17,7 +19,7 @@ pub trait DagDataMessageOps<M, MId, S, SId> {
 
     fn sender(&self, dag_data: &dyn DagData<M, MId, S, SId>) -> SId;
 
-    fn bonds_map(&self, dag_data: &dyn DagData<M, MId, S, SId>) -> Vec<(SId, i64)>;
+    fn bonds_map(&self, dag_data: &dyn DagData<M, MId, S, SId>) -> Vec<(SId, NonNegI64)>;
 }
 
 impl<M, MId, S, SId> DagDataMessageOps<M, MId, S, SId> for M {
@@ -41,7 +43,7 @@ impl<M, MId, S, SId> DagDataMessageOps<M, MId, S, SId> for M {
         dag_data.sender(self)
     }
 
-    fn bonds_map(&self, dag_data: &dyn DagData<M, MId, S, SId>) -> Vec<(SId, i64)> {
+    fn bonds_map(&self, dag_data: &dyn DagData<M, MId, S, SId>) -> Vec<(SId, NonNegI64)> {
         dag_data.bonds_map(self)
     }
 }
@@ -79,7 +81,7 @@ mod tests {
         fn sender(&self, _m: &i32) -> i32 {
             0
         }
-        fn bonds_map(&self, _m: &i32) -> Vec<(i32, i64)> {
+        fn bonds_map(&self, _m: &i32) -> Vec<(i32, NonNegI64)> {
             vec![]
         }
         fn sid(&self, s: &i32) -> i32 {

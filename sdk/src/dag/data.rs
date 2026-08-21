@@ -1,5 +1,7 @@
 //! DAG management interfaces (port of `sdk/dag/data/{DagData,DagManager,DagView}.scala`).
 
+use rchain_shared::refined::NonNegI64;
+
 /// Field accessors for messages and senders (port of `DagData[M, MId, S, SId]`).
 pub trait DagData<M, MId, S, SId> {
     fn mid(&self, m: &M) -> MId;
@@ -12,7 +14,7 @@ pub trait DagData<M, MId, S, SId> {
 
     fn sender(&self, m: &M) -> SId;
 
-    fn bonds_map(&self, m: &M) -> Vec<(SId, i64)>;
+    fn bonds_map(&self, m: &M) -> Vec<(SId, NonNegI64)>;
 
     fn sid(&self, s: &S) -> SId;
 }
@@ -105,7 +107,7 @@ mod tests {
         fn sender(&self, _m: &i32) -> i32 {
             0
         }
-        fn bonds_map(&self, _m: &i32) -> Vec<(i32, i64)> {
+        fn bonds_map(&self, _m: &i32) -> Vec<(i32, NonNegI64)> {
             vec![]
         }
         fn sid(&self, s: &i32) -> i32 {

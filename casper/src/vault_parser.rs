@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use rchain_rholang::util::rev_address::RevAddress;
+use rchain_shared::refined::NonNegI64;
 
 use crate::genesis::contracts::Vault;
 
@@ -55,9 +56,12 @@ fn parse_line(line: &str) -> Result<Vault, String> {
 
     let rev_address = RevAddress::parse(addr)
         .map_err(|e| format!("PARSE ERROR: {e}, `{line_format}`, actual: `{line}`"))?;
-    let initial_balance = balance
+    let balance_value = balance
         .parse::<i64>()
         .map_err(|_| format!("INVALID WALLET BALANCE `{balance}`. Please put positive number."))?;
+    let initial_balance = NonNegI64::try_from(balance_value).map_err(|_| {
+        format!("INVALID WALLET BALANCE `{balance}`. Please put a non-negative number.")
+    })?;
     Ok(Vault {
         rev_address,
         initial_balance,
@@ -87,7 +91,7 @@ mod tests {
     fn parses_valid_line() {
         let addr = valid_address();
         let vault = parse_line(&format!("{addr},123")).unwrap();
-        assert_eq!(vault.initial_balance, 123);
+        assert_eq!(vault.initial_balance, NonNegI64::try_from(123).unwrap());
         assert_eq!(vault.rev_address.to_base58(), addr);
     }
 
@@ -100,8 +104,8 @@ mod tests {
         fs::write(&file, format!("{addr},1\n\n{addr},2\n   \n")).unwrap();
         let vaults = parse(&file).unwrap();
         assert_eq!(vaults.len(), 2);
-        assert_eq!(vaults[0].initial_balance, 1);
-        assert_eq!(vaults[1].initial_balance, 2);
+        assert_eq!(vaults[0].initial_balance, NonNegI64::try_from(1).unwrap());
+        assert_eq!(vaults[1].initial_balance, NonNegI64::try_from(2).unwrap());
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -125,6 +129,13 @@ mod tests {
         let addr = valid_address();
         let err = parse_line(&format!("{addr},not-a-number")).unwrap_err();
         assert!(err.contains("INVALID WALLET BALANCE"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_negative_balance() {
+        let addr = valid_address();
+        let err = parse_line(&format!("{addr},-5")).unwrap_err();
+        assert!(err.contains("non-negative"), "got: {err}");
     }
 
     #[test]

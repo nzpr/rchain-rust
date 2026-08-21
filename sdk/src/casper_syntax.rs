@@ -7,6 +7,8 @@
 
 use std::collections::BTreeSet;
 
+use rchain_shared::refined::NonNegI64;
+
 use crate::dag::data::{DagData, DagView};
 
 /// Message sender should be present and have non-zero stake in the bonds map (port of
@@ -19,7 +21,7 @@ pub fn inactive_sender<M, MId, S, SId: PartialEq>(
     !dag_data
         .bonds_map(msg)
         .iter()
-        .any(|(s, stake)| s == &sender && *stake > 0)
+        .any(|(s, stake)| s == &sender && *stake > NonNegI64::zero())
 }
 
 /// Message should have sequence number equal to the sequence number of its self justification + 1
@@ -113,7 +115,7 @@ mod tests {
         seq: i64,
         block: i64,
         justifications: Vec<i32>,
-        bonds: Vec<(i32, i64)>,
+        bonds: Vec<(i32, NonNegI64)>,
     }
 
     impl Msg {
@@ -146,7 +148,7 @@ mod tests {
         fn sender(&self, m: &Msg) -> i32 {
             m.sender
         }
-        fn bonds_map(&self, m: &Msg) -> Vec<(i32, i64)> {
+        fn bonds_map(&self, m: &Msg) -> Vec<(i32, NonNegI64)> {
             m.bonds.clone()
         }
         fn sid(&self, s: &i32) -> i32 {
@@ -177,21 +179,21 @@ mod tests {
     fn inactive_sender_detects_missing_or_zero_stake_bond() {
         let active = Msg {
             sender: 1,
-            bonds: vec![(1, 10)],
+            bonds: vec![(1, NonNegI64::try_from(10).unwrap())],
             ..Msg::new(1, 1, 1)
         };
         assert!(!inactive_sender(&MockData, &active));
 
         let zero_stake = Msg {
             sender: 1,
-            bonds: vec![(1, 0)],
+            bonds: vec![(1, NonNegI64::zero())],
             ..Msg::new(1, 1, 1)
         };
         assert!(inactive_sender(&MockData, &zero_stake));
 
         let absent = Msg {
             sender: 2,
-            bonds: vec![(1, 10)],
+            bonds: vec![(1, NonNegI64::try_from(10).unwrap())],
             ..Msg::new(2, 1, 1)
         };
         assert!(inactive_sender(&MockData, &absent));
