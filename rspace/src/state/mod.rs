@@ -338,4 +338,50 @@ mod tests {
         assert!(!nodes[1].is_leaf);
         assert_eq!(nodes[1].hash, root_hash);
     }
+
+    /// A single-leaf trie whose leaf value is the hash of `data_value` (so the export/import
+    /// round-trip can be validated end-to-end).
+    fn leaf_trie(
+        data_value: Vec<u8>,
+    ) -> (
+        HashMap<Blake2b256Hash, Vec<u8>>,
+        Blake2b256Hash,
+        Vec<u8>,
+        Blake2b256Hash,
+    ) {
+        let data_hash = Blake2b256Hash::create(&data_value);
+        let mut root = empty_node();
+        root[0] = Item::Leaf {
+            prefix: KeySegment::new(vec![1]),
+            value: data_hash,
+        };
+        let (root_hash, root_bytes) = hash_node(&root);
+        let store = HashMap::from([(root_hash, root_bytes.clone())]);
+        (store, root_hash, root_bytes, data_hash)
+    }
+
+    #[test]
+    fn validate_state_items_accepts_valid_round_trip() {
+        let data_value = vec![1, 2, 3];
+        let (store, root_hash, root_bytes, data_hash) = leaf_trie(data_value.clone());
+        let get = |h: &Blake2b256Hash| store.get(h).cloned();
+
+        let history_items = vec![(root_hash, root_bytes)];
+        let data_items = vec![(data_hash, data_value)];
+        validate_state_items(&history_items, &data_items, &[(root_hash, None)], 10, 0, &get)
+            .unwrap();
+    }
+
+    #[test]
+    fn validate_state_items_rejects_corrupted_data() {
+        let data_value = vec![1, 2, 3];
+        let (store, root_hash, root_bytes, data_hash) = leaf_trie(data_value);
+        let get = |h: &Blake2b256Hash| store.get(h).cloned();
+
+        // The data bytes no longer hash to the claimed `data_hash`.
+        let history_items = vec![(root_hash, root_bytes)];
+        let data_items = vec![(data_hash, vec![9, 9, 9])];
+        assert!(validate_state_items(&history_items, &data_items, &[(root_hash, None)], 10, 0, &get)
+            .is_err());
+    }
 }
