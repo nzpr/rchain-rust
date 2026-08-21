@@ -259,6 +259,16 @@ Under the new oracle (the ρ-calculus spec, not Scala), the following were **fix
 - **`rho_expr.rs` `unsafe_decode`**: converting `rho_expr_to_par`/`unforg_to_par` to `Result` is a
   follow-up (the recursive `.map` would become `try_collect`).
 
+**Cast triage (Phase 2):** the ~300 `cast` sites were triaged. The overwhelming majority are **faithful
+Scala fixed-width equivalents** — matcher `len() as i32` (Scala `Int`), trie `byte as usize`/`u8 as usize`
+(widening), `i as u8` `split_byte` (Scala `Byte`), config `as i64`/`as u64`/`as f64` (Scala `Long`),
+crypto `*x as i8` (Scala signed `Byte`), diagnostics `as f64` (display), wire-format varint/zigzag.
+The consensus-critical path is already exact (`NonNegI64` stakes, `i128` super-majority). Two genuinely
+untrusted-input narrowing casts were **fixed**: state-sync `skip`/`take` (`node_running.rs` — negative
+`i32` no longer wraps to a huge `usize`) and the store-node-key index (`store_node_key_from_proto` —
+out-of-range `i32` no longer truncates via `as u8`). The remaining casts are bounded by the protocol
+(32-byte hash / 65-byte key), gas, or block count.
+
 ---
 
 ## 9. Rust-first reimplementation — fragility audit of the Scala-port rholang layer

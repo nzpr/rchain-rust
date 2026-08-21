@@ -826,7 +826,10 @@ fn store_node_key_from_proto(
     let idx = if s.index == STORE_NODE_KEY_NONE_INDEX {
         None
     } else {
-        Some(s.index as u8)
+        // Validate-on-ingress: reject an out-of-range index rather than truncating via `as u8`.
+        Some(u8::try_from(s.index).map_err(|_| {
+            crate::errors::ModelsError::Malformed("store node key index out of range")
+        })?)
     };
     Ok((hash, idx))
 }

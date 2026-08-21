@@ -291,9 +291,14 @@ impl<E: RSpaceExporter> NodeRunning<E> {
     /// Serve a peer's store-items (state-sync) request from the exporter (port of
     /// `handleStoreItemsRequest`).
     async fn handle_store_items_request(&self, peer: &PeerNode, req: &StoreItemsMessageRequest) {
-        let nodes = self
-            .exporter
-            .get_nodes(&req.start_path, req.skip as usize, req.take as usize);
+        // Validate-on-ingress: a negative skip/take would wrap to a huge `usize` via `as` and make
+        // `get_nodes` iterate the whole trie.
+        let (Ok(skip), Ok(take)) = (usize::try_from(req.skip), usize::try_from(req.take)) else {
+            self.log
+                .info(self.log_source, "Dropping store-items request with negative skip/take");
+            return;
+        };
+        let nodes = self.exporter.get_nodes(&req.start_path, skip, take);
         let history_keys: Vec<Blake2b256Hash> =
             nodes.iter().filter(|n| !n.is_leaf).map(|n| n.hash).collect();
         let data_keys: Vec<Blake2b256Hash> =
