@@ -23,7 +23,6 @@ added). Only **3 of 12 crates have integration tests** (`rholang`, `casper`, `no
 | `rspace` | 42 | — | 5 | — |
 | `rholang` | 61 | 7 | — | — |
 | `casper` | 105 | 5 | — | — |
-| `regex` | 93 | — | — | — |
 | `node` | 59 | 2 | — | — |
 | `rspace-bench` | — | — | — | 7 |
 

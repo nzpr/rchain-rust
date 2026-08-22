@@ -102,8 +102,8 @@ invariants.
 
 The earlier "deferred/unwired" surface (Kademlia, the HTTP transaction API, block reporting, the
 rholang parser's genesis gaps, peer store-items ingress) is now **wired and fixed** (see
-`AUDIT.md` §8/§11); the `rho:regex` system process never existed in the Scala oracle (the `regex` crate
-is orphaned). The audit gate (`tools/audit-type-system.sh`) is **clean** — zero production
+`AUDIT.md` §8/§11); the `rho:regex` system process never existed in the Scala oracle (the `regex`
+crate was orphaned and has been removed). The audit gate (`tools/audit-type-system.sh`) is **clean** — zero production
 `panic`/`unsafe`/silent-conversion, with the remaining `assert!` sites whitelisted as documented
 internal invariants; equivocation rejection and finalizer fringe advancement now have regression tests
 (`spec/TEST-COVERAGE.md` G1/G8).

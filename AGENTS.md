@@ -192,7 +192,7 @@ in phase order while code is ported in dependency order. The per-module LOC/diff
 ratings, the full bottom-up order, and the workspace layout live in
 [`docs/src/contributor/architecture.md`](docs/src/contributor/architecture.md).
 
-Bottom-up order: `sdk` (and `regex`, in parallel) → `shared` → `crypto` + `graphz` → `models` →
+Bottom-up order: `sdk` → `shared` → `crypto` + `graphz` → `models` →
 `block-storage` + `rspace` + `comm` → `rholang` → `casper` → `node` → `rspace-bench`. **Defer**
 `roscala`/`rosette`.
 
@@ -217,8 +217,8 @@ Bottom-up order: `sdk` (and `regex`, in parallel) → `shared` → `crypto` + `g
 
 - **Phase 0 — complete**: Lean 4 skeleton (`spec/`), Coq skeleton (`spec/coq/`), the 19-law
   inventory, and this document.
-- **Rewrite — complete**: all twelve crates (`sdk`, `shared`, `crypto`, `graphz`, `models`,
-  `block-storage`, `rspace`, `rholang`, `casper`, `comm`, `regex`, `node`) are ported at the
+- **Rewrite — complete**: all eleven crates (`sdk`, `shared`, `crypto`, `graphz`, `models`,
+  `block-storage`, `rspace`, `rholang`, `casper`, `comm`, `node`) are ported at the
   workspace root. The proofs-first *pause* was lifted in practice; the port was written against the
   verified spec rather than waiting on Laws 1–11.
 - **Formalization — residual**: Law 1's idempotence/commutativity is proven, conditional on the 30

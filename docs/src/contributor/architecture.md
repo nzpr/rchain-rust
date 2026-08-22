@@ -33,7 +33,6 @@ Scala module (now under [`legacy/`](../../../legacy/)):
 |-------|--------|
 | `sdk` | **done** (root leaf; Laws 14 & 17; DAG interface: `BlockRequester`/`DagManager`/`DagView`/`DagData` + Casper validation syntax + `FatalError` + primitive syntax) |
 | `shared` | **core done** (Base16/Serialize/DagOps/store+KeyValueCache/Stopwatch/LongOps/PathOps/SeqOps/Matcher/Language/Time/Debug helpers + LMDB store under the `lmdb` feature) |
-| `regex` | **done** (FSM engine + regex AST/parser + path-to-regex tokenizer) |
 | `crypto` | **done** (Law 19: Blake2b256, Blake2b512Random, secp256k1/Ed25519, Curve25519, PEM key writing) |
 | `graphz` | **done** (DOT builder) |
 | `models` | **done** (rholang AST + Law 1 sorter + Casper/routing wire layer + JSON serde) |
@@ -60,7 +59,6 @@ in parallel: laws are proven in phase order while code is ported in dependency o
 |---|---|---|---|---|---|
 | `graphz` | 231 | Easy | ~1 | `shared` | trivial string builder |
 | `sdk` | 678 | Easy | ~3 | `shared` | Laws 14, 17 |
-| `regex` | 2,398 | Easy | ~3–5 | — | orphaned; pure FSM/regex |
 | `crypto` | 1,431 | Easy | ~5–8 | `shared` | 1:1 crate mappings |
 | `rspace-bench` | (bench) | Easy | ~3–5 | rspace/rholang/models | gated |
 | `block-storage` | 1,074 | Medium | ~7 | shared/models/sdk | finalizer + monotonicity |
@@ -78,7 +76,7 @@ Total in-scope (non-orphaned): roughly **200–220 person-days**.
 
 ### Rewrite order (bottom-up)
 
-`sdk` (and `regex`, in parallel) → `shared` → `crypto` + `graphz` → `models` → `block-storage` +
+`sdk` → `shared` → `crypto` + `graphz` → `models` → `block-storage` +
 `rspace` + `comm` → `rholang` → `casper` → `node` → `rspace-bench`. **Defer** `roscala`/`rosette`.
 
 ### Findings

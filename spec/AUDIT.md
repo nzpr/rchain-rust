@@ -24,10 +24,8 @@ Audit dimensions (in the order applied):
 (brace-depth aware), then **fails** (exit 1) on:
 
 - **`panic`** — production `.unwrap()` / `.expect(` / `panic!` / `unreachable!` / `todo!` /
-  `unimplemented!`, whitelisting `sdk/src/primitive.rs` (the Scala `getUnsafe` escape hatch) and the
-  Scala-oracle `TODO`/`NotImplementedError` stubs in `node/src/dag/implementation.rs` +
-  `regex/src/regex_pattern.rs`; the rholang parser's `expect(Tok::…)` method is excluded (a
-  method, not `Result::expect`).
+  `unimplemented!`, whitelisting `sdk/src/primitive.rs` (the Scala `getUnsafe` escape hatch); the
+  rholang parser's `expect(Tok::…)` method is excluded (a method, not `Result::expect`).
 - **`unsafe`** — `unsafe {` (must be zero; the crate graph is entirely safe Rust).
 - **`silent`** — `try_into().unwrap()` / `try_into().expect(`, and `unwrap_or(0)` /
   `unwrap_or_default()` on a fallible numeric conversion (a fallible conversion must not be

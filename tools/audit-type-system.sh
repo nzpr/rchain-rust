@@ -67,7 +67,6 @@ TEST_ONLY_FILE_RE='(_tests?|test_)\.rs$|/property_tests\.rs$'
 # constructors (validate-on-ingress, see spec/AUDIT.md §11 R12).
 WHITELIST_PANIC=(
   '/sdk/src/primitive.rs'
-  '/regex/src/regex_pattern.rs'
   '/models/src/block_hash.rs'
   '/models/src/block/state_hash.rs'
   '/models/src/validator.rs'

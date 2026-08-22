@@ -270,8 +270,7 @@ round-trip tests are excluded). The typed fix is either a proven-total refinemen
 >
 > **Machine gate.** `tools/audit-type-system.sh` is the authoritative, re-runnable gate: it strips
 > `#[cfg(test)]` blocks (brace-depth aware), then fails on production `.unwrap()`/`.expect(`/`panic!`/
-> `unreachable!`/`todo!`/`unimplemented!` (whitelisting `sdk/src/primitive.rs` `getUnsafe` and the
-> Scala-oracle `TODO` stubs in `node/src/dag/implementation.rs` + `regex/src/regex_pattern.rs`),
+> `unreachable!`/`todo!`/`unimplemented!` (whitelisting `sdk/src/primitive.rs` `getUnsafe`),
 > `unsafe {`, and silent defaulting of a fallible numeric conversion (`try_into()…unwrap[_or]`,
 > `try_from(…)…unwrap_or`, `parse(…)…unwrap_or`). Its `cast`/`get` classes are candidate finders.
 > The gate is green (`panic`/`unsafe`/`silent` clean). The full adversarial-audit findings — the
