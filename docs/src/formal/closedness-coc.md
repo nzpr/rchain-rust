@@ -71,7 +71,7 @@ In Rust, the sort and the refinements become *types*, so illegal states are unre
 - `Par<S>` carries the compile-time `NameSort`/`ProcSort` phantom sort; `quote`/`eval` recover `@`/`*`.
 - `Closed` is a newtype (`TryFrom`/`new` to construct, `From<Closed> for Par` to discharge).
 - `BindsAtMostOnce`, `WellScoped`, and the numeric refinements (`BlockHeight`, `SeqNum`, `Port`,
-  `Cost`, `NonNegI64`, …) are newtypes in [`shared/src/refined.rs`](../../../shared/src/refined.rs).
+  `Hash32`, `NonNegI64`, …) are newtypes in [`shared/src/refined.rs`](../../../shared/src/refined.rs).
 
 There is **no `Deref`/`.get()` escape** out of these newtypes — the invariant is structural, not a
 convention. The machine gate that enforces this is

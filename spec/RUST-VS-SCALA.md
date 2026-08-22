@@ -23,11 +23,11 @@ review finding*, rather than as a runtime incident:
 | 1 | `Costs.toProto` = `PCost(c.value)` — a negative `Long` gas cost wraps into a `uint64` | Over-charging a deploy wraps its cost to a huge unsigned value, corrupting accounting | Negative cost is **rejected** at the boundary (`casper/src/runtime_manager.rs`), not wrapped |
 | 2 | Super-majority computed as `stake.toDouble / totalStake > 2d/3` | `f64` loses precision for stakes ≥ 2⁵³; two sides of a fork can disagree on a finality vote | Exact integer `3·stake > 2·total` in `i128` (`sdk/src/consensus.rs`) |
 | 3 | `spatial_match_fn(…).ok()?.next()` — a `RholangError` swallowed as "no match" | A Law-5 `BugFoundError` is silently treated as a non-match, corrupting reduction | The error is recorded and propagated; matching is total in `Result` |
-| 4 | `getUnsafe` / `.get(...).get` / `unwrap_or(0)` on a negative gas cost | Silent partiality: a missing key or negative value becomes `0`/`None` and the node keeps running on corrupt data | Refinement newtypes (`NonNegI64`, `BlockHeight`, `SeqNum`, `Port`, `Cost`, `ByteLen`) carry the invariant *structurally*; no `Deref`, no public `.0` |
+| 4 | `getUnsafe` / `.get(...).get` / `unwrap_or(0)` on a negative gas cost | Silent partiality: a missing key or negative value becomes `0`/`None` and the node keeps running on corrupt data | Refinement newtypes (`NonNegI64`, `BlockHeight`, `SeqNum`, `Port`, `WireLen`, `Hash32`) carry the invariant *structurally*; no `Deref`, no public `.0` |
 | 5 | `maxMessageSize - 2048` in the chunker | Underflows (wraps) when the max size is small, disabling the size guard | `checked_sub` returns `Err` on a too-small max |
 | 6 | Radix-tree node as `Vec[Item]` with `NUM_ITEMS = 256` | The "exactly 256 slots" invariant is implicit; a short/corrupt node panics on indexing | `[Item; 256]` fixed array — the invariant is the type |
 | 7 | Exceptions as control flow (`throw`/`catch`, `???`, `NotImplementedError`, `BugFoundError`) | A `???` stub or a `BugFoundError` thrown deep in a `Future` aborts a task silently | `Result`/`Option` everywhere; `todo!()`/`unimplemented!()` are compile-time-visible and gated by the audit script |
-| 8 | `HashMap` iteration order feeding `New.injections` / matcher state | Non-deterministic ordering → two nodes reach different state hashes → consensus fork | `BTreeMap`/`BTreeSet` (sorted) and explicit sorts at every canonicalization point |
+| 8 | `HashMap` iteration order feeding `New.injections` / matcher state | Non-deterministic ordering → two nodes reach different state hashes → consensus fork | `BTreeMap`/`BTreeSet` (sorted) and the `Sorted<Par>` refinement (canonical by construction) |
 
 The "fragility" was not incidental: the JVM hid these behind `null`, unchecked casts, boxed
 primitives, and catch-all `Try`/`Either` recovery. The Scala node ran *despite* them — the Rust node
@@ -49,8 +49,8 @@ enforces it:
 - **`Result`/`Option`** replace exceptions and `null`; every partial boundary is a type. The audit
   script (`tools/audit-type-system.sh`) then machine-gates the remaining `unwrap`/`expect`/`panic!`/
   `unsafe`/`assert!` sites.
-- **Refinement newtypes** (`NonNegI64`, `BlockHeight`, `SeqNum`, `Port`, `Cost`, `ByteLen`,
-  `ShortLen`) carry domain invariants in the type, so "is this stake negative?" or "is this height
+- **Refinement newtypes** (`NonNegI64`, `BlockHeight`, `SeqNum`, `Port`, `WireLen`, `Hash32`)
+  carry domain invariants in the type, so "is this stake negative?" or "is this height
   `-1`?" is not a runtime question — it cannot be represented.
 - **`Send`/`Sync`** make concurrency safety a compile-time property, not a code-review convention.
 - **Zero `unsafe`** across the crate graph — the entire node is safe Rust, so the class of memory

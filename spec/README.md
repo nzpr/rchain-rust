@@ -71,7 +71,7 @@ Laws 12–13 (Rosette) are **orphaned**: the `rosette`/`roscala` VM is out of sc
 
 | Spec artifact | Rust counterpart |
 |---------------|------------------|
-| `Sort.sort` (canonical form) | the `Ord`/`Hash` impl that makes `Par` an order-insensitive container |
+| `Sort.sort` (canonical form) | `Sorted<Par>` (canonical `Eq`/`Ord`/`Hash`/`Serialize`) |
 | a proven law `L` | a `proptest`/`quickcheck` property asserting `L`, plus a differential test feeding identical inputs to the Scala node and comparing state hashes |
 | `Syntax.Proc` (the ADT) | reference for the Rust data model and its `Eq`/`Hash` derivations |
 | axiomatized crypto interfaces | Rust traits pinned by known-answer vectors |

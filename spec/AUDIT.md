@@ -50,8 +50,8 @@ Its `cast`/`lax`/`get` classes are candidate finders (soft reports). Baseline (p
 | 4 | `casper/src/runtime_manager.rs:190` | `u64::try_from(cost.value).unwrap_or(0)` — a negative gas cost silently coerced to 0 | reject negative cost (`map_err`); `PCost.cost` is a `uint64`, so a negative (over-charged) cost is an accounting anomaly |
 | 11 | `comm/src/transport/chunker.rs` | `max_message_size - 2048` could underflow (wrap) | `checked_sub` returning `Err` on a too-small max size |
 
-**No type escape** — verified: the refined newtypes (`BlockHeight`, `SeqNum`, `Port`, `Cost`,
-`WireLen`, `ByteLen`, `ShortLen`, `NonNegI64/32`) have no `Deref` impl, no public `.get()`/`.value()`
+**No type escape** — verified: the refined newtypes (`BlockHeight`, `SeqNum`, `Port`, `Hash32`,
+`WireLen`, `NonNegI64`) have no `Deref` impl, no public `.get()`/`.value()`
 accessor, and no `.0` field access outside `shared/src/refined.rs`.
 
 ---
