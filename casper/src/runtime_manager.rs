@@ -15,6 +15,7 @@ use rchain_models::casper::protocol::casper_message::{
 };
 use rchain_models::normalizer_env::NormalizerEnv;
 use rchain_models::par_ops::from_expr;
+use rchain_models::types::count_free_vars;
 use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::validator::Validator;
@@ -391,10 +392,11 @@ impl RuntimeManager {
         &self,
         deploy: &SystemDeploy,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, String> {
+        let patterns = vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0))))];
         let pattern = BindPattern {
-            patterns: vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0))))],
+            free_count: count_free_vars(&patterns[0]),
+            patterns,
             remainder: None,
-            free_count: 1,
         };
         self.runtime
             .consume_result(&[deploy.return_channel.clone()], &[pattern])

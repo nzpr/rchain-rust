@@ -5,6 +5,8 @@
 //! name-vs-process classification, the `Closed` well-formedness refinement (Law 6), and the
 //! de Bruijn context judgment (`varSort`). It is a hardening of the port — no behavior change.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{
@@ -45,6 +47,145 @@ pub fn classify(p: &Par) -> PSort {
         PSort::Name
     } else {
         PSort::Proc
+    }
+}
+
+/// Count the distinct free variables of a term (Law 5, `BindsAtMostOnce`).
+///
+/// Mirrors the normalizer's `FreeMap::count_no_wildcards` but works directly on a built `Par`: it
+/// collects every `FreeVar(level)` occurrence, deduplicated by level, and returns the count. Used to
+/// derive the `free_count` of hand-built system-contract patterns instead of hardcoding it.
+///
+/// The `remainder` binding (`ReceiveBind`/`EList`/`ParSet`/`ParMap`) is *not* counted here — callers
+/// with a `remainder` must add 1. `New.injections` is not walked (mirrors `well_scoped_par`).
+pub fn count_free_vars<S: Sort>(p: &Par<S>) -> i32 {
+    let mut levels = BTreeSet::new();
+    collect_free_vars_par(p, &mut levels);
+    levels.len() as i32
+}
+
+fn collect_free_vars_par<S: Sort>(p: &Par<S>, out: &mut BTreeSet<i32>) {
+    for s in &p.sends {
+        collect_free_vars_par(&s.chan, out);
+        for d in &s.data {
+            collect_free_vars_par(d, out);
+        }
+    }
+    for r in &p.receives {
+        for b in &r.binds {
+            for pat in &b.patterns {
+                collect_free_vars_par(pat, out);
+            }
+            collect_free_vars_par(&b.source, out);
+        }
+        collect_free_vars_par(&r.body, out);
+    }
+    for n in &p.news {
+        collect_free_vars_par(&n.p, out);
+    }
+    for e in &p.exprs {
+        collect_free_vars_expr(e, out);
+    }
+    for m in &p.matches {
+        collect_free_vars_par(&m.target, out);
+        for c in &m.cases {
+            collect_free_vars_par(&c.pattern, out);
+            collect_free_vars_par(&c.source, out);
+        }
+    }
+    // `GUnforgeable` carries no variables.
+    for b in &p.bundles {
+        collect_free_vars_par(&b.body, out);
+    }
+    for c in &p.connectives {
+        collect_free_vars_connective(c, out);
+    }
+}
+
+fn collect_free_vars_var(v: &Var, out: &mut BTreeSet<i32>) {
+    if let Var::FreeVar(l) = v {
+        out.insert(*l);
+    }
+}
+
+fn collect_free_vars_expr(e: &Expr, out: &mut BTreeSet<i32>) {
+    match e {
+        Expr::GBool(_)
+        | Expr::GInt(_)
+        | Expr::GBigInt(_)
+        | Expr::GString(_)
+        | Expr::GUri(_)
+        | Expr::GByteArray(_) => {}
+        Expr::EVar(v) => collect_free_vars_var(v, out),
+        Expr::ENot(p) | Expr::ENeg(p) => collect_free_vars_par(p, out),
+        Expr::EMult(p, q)
+        | Expr::EDiv(p, q)
+        | Expr::EMod(p, q)
+        | Expr::EPlus(p, q)
+        | Expr::EMinus(p, q)
+        | Expr::ELt(p, q)
+        | Expr::ELte(p, q)
+        | Expr::EGt(p, q)
+        | Expr::EGte(p, q)
+        | Expr::EEq(p, q)
+        | Expr::ENeq(p, q)
+        | Expr::EAnd(p, q)
+        | Expr::EOr(p, q)
+        | Expr::EShortAnd(p, q)
+        | Expr::EShortOr(p, q)
+        | Expr::EMatches(p, q)
+        | Expr::EPercentPercent(p, q)
+        | Expr::EPlusPlus(p, q)
+        | Expr::EMinusMinus(p, q) => {
+            collect_free_vars_par(p, out);
+            collect_free_vars_par(q, out);
+        }
+        Expr::EList(el) => {
+            for p in &el.ps {
+                collect_free_vars_par(p, out);
+            }
+        }
+        Expr::ETuple(et) => {
+            for p in &et.ps {
+                collect_free_vars_par(p, out);
+            }
+        }
+        Expr::ESet(set) => {
+            for p in &set.ps {
+                collect_free_vars_par(p, out);
+            }
+        }
+        Expr::EMap(map) => {
+            for (k, v) in &map.kvs {
+                collect_free_vars_par(k, out);
+                collect_free_vars_par(v, out);
+            }
+        }
+        Expr::EMethod(em) => {
+            collect_free_vars_par(&em.target, out);
+            for a in &em.arguments {
+                collect_free_vars_par(a, out);
+            }
+        }
+    }
+}
+
+fn collect_free_vars_connective(c: &Connective, out: &mut BTreeSet<i32>) {
+    match c {
+        Connective::ConnAnd(cb) | Connective::ConnOr(cb) => {
+            for p in &cb.ps {
+                collect_free_vars_par(p, out);
+            }
+        }
+        Connective::ConnNot(p) => collect_free_vars_par(p, out),
+        Connective::VarRef(_)
+        | Connective::ConnBool(_)
+        | Connective::ConnInt(_)
+        | Connective::ConnBigInt(_)
+        | Connective::ConnString(_)
+        | Connective::ConnUri(_)
+        | Connective::ConnByteArray(_)
+        | Connective::Empty => {}
     }
 }
 
@@ -468,6 +609,42 @@ mod tests {
     #[test]
     fn classify_ground_expr_is_name() {
         assert_eq!(classify(&g_int(7)), PSort::Name);
+    }
+
+    #[test]
+    fn count_free_vars_counts_distinct_free_variables() {
+        let nil: Par = Par::default();
+        assert_eq!(count_free_vars(&nil), 0);
+        assert_eq!(count_free_vars(&free_var(0)), 1);
+        // Duplicate level counts once (the "bind at most once" invariant).
+        let dup: Par = Par {
+            exprs: vec![
+                Expr::EVar(Box::new(Var::FreeVar(0))),
+                Expr::EVar(Box::new(Var::FreeVar(0))),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(count_free_vars(&dup), 1);
+        // Distinct levels count twice.
+        let two: Par = Par {
+            exprs: vec![
+                Expr::EVar(Box::new(Var::FreeVar(0))),
+                Expr::EVar(Box::new(Var::FreeVar(1))),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(count_free_vars(&two), 2);
+        // Wildcards and bound vars are not free vars.
+        let wild: Par = Par {
+            exprs: vec![Expr::EVar(Box::new(Var::Wildcard))],
+            ..Default::default()
+        };
+        assert_eq!(count_free_vars(&wild), 0);
+        let bound: Par = Par {
+            exprs: vec![Expr::EVar(Box::new(Var::BoundVar(0)))],
+            ..Default::default()
+        };
+        assert_eq!(count_free_vars(&bound), 0);
     }
 
     #[test]

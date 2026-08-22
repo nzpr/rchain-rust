@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use rchain_models::ast::{AlwaysEqual, Expr, New, Par, Receive, ReceiveBind, Send, Var};
 use rchain_models::par_ops::from_expr;
-use rchain_models::types::FreeCount;
+use rchain_models::types::{count_free_vars, FreeCount};
 
 use crate::system_processes::FixedChannels;
 
@@ -59,15 +59,16 @@ pub fn registry_bootstrap_ast() -> Par {
 /// A single registry bootstrap contract: `new { for (x <- channel) { x!(channel) } }` (port of
 /// `RegistryBootstrap.bootstrap`).
 fn bootstrap(channel: &Par) -> New {
+    let pattern = from_expr(Expr::EVar(Box::new(Var::FreeVar(0)))).quote();
     New {
         bind_count: 1,
         p: Box::new(Par {
             receives: vec![Receive {
                 binds: vec![ReceiveBind {
-                    patterns: vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0)))).quote()],
+                    patterns: vec![pattern.clone()],
                     source: Box::new(channel.clone().quote()),
                     remainder: None,
-                    free_count: FreeCount::from_nonneg(1),
+                    free_count: FreeCount::from_nonneg(count_free_vars(&pattern)),
                 }],
                 body: Box::new(Par {
                     sends: vec![Send {
