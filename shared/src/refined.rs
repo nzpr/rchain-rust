@@ -279,6 +279,81 @@ impl TryFrom<i32> for WireLen {
     }
 }
 
+/// The length of a [`Hash32`] in bytes.
+pub const HASH32_LENGTH: usize = 32;
+
+/// A 32-byte hash — the shared storage behind `Blake2b256Hash`/`StateHash`/`BlockHash`.
+///
+/// A fixed-width 32-byte wrapper (the "no type escape" convention applies: no `Deref`, no public
+/// `.get()`). Construction is via [`Hash32::new`] (total, from a `[u8; 32]`) or
+/// [`TryFrom<&[u8]>`](TryFrom) (checked); discharge is via `as_bytes`/`to_byte_array` and the
+/// one-way `From<Hash32> for [u8; 32]`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Hash32([u8; HASH32_LENGTH]);
+
+impl Hash32 {
+    pub const LENGTH: usize = HASH32_LENGTH;
+
+    /// Wrap a 32-byte array.
+    pub const fn new(bytes: [u8; HASH32_LENGTH]) -> Self {
+        Hash32(bytes)
+    }
+
+    /// The underlying 32 bytes.
+    pub fn as_bytes(&self) -> &[u8; HASH32_LENGTH] {
+        &self.0
+    }
+
+    /// The underlying 32 bytes as an owned array.
+    pub fn to_byte_array(&self) -> [u8; HASH32_LENGTH] {
+        self.0
+    }
+
+    /// Hex-encode the hash.
+    pub fn to_hex(&self) -> String {
+        crate::base16::encode(&self.0)
+    }
+
+    /// Parse a full 32-byte hex string, rejecting non-hex or wrong-length input.
+    pub fn try_from_hex(s: &str) -> Result<Self, RefineError> {
+        let bytes = crate::base16::try_decode(s).map_err(RefineError::new)?;
+        Hash32::try_from(bytes.as_slice())
+    }
+
+    /// Whether the hash begins with `prefix`.
+    pub fn starts_with(&self, prefix: &[u8]) -> bool {
+        self.0.starts_with(prefix)
+    }
+}
+
+impl From<[u8; HASH32_LENGTH]> for Hash32 {
+    fn from(bytes: [u8; HASH32_LENGTH]) -> Self {
+        Hash32(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for Hash32 {
+    type Error = RefineError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if bytes.len() != HASH32_LENGTH {
+            return Err(RefineError::new(format!(
+                "hash length must be {HASH32_LENGTH}, got {}",
+                bytes.len()
+            )));
+        }
+        let mut arr = [0u8; HASH32_LENGTH];
+        arr.copy_from_slice(bytes);
+        Ok(Hash32(arr))
+    }
+}
+
+impl std::fmt::Display for Hash32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_hex())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +403,15 @@ mod tests {
         assert!(ShortLen::try_from(65536).is_err());
         assert_eq!(u32::from(WireLen::try_from(4_000_000_000usize).unwrap()), 4_000_000_000);
         assert!(WireLen::try_from(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn hash32_round_trips() {
+        let h = Hash32::new([0xab; 32]);
+        assert_eq!(h.to_hex().len(), 64);
+        assert_eq!(Hash32::try_from(h.as_bytes().as_slice()).unwrap(), h);
+        assert!(Hash32::try_from(&[0u8; 31][..]).is_err());
+        assert!(h.starts_with(&[0xab, 0xab]));
+        assert!(!h.starts_with(&[0xcd]));
     }
 }

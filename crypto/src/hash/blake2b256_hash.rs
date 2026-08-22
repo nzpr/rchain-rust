@@ -3,8 +3,12 @@
 //! Mirrors `rspace/src/main/scala/coop/rchain/rspace/hashing/Blake2b256Hash.scala`, hoisted into
 //! `crypto` so that `models` can depend on it without depending on `rspace` (per AGENTS.md).
 //! The scodec codecs are deferred.
+//!
+//! The 32-byte storage is the shared [`Hash32`](rchain_shared::refined::Hash32) newtype; this type
+//! adds the Blake2b256 digest constructors (`create`/`create_many`) on top.
 
 use rchain_shared::base16;
+use rchain_shared::refined::Hash32;
 
 use crate::errors::CryptoError;
 
@@ -21,22 +25,22 @@ fn digest_to_array(digest: Vec<u8>) -> [u8; LENGTH] {
 
 /// A 32-byte Blake2b256 hash.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Blake2b256Hash([u8; LENGTH]);
+pub struct Blake2b256Hash(Hash32);
 
 impl Blake2b256Hash {
     /// Hash `bytes` and wrap the result.
     pub fn create(bytes: &[u8]) -> Self {
-        Self(digest_to_array(super::blake2b256::hash(bytes)))
+        Self(Hash32::new(digest_to_array(super::blake2b256::hash(bytes))))
     }
 
     /// Hash the concatenation of `parts` and wrap the result.
     pub fn create_many(parts: &[&[u8]]) -> Self {
-        Self(digest_to_array(super::blake2b256::hash_many(parts)))
+        Self(Hash32::new(digest_to_array(super::blake2b256::hash_many(parts))))
     }
 
     /// Wrap an existing 32-byte array without hashing.
     pub fn from_bytes(bytes: [u8; LENGTH]) -> Self {
-        Self(bytes)
+        Self(Hash32::new(bytes))
     }
 
     /// Wrap a byte slice, requiring it to be exactly 32 bytes.
@@ -50,7 +54,7 @@ impl Blake2b256Hash {
         );
         let mut arr = [0u8; LENGTH];
         arr.copy_from_slice(bytes);
-        Self(arr)
+        Self(Hash32::new(arr))
     }
 
     /// Parse a hex string, ignoring non-hex characters (the Scala `fromHex` / `unsafeDecode`).
@@ -68,17 +72,17 @@ impl Blake2b256Hash {
 
     /// The underlying 32 bytes.
     pub fn as_bytes(&self) -> &[u8; LENGTH] {
-        &self.0
+        self.0.as_bytes()
     }
 
     /// The underlying 32 bytes as a slice.
     pub fn to_byte_array(&self) -> [u8; LENGTH] {
-        self.0
+        self.0.to_byte_array()
     }
 
     /// Hex-encode the hash.
     pub fn to_hex(&self) -> String {
-        base16::encode(&self.0)
+        self.0.to_hex()
     }
 }
 
@@ -95,6 +99,19 @@ impl TryFrom<&[u8]> for Blake2b256Hash {
             });
         }
         Ok(Self::from_byte_array(bytes))
+    }
+}
+
+/// Unwrap/re-wrap interop with the shared storage type.
+impl From<Hash32> for Blake2b256Hash {
+    fn from(h: Hash32) -> Self {
+        Blake2b256Hash(h)
+    }
+}
+
+impl From<Blake2b256Hash> for Hash32 {
+    fn from(h: Blake2b256Hash) -> Self {
+        h.0
     }
 }
 

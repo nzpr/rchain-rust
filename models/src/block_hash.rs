@@ -1,8 +1,11 @@
 //! A block hash.
 //!
 //! Mirrors `models/src/main/scala/coop/rchain/models/BlockHash.scala`.
+//!
+//! The 32-byte storage is the shared [`Hash32`](rchain_shared::refined::Hash32) newtype.
 
 use rchain_shared::base16;
+use rchain_shared::refined::Hash32;
 
 use crate::errors::ModelsError;
 
@@ -11,12 +14,12 @@ pub const LENGTH: usize = 32;
 
 /// A 32-byte block hash.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct BlockHash([u8; LENGTH]);
+pub struct BlockHash(Hash32);
 
 impl BlockHash {
     /// Wrap a 32-byte array.
     pub fn new(bytes: [u8; LENGTH]) -> Self {
-        Self(bytes)
+        Self(Hash32::new(bytes))
     }
 
     /// Wrap a 32-byte slice (panics if not exactly [`LENGTH`] bytes).
@@ -24,17 +27,17 @@ impl BlockHash {
         assert_eq!(bytes.len(), LENGTH, "expected {LENGTH} bytes");
         let mut arr = [0u8; LENGTH];
         arr.copy_from_slice(bytes);
-        Self(arr)
+        Self(Hash32::new(arr))
     }
 
     /// The underlying 32 bytes.
     pub fn as_bytes(&self) -> &[u8; LENGTH] {
-        &self.0
+        self.0.as_bytes()
     }
 
     /// Hex-encode the hash.
     pub fn to_hex(&self) -> String {
-        base16::encode(&self.0)
+        self.0.to_hex()
     }
 
     /// Parse a full 32-byte hex string (panics if it decodes to a different length).
@@ -66,6 +69,31 @@ impl TryFrom<&[u8]> for BlockHash {
             });
         }
         Ok(Self::from_slice(bytes))
+    }
+}
+
+impl From<Hash32> for BlockHash {
+    fn from(h: Hash32) -> Self {
+        BlockHash(h)
+    }
+}
+
+impl From<BlockHash> for Hash32 {
+    fn from(h: BlockHash) -> Self {
+        h.0
+    }
+}
+
+/// Total conversion from the canonical digest type (both are fixed 32-byte wrappers).
+impl From<rchain_crypto::hash::blake2b256_hash::Blake2b256Hash> for BlockHash {
+    fn from(h: rchain_crypto::hash::blake2b256_hash::Blake2b256Hash) -> Self {
+        Self(h.into())
+    }
+}
+
+impl From<BlockHash> for rchain_crypto::hash::blake2b256_hash::Blake2b256Hash {
+    fn from(h: BlockHash) -> Self {
+        h.0.into()
     }
 }
 

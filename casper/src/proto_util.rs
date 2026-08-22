@@ -58,7 +58,7 @@ pub fn hash_block(block: &BlockMessage) -> BlockHash {
     cleared.block_hash = BlockHash::new([0u8; 32]);
     cleared.sig = Vec::new();
     let bytes = cleared.to_bytes();
-    BlockHash::from_slice(Blake2b256Hash::create(&bytes).as_bytes())
+    BlockHash::from(Blake2b256Hash::create(&bytes))
 }
 
 /// Build an unsigned block, filling in its content-addressed hash (port of `unsignedBlockProto`).
