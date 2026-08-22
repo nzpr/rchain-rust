@@ -266,7 +266,7 @@ where
     let parent_hashes: BTreeSet<BlockHash> = dag_repr
         .dag_message_state
         .latest_msgs
-        .iter()
+        .values()
         .map(|m| m.id)
         .collect();
     get_pre_state_for_parents(dag, block_store, runtime, &parent_hashes, block_index).await

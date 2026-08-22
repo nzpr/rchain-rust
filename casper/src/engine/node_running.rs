@@ -200,7 +200,7 @@ pub async fn handle_fork_choice_tip_request(
     let tips: Vec<BlockHash> = repr
         .dag_message_state
         .latest_msgs
-        .iter()
+        .values()
         .map(|m| m.id)
         .collect();
     for tip in &tips {

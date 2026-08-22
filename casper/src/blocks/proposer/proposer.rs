@@ -180,8 +180,7 @@ impl Proposer {
                     dag_repr
                         .dag_message_state
                         .latest_msgs
-                        .iter()
-                        .find(|m| m.sender == sender)
+                        .get(&sender)
                         .map(|m| i64::from(m.sender_seq))
                         .unwrap_or(-1)
                 })

@@ -11,14 +11,14 @@ use super::finalizer::{Finalizer, Message};
 use super::message_map;
 use crate::errors::StorageError;
 
-/// The set of latest messages and the full message map.
+/// The per-sender latest messages and the full message map.
 ///
-/// Invariant: `latest_msgs` holds at most one message per sender, and every entry is also present
-/// in `msg_map` (the per-sender view must never diverge from the map, or consensus would read a
-/// stale fringe). `insert_msg` enforces this with a `debug_assert!`.
+/// Invariant: `latest_msgs` is keyed by sender, so the one-message-per-sender invariant is
+/// structural (a map cannot hold two entries for one sender); every entry is also present in
+/// `msg_map`. `insert_msg` enforces the subset invariant with a `debug_assert!`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DagMessageState<M, S> {
-    pub latest_msgs: BTreeSet<Message<M, S>>,
+    pub latest_msgs: BTreeMap<S, Message<M, S>>,
     pub msg_map: BTreeMap<M, Message<M, S>>,
 }
 
@@ -29,7 +29,7 @@ where
 {
     pub fn empty() -> Self {
         Self {
-            latest_msgs: BTreeSet::new(),
+            latest_msgs: BTreeMap::new(),
             msg_map: BTreeMap::new(),
         }
     }
@@ -78,27 +78,17 @@ where
         let mut new_msg_map = self.msg_map.clone();
         new_msg_map.insert(msg.id.clone(), msg.clone());
 
-        let latest: Vec<Message<M, S>> = self
-            .latest_msgs
-            .iter()
-            .filter(|m| m.sender == msg.sender)
-            .cloned()
-            .collect();
-        let replace = latest
-            .iter()
-            .map(|m| m.sender_seq)
-            .max()
-            .map(|max_seq| msg.sender_seq > max_seq)
-            .unwrap_or(true);
-
         let mut new_latest_msgs = self.latest_msgs.clone();
+        let replace = new_latest_msgs
+            .get(&msg.sender)
+            .map(|cur| msg.sender_seq > cur.sender_seq)
+            .unwrap_or(true);
         if replace {
-            new_latest_msgs.retain(|m| m.sender != msg.sender);
-            new_latest_msgs.insert(msg.clone());
+            new_latest_msgs.insert(msg.sender.clone(), msg.clone());
         }
 
         debug_assert!(
-            new_latest_msgs.iter().all(|m| new_msg_map.contains_key(&m.id)),
+            new_latest_msgs.values().all(|m| new_msg_map.contains_key(&m.id)),
             "latest_msgs must be a subset of msg_map"
         );
 
@@ -137,22 +127,21 @@ where
     {
         let max_height = self
             .latest_msgs
-            .iter()
+            .values()
             .map(|m| m.height)
             .max()
             .ok_or(StorageError::EmptyLatestMessages)?;
         let new_height = max_height + NonNegI64::one();
         let seq_num = self
             .latest_msgs
-            .iter()
-            .find(|m| m.sender == *creator)
+            .get(creator)
             .map(|m| m.sender_seq)
             .unwrap_or_else(SeqNum::zero);
         let new_seq_num = seq_num + NonNegI64::one();
-        let justifications = self.latest_msgs.clone();
+        let justifications: BTreeSet<Message<M, S>> = self.latest_msgs.values().cloned().collect();
         let bonds_map = self
             .latest_msgs
-            .iter()
+            .values()
             .next()
             .ok_or(StorageError::EmptyLatestMessages)?
             .bonds_map
@@ -172,7 +161,8 @@ where
 
     /// The latest fringe, using the latest messages as parents.
     pub fn latest_fringe(&self) -> BTreeSet<Message<M, S>> {
-        message_map::latest_fringe(&self.msg_map, &self.latest_msgs)
+        let latest: BTreeSet<Message<M, S>> = self.latest_msgs.values().cloned().collect();
+        message_map::latest_fringe(&self.msg_map, &latest)
     }
 }
 
@@ -198,19 +188,17 @@ mod tests {
         let state: DagMessageState<i32, i32> = DagMessageState::empty();
         let genesis = msg(0, 0, 0);
         let s1 = state.insert_msg(&genesis);
-        assert!(s1.latest_msgs.contains(&genesis));
+        assert_eq!(s1.latest_msgs.get(&0), Some(&genesis));
 
         // Same sender_seq does NOT replace the latest (monotone, no regression).
         let stale = msg(1, 0, 0);
         let s2 = s1.insert_msg(&stale);
-        assert!(s2.latest_msgs.contains(&genesis));
-        assert!(!s2.latest_msgs.contains(&stale));
+        assert_eq!(s2.latest_msgs.get(&0), Some(&genesis));
 
         // A higher sender_seq replaces the latest.
         let newer = msg(2, 0, 1);
         let s3 = s2.insert_msg(&newer);
-        assert!(s3.latest_msgs.contains(&newer));
-        assert!(!s3.latest_msgs.contains(&genesis));
+        assert_eq!(s3.latest_msgs.get(&0), Some(&newer));
 
         // The message map still holds every message.
         assert_eq!(s3.msg_map.len(), 3);

@@ -79,15 +79,15 @@ fn three_validators_converge_on_shared_view() {
     }
 
     // The highest message sees the entire shared prefix (convergence: no validator misses a block).
-    let tip = state.latest_msgs.iter().max_by_key(|m| m.height).unwrap();
+    let tip = state.latest_msgs.values().max_by_key(|m| m.height).unwrap();
     for id in &ids {
         assert!(tip.seen.contains(id), "tip {:?} sees {id:?}", tip.id);
     }
 
     // Law 15: one latest message per sender, and the retained one has the highest sender_seq.
-    let senders: BTreeSet<Validator> = state.latest_msgs.iter().map(|m| m.sender.clone()).collect();
+    let senders: BTreeSet<Validator> = state.latest_msgs.values().map(|m| m.sender.clone()).collect();
     assert_eq!(senders.len(), 3, "one latest message per validator");
-    for m in &state.latest_msgs {
+    for m in state.latest_msgs.values() {
         let max_seq = ids
             .iter()
             .filter_map(|id| state.msg_map.get(id))

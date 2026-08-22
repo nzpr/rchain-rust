@@ -257,8 +257,9 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
             // below the newly-finalized fringe.
             if !fringe_diff.is_empty() {
                 let msg_map = &repr.dag_message_state.msg_map;
-                let latest_msgs = &repr.dag_message_state.latest_msgs;
-                let lowest = message_map::lowest_fringe(msg_map, latest_msgs);
+                let latest_msgs: BTreeSet<_> =
+                    repr.dag_message_state.latest_msgs.values().cloned().collect();
+                let lowest = message_map::lowest_fringe(msg_map, &latest_msgs);
                 let lowest_ids: BTreeSet<BlockHash> = lowest.iter().map(|m| m.id).collect();
                 let prunable = message_map::prune_fringe(msg_map, &lowest_ids, &repr.child_map);
                 prune_cache_ids = prunable.iter().map(|m| m.id).collect();

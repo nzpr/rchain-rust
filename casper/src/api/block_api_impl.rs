@@ -672,8 +672,7 @@ impl BlockApi for BlockApiImpl {
         let latest_id = dag
             .dag_message_state
             .latest_msgs
-            .iter()
-            .find(|m| m.sender == Validator::from_slice(validator_bytes))
+            .get(&Validator::from_slice(validator_bytes))
             .map(|m| m.id);
         match latest_id {
             Some(id) => self
