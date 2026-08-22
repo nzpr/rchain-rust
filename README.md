@@ -4,6 +4,16 @@ A faithful Rust rewrite of the [RChain](https://rchain.coop) node. The Rust impl
 Cargo workspace at the top level (one crate per original sbt module); the entire upstream Scala
 fork is preserved for reference under [`legacy/`](legacy/).
 
+## Provenance
+
+This repository was developed through commit `14b8b77` on
+[`PatrickMockridge/rchain-rust`](https://github.com/PatrickMockridge/rchain-rust) — a fork of
+[`rchain/rchain`](https://github.com/rchain/rchain). As of that commit, the repository lives at
+[`rchain-community/rchain-rust`](https://github.com/rchain-community/rchain-rust). A snapshot of the
+code at that state is timestamped on Arweave — transaction
+[`MK4WA8w3NTIIFd6iaD06EPyxVbFhoV9MtfhMNcHWWMw`](https://arweave.net/MK4WA8w3NTIIFd6iaD06EPyxVbFhoV9MtfhMNcHWWMw),
+22 August 2026 7:15pm.
+
 ## Documentation
 
 The documentation is served as a book (`mdbook serve docs`). It is organized software-first:
