@@ -17,6 +17,10 @@ pub fn format_of_fields(b: &BlockMessage) -> bool {
         false
     } else if b.shard_id.is_empty() {
         false
+    } else if !b.shard_id.is_ascii() {
+        // Non-ASCII shard ids are rejected at ingress rather than asserted inside
+        // `BlockRandomSeed::new` (which only `debug_assert!`s the invariant).
+        false
     } else {
         true
     }
@@ -389,6 +393,13 @@ mod tests {
         b.version = 1;
         assert!(format_of_fields(&b));
         b.sig = vec![];
+        assert!(!format_of_fields(&b));
+    }
+
+    #[test]
+    fn format_of_fields_rejects_non_ascii_shard_id() {
+        let mut b = block();
+        b.shard_id = "røøt".to_string();
         assert!(!format_of_fields(&b));
     }
 

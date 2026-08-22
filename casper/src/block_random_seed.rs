@@ -34,7 +34,7 @@ impl BlockRandomSeed {
         sender: PublicKey,
         pre_state_hash: Blake2b256Hash,
     ) -> Self {
-        assert!(
+        debug_assert!(
             shard_id.is_ascii(),
             "Shard name should contain only ASCII characters"
         );
