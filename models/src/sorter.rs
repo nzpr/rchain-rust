@@ -323,17 +323,18 @@ fn sort_new(n: &New) -> ScoredTerm<New> {
     };
     // The Scala iterates a HashMap in nondeterministic order; sort by key for determinism
     // (documented deviation, mirroring the `merging.rs` BTreeMap precedent).
-    let mut injections: Vec<(&String, &Par)> = n.injections.iter().collect();
+    let mut injections: Vec<(&String, ScoredTerm<Par>)> = n
+        .injections
+        .iter()
+        .map(|(k, v)| (k, sort_par(v)))
+        .collect();
     injections.sort_by(|a, b| a.0.cmp(b.0));
     let injections_score: Vec<Tree> = if injections.is_empty() {
         vec![leaf_i64(ABSENT)]
     } else {
         injections
             .iter()
-            .map(|(k, v)| {
-                let scored = sort_par(v);
-                Tree::Node(vec![leaf_str((*k).clone()), scored.score])
-            })
+            .map(|(k, st)| Tree::Node(vec![leaf_str((*k).clone()), st.score.clone()]))
             .collect()
     };
 
@@ -347,7 +348,10 @@ fn sort_new(n: &New) -> ScoredTerm<New> {
             bind_count: n.bind_count,
             p: Box::new(sorted_par.term),
             uri: sorted_uri,
-            injections: n.injections.clone(),
+            injections: injections
+                .into_iter()
+                .map(|(k, st)| ((*k).clone(), st.term))
+                .collect(),
             locally_free: n.locally_free.clone(),
         },
         score: Tree::Node(children),

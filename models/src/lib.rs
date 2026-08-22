@@ -27,6 +27,7 @@ pub mod normalizer_env;
 pub mod pretty;
 pub mod proto;
 pub mod runtime;
+pub mod sorted;
 pub mod sorter;
 pub mod string_syntax;
 pub mod types;

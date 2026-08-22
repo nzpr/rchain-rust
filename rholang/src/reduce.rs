@@ -23,7 +23,7 @@ use crate::accounting::{CostAccounting, Costs};
 use crate::env::Env;
 use crate::errors::RholangError;
 use crate::matcher::spatial_match_result;
-use crate::substitute::{substitute_par_and_charge, substitute_par_no_sort};
+use crate::substitute::{substitute_par, substitute_par_and_charge};
 
 fn union_free(a: Vec<i32>, b: Vec<i32>) -> Vec<i32> {
     let mut set: BTreeSet<i32> = a.into_iter().collect();
@@ -1374,7 +1374,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 q,
             ));
         }
-        let subst_body = substitute_par_no_sort(&receive.body, 0, &env.shift(receive.bind_count))?;
+        let subst_body = substitute_par(&receive.body, 0, &env.shift(receive.bind_count))?;
         self.consume(
             &binds,
             ParWithRandom {
