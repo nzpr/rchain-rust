@@ -22,6 +22,52 @@ cargo run --release -p rchain-node --bin rnode -- run -s
 The node serves **Deploy** on the external gRPC port **40401** and **Propose + Repl** on the internal
 loopback port **40402** (propose/repl are not network-reachable — `spec/AUDIT.md` C1).
 
+### Standalone genesis prerequisites
+
+`run -s` makes the node the **genesis master**, and it needs two things the bare command above does
+not set up for you:
+
+1. **A validator key.** The genesis block must be signed, so provide a secp256k1 private key (32
+   bytes, base16) through the *hidden* `--validator-private-key` flag:
+
+   ```sh
+   rnode run -s --validator-private-key 67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530
+   ```
+
+   Without it the node exits with `To create genesis block node must provide validator private key`.
+   (`--validator-private-key-path` accepts a PEM file, but the Rust runtime currently reads only the
+   hex form.)
+
+2. **A wallets file.** The genesis ceremony parses `~/.rnode/genesis/wallets.txt` *strictly*, so the
+   file must exist — an empty file is fine. `bonds.txt` is auto-generated when absent, but to be
+   bonded as a validator, provide a `<public_key> <stake>` line (public key = uncompressed 65-byte
+   point, base16) matching your key:
+
+   ```sh
+   mkdir -p ~/.rnode/genesis
+   touch ~/.rnode/genesis/wallets.txt
+   echo "04c591a8ff19ac9c4e4e5793673b83123437e975285e7b442f4ee2654dffca5e2d2103ed494718c697ac9aebcfd19612e224db46661011863ed2fc54e71861e2a6 100" \
+     > ~/.rnode/genesis/bonds.txt
+   ```
+
+   A missing wallets file exits with `FAILED PARSING WALLETS FILE: … No such file or directory`.
+
+### Bind to loopback (localhost-only)
+
+The API server builds its listen address with `SocketAddr::from_str`, so `--api-host` must be a
+**literal IP**, not a hostname — `--api-host localhost` fails with `invalid socket address syntax`.
+For a localhost-only node, use `127.0.0.1` and skip the UPnP probe and external-IP guessing:
+
+```sh
+rnode run -s \
+  --validator-private-key 67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530 \
+  --host 127.0.0.1 --api-host 127.0.0.1 --no-upnp
+```
+
+`--host 127.0.0.1` sets the advertised protocol address to loopback and also stops the node probing
+external services to guess its public IP (otherwise it logs `guessing your external IP address…`);
+`--no-upnp` disables the gateway probe. All node data lives under `~/.rnode` by default.
+
 ### Run the REPL
 
 ```sh
