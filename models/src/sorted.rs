@@ -9,8 +9,13 @@ use std::hash::{Hash, Hasher};
 
 use rchain_shared::serialize::Serialize;
 
-use crate::ast::{Par, Sort};
+use crate::ast::{NameSort, Par, ProcSort, Sort};
 use crate::sorter::sort_par_term;
+
+/// A canonically-sorted process (a `Par` in process position).
+pub type SortedProc = Sorted<ProcSort>;
+/// A canonically-sorted name (a `Par` in name position).
+pub type SortedName = Sorted<NameSort>;
 
 /// A canonically-sorted `Par`.
 ///
