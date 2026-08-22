@@ -210,6 +210,10 @@ impl Closed {
     }
 
     /// Borrow the underlying closed process.
+    ///
+    /// This is the single borrow-view used to enter the reducer (which operates on the flat `Par`
+    /// sub-terms) at the declared boundary in `Runtime::inj`. It does not consume the proof; the
+    /// one-way *consuming* discharge is [`From<Closed> for Par`], used at wire/FFI boundaries.
     pub fn as_par(&self) -> &Par {
         &self.0
     }
@@ -369,6 +373,9 @@ impl WellScoped {
     }
 
     /// Borrow the underlying (well-scoped) process.
+    ///
+    /// This is the single borrow-view used at the reducer boundary; it does not consume the proof.
+    /// The one-way *consuming* discharge is [`From<WellScoped> for Par`].
     pub fn as_par(&self) -> &Par {
         &self.par
     }

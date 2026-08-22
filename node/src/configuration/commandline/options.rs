@@ -401,6 +401,9 @@ pub struct Run {
     pub epoch_length: Option<i32>,
 
     /// Length of the quarantine time in blocks.
+    ///
+    /// Reserved: parsed and validated, but not yet wired to the native PoS contract
+    /// (see `spec/RUST-FIRST.md`).
     #[arg(long = "quarantine-length")]
     pub quarantine_length: Option<i32>,
 
@@ -409,6 +412,9 @@ pub struct Run {
     pub number_of_active_validators: Option<i32>,
 
     /// Public key for transfers from the PoS vault.
+    ///
+    /// Reserved: parsed and validated, but not yet wired to the native PoS contract
+    /// (see `spec/RUST-FIRST.md`).
     #[arg(long = "pos-vault-pub-key")]
     pub pos_vault_pub_key: Option<String>,
 
@@ -453,6 +459,9 @@ pub struct Run {
     pub pos_multi_sig_public_keys: Option<Vec<String>>,
 
     /// How many confirmations are necessary to use multi-sig vault.
+    ///
+    /// Reserved: parsed and validated, but not yet wired to the native PoS contract
+    /// (see `spec/RUST-FIRST.md`).
     #[arg(long = "pos-multi-sig-quorum")]
     pub pos_multi_sig_quorum: Option<i32>,
 }

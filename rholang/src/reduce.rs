@@ -274,10 +274,16 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v2 = eval_single_expr(p2, env, cost)?;
             match (&v1, &v2) {
                 (Expr::GInt(l), Expr::GInt(r)) => {
+                    if *r == 0 {
+                        return Err(RholangError::ReduceError("/ by zero".to_string()));
+                    }
                     cost.charge(Costs::division_cost())?;
                     Ok(Expr::GInt(l / r))
                 }
                 (Expr::GBigInt(l), Expr::GBigInt(r)) => {
+                    if *r == BigInt::from(0i64) {
+                        return Err(RholangError::ReduceError("/ by zero".to_string()));
+                    }
                     cost.charge(Costs::big_int_division(l, r))?;
                     Ok(Expr::GBigInt(l / r))
                 }
@@ -302,10 +308,16 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             let v2 = eval_single_expr(p2, env, cost)?;
             match (&v1, &v2) {
                 (Expr::GInt(l), Expr::GInt(r)) => {
+                    if *r == 0 {
+                        return Err(RholangError::ReduceError("/ by zero".to_string()));
+                    }
                     cost.charge(Costs::modulo_cost())?;
                     Ok(Expr::GInt(l % r))
                 }
                 (Expr::GBigInt(l), Expr::GBigInt(r)) => {
+                    if *r == BigInt::from(0i64) {
+                        return Err(RholangError::ReduceError("/ by zero".to_string()));
+                    }
                     cost.charge(Costs::big_int_modulo(l, r))?;
                     Ok(Expr::GBigInt(l % r))
                 }
@@ -1619,6 +1631,36 @@ mod tests {
             eval_single_expr(&p, &e, &cost).unwrap(),
             Expr::GInt(5)
         );
+    }
+
+    #[test]
+    fn division_and_modulo_by_zero_are_errors() {
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let e = Env::new();
+
+        let div_zero = from_expr(Expr::EDiv(
+            Box::new(from_expr(Expr::GInt(1))),
+            Box::new(from_expr(Expr::GInt(0))),
+        ));
+        assert!(eval_single_expr(&div_zero, &e, &cost).is_err());
+
+        let mod_zero = from_expr(Expr::EMod(
+            Box::new(from_expr(Expr::GInt(1))),
+            Box::new(from_expr(Expr::GInt(0))),
+        ));
+        assert!(eval_single_expr(&mod_zero, &e, &cost).is_err());
+
+        let big_div_zero = from_expr(Expr::EDiv(
+            Box::new(from_expr(Expr::GBigInt(BigInt::from(1i64)))),
+            Box::new(from_expr(Expr::GBigInt(BigInt::from(0i64)))),
+        ));
+        assert!(eval_single_expr(&big_div_zero, &e, &cost).is_err());
+
+        let big_mod_zero = from_expr(Expr::EMod(
+            Box::new(from_expr(Expr::GBigInt(BigInt::from(1i64)))),
+            Box::new(from_expr(Expr::GBigInt(BigInt::from(0i64)))),
+        ));
+        assert!(eval_single_expr(&big_mod_zero, &e, &cost).is_err());
     }
 
     #[test]

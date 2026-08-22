@@ -9,6 +9,7 @@ use rchain_crypto::public_key::PublicKey;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::BlockMessage;
 use rchain_models::rholang::RhoType::RhoName;
+use rchain_rholang::merging::vlong_encode;
 
 /// Random-seed split index for the pre-charge deploy (port of `PreChargeSplitIndex`).
 pub const PRE_CHARGE_SPLIT_INDEX: u8 = 0;
@@ -158,27 +159,6 @@ fn var_size(bytes: &[u8]) -> Vec<u8> {
     out.push(bytes.len() as u8);
     out.extend_from_slice(bytes);
     out
-}
-
-/// Zigzag-encode an `i64` into `u64`.
-fn zigzag_encode(n: i64) -> u64 {
-    ((n << 1) ^ (n >> 63)) as u64
-}
-
-/// LEB128 varint-encode a `u64`.
-fn varint_encode(mut n: u64) -> Vec<u8> {
-    let mut out = Vec::new();
-    while n >= 0x80 {
-        out.push((n as u8 & 0x7f) | 0x80);
-        n >>= 7;
-    }
-    out.push(n as u8);
-    out
-}
-
-/// scodec `vlong` — zigzag + LEB128 varint.
-fn vlong_encode(n: i64) -> Vec<u8> {
-    varint_encode(zigzag_encode(n))
 }
 
 #[cfg(test)]

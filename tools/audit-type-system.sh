@@ -8,8 +8,8 @@
 # Hard violations (exit 1):
 #   panic   — `.unwrap()`, `.expect(`, `panic!`, `unreachable!`, `todo!`, `unimplemented!` in
 #             production code. Whitelisted: `sdk/src/primitive.rs` (the Scala `getUnsafe` escape
-#             hatch) and `node/src/dag/implementation.rs` / `regex/src/regex_pattern.rs` (the Scala
-#             `NotImplementedError("TODO")` stubs). The rholang parser's `expect(Tok::…)` method is
+#             hatch) and `regex/src/regex_pattern.rs` (the Scala `NotImplementedError("TODO")` stubs).
+#             The rholang parser's `expect(Tok::…)` method is
 #             excluded (a method, not `Result::expect`; the receiver may be `self` or the parser
 #             parameter `p` inside `with_depth`).
 #   unsafe  — `unsafe {` (must be zero: the crate graph is entirely safe Rust).

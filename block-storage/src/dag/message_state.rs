@@ -12,6 +12,10 @@ use super::message_map;
 use crate::errors::StorageError;
 
 /// The set of latest messages and the full message map.
+///
+/// Invariant: `latest_msgs` holds at most one message per sender, and every entry is also present
+/// in `msg_map` (the per-sender view must never diverge from the map, or consensus would read a
+/// stale fringe). `insert_msg` enforces this with a `debug_assert!`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DagMessageState<M, S> {
     pub latest_msgs: BTreeSet<Message<M, S>>,
@@ -92,6 +96,11 @@ where
             new_latest_msgs.retain(|m| m.sender != msg.sender);
             new_latest_msgs.insert(msg.clone());
         }
+
+        debug_assert!(
+            new_latest_msgs.iter().all(|m| new_msg_map.contains_key(&m.id)),
+            "latest_msgs must be a subset of msg_map"
+        );
 
         Self {
             latest_msgs: new_latest_msgs,

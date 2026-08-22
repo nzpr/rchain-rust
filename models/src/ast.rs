@@ -166,6 +166,11 @@ impl<S: Sort> Par<S> {
 
     /// Re-mark the phantom sort (the flat record is unchanged). The sort is a marker, so this is
     /// a total operation on the identical flat record.
+    ///
+    /// This is the unchecked reflection primitive behind `quote`/`eval`: the sort has no runtime
+    /// representation, so there is nothing to validate against here. When a structurally-pure name
+    /// is required (Law 1 / the name-sort judgment), use `TryFrom<Par> for Name` in `types.rs`,
+    /// which checks [`is_pure_name`](crate::types::is_pure_name).
     pub fn re_sort<T: Sort>(self) -> Par<T> {
         Par {
             sends: self.sends,

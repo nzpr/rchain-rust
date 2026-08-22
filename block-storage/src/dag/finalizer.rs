@@ -151,8 +151,12 @@ where
         let mut full_partition_stake: i128 = 0;
         for (sender, seen_by) in next_fringe_support_map {
             let all_bonded = !seen_by.is_empty() && seen_by.values().all(|v| v == &bonded_senders);
+            // Only bonded senders contribute stake. A non-bonded justification sender must not
+            // index `bonds_map` (it would panic) — skip it instead.
             if all_bonded {
-                full_partition_stake += i128::from(i64::from(bonds_map[sender]));
+                if let Some(stake) = bonds_map.get(sender) {
+                    full_partition_stake += i128::from(i64::from(*stake));
+                }
             }
         }
         let total_stake: i128 = bonds_map
@@ -199,6 +203,11 @@ where
         let mut current = parent_fringe.clone();
         let mut new_fringe_opt: Option<BTreeSet<Message<M, S>>> = None;
         while let Some(nf) = self.next_fringe(justifications, bonds_map, &current) {
+            // Progress guard: a non-advancing fringe would loop forever. Only record a strictly
+            // new fringe.
+            if nf == current {
+                break;
+            }
             new_fringe_opt = Some(nf.clone());
             current = nf;
         }
@@ -256,6 +265,23 @@ mod tests {
 
         // Only 2 of 3 -> 2/3 is NOT > 2/3 -> does not finalize.
         assert!(!finalizer.calculate_fringe(&support_with_full(&[0, 1], &bonded_senders), &bonds));
+    }
+
+    #[test]
+    fn calculate_fringe_ignores_non_bonded_sender() {
+        let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let bonds = bonded();
+        let bonded_senders: BTreeSet<i32> = bonds.keys().copied().collect();
+
+        // A support map that includes a non-bonded sender (99) seeing the full partition. This
+        // must not panic on `bonds_map[sender]` and must still finalize on the bonded 3/3 stake.
+        let mut support = support_with_full(&[0, 1, 2], &bonded_senders);
+        support.insert(
+            99,
+            bonded_senders.iter().map(|&b| (b, bonded_senders.clone())).collect(),
+        );
+        assert!(finalizer.calculate_fringe(&support, &bonds));
     }
 
     #[test]

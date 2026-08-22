@@ -59,12 +59,12 @@ in parallel: laws are proven in phase order while code is ported in dependency o
 | Module | Main LOC | Difficulty | Est. | Depends on | Note |
 |---|---|---|---|---|---|
 | `graphz` | 231 | Easy | ~1 | `shared` | trivial string builder |
-| `sdk` | 678 | Easy | ~3 | — | **root leaf**; Laws 14, 17 |
+| `sdk` | 678 | Easy | ~3 | `shared` | Laws 14, 17 |
 | `regex` | 2,398 | Easy | ~3–5 | — | orphaned; pure FSM/regex |
 | `crypto` | 1,431 | Easy | ~5–8 | `shared` | 1:1 crate mappings |
 | `rspace-bench` | (bench) | Easy | ~3–5 | rspace/rholang/models | gated |
 | `block-storage` | 1,074 | Medium | ~7 | shared/models/sdk | finalizer + monotonicity |
-| `shared` | 3,092 | Easy–Med | ~10–15 | `sdk` | foundational; LMDB FFI |
+| `shared` | 3,092 | Easy–Med | ~10–15 | — | foundational; LMDB FFI |
 | `models` | 4,252 | Medium | ~12–18 | shared/crypto | bit-exact sorter |
 | `comm` | 3,366 | Hard | ~15 | shared/crypto/models | lock-free buffers, gRPC/TLS |
 | `rspace` | 6,840 | Hard | ~20–30 | shared/crypto | concurrency, Merkle, replay |

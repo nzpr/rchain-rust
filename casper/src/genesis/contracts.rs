@@ -41,7 +41,7 @@ impl ProofOfStake {
     /// The rholang `initialBonds` map literal (port of `ProofOfStake.initialBonds`).
     pub fn initial_bonds(validators: &[Validator]) -> String {
         let mut sorted: Vec<&Validator> = validators.iter().collect();
-        sorted.sort_by(|a, b| a.pk.bytes().cmp(b.pk.bytes()));
+        sorted.sort_by(|a, b| a.pk.cmp(&b.pk));
         let entries: Vec<String> = sorted
             .iter()
             .map(|v| {
@@ -131,6 +131,18 @@ mod tests {
         assert!(bonds.contains(": 200"));
         assert!(bonds.contains("0101"));
         assert!(bonds.contains("0202"));
+    }
+
+    #[test]
+    fn initial_bonds_uses_signed_public_key_order() {
+        // 0x80 sorts BEFORE 0x01 under signed-byte order (i8: -128 < 1) but AFTER under unsigned
+        // order (u8: 128 > 1). This discriminates the canonical (signed) ordering from the raw
+        // `bytes().cmp()` ordering it replaces.
+        let validators = vec![validator(0x01, 100), validator(0x80, 200)];
+        let bonds = ProofOfStake::initial_bonds(&validators);
+        let pos_200 = bonds.find(": 200").expect("stake 200 present");
+        let pos_100 = bonds.find(": 100").expect("stake 100 present");
+        assert!(pos_200 < pos_100, "0x80 must sort before 0x01 (signed order): {bonds}");
     }
 
     #[test]
