@@ -44,6 +44,13 @@ impl<S: Sort> From<Sorted<S>> for Par<S> {
     }
 }
 
+/// The empty process is already canonical.
+impl<S: Sort> Default for Sorted<S> {
+    fn default() -> Self {
+        Sorted(Par::default())
+    }
+}
+
 /// `Hash` on the canonical serialized form (order-insensitive; avoids deriving `Hash` on `Par` and
 /// its sub-types, which don't implement it).
 impl<S: Sort> Hash for Sorted<S> {

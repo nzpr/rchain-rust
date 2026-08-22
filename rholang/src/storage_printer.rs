@@ -7,6 +7,7 @@ use rchain_models::ast::{AlwaysEqual, Par, Receive, ReceiveBind, Send};
 use rchain_models::par_ops::{par_concat, prepend_receive, prepend_send};
 use rchain_models::types::FreeCount;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rspace::internal::{Datum, WaitingContinuation};
 
 use crate::pretty_printer::PrettyPrinter;
@@ -58,12 +59,12 @@ pub async fn pretty_print_unmatched_sends(runtime: &RhoRuntime) -> String {
     }
 }
 
-fn to_sends(data: &[Datum<ListParWithRandom>], channels: &[Par]) -> Par {
+fn to_sends(data: &[Datum<ListParWithRandom>], channels: &[SortedProc]) -> Par {
     let mut acc = Par::default();
     for datum in data {
         for channel in channels {
             let send = Send {
-                chan: Box::new(channel.clone().quote()),
+                chan: Box::new(channel.as_par().clone().quote()),
                 data: datum.a.pars.iter().map(|p| p.clone().quote()).collect(),
                 persistent: datum.persist,
                 locally_free: AlwaysEqual(vec![]),
@@ -75,7 +76,7 @@ fn to_sends(data: &[Datum<ListParWithRandom>], channels: &[Par]) -> Par {
     acc
 }
 
-fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], channels: &[Par]) -> Par {
+fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], channels: &[SortedProc]) -> Par {
     let mut acc = Par::default();
     for wk in wks {
         let binds: Vec<ReceiveBind> = channels
@@ -83,7 +84,7 @@ fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], chan
             .zip(wk.patterns.iter())
             .map(|(channel, pattern)| ReceiveBind {
                 patterns: pattern.patterns.iter().map(|p| p.clone().quote()).collect(),
-                source: Box::new(channel.clone().quote()),
+                source: Box::new(channel.as_par().clone().quote()),
                 remainder: pattern.remainder.clone().map(Box::new),
                 free_count: FreeCount::from_nonneg(pattern.free_count),
             })

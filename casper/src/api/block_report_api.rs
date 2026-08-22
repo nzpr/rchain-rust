@@ -162,17 +162,17 @@ fn create_system_deploy_report(
 mod tests {
     use super::*;
     use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
-    use rchain_models::ast::Par;
     use rchain_models::casper::protocol::casper_message::{
         DeployData, PCost, ProcessedDeploy, SignedDeployData,
     };
     use rchain_models::casper::protocol::report::ReportProto;
     use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+    use rchain_models::sorted::SortedProc;
     use rchain_rspace::reporting_rspace::{ReportingEvent, ReportingProduce};
 
     fn produce_event() -> crate::reporting::RhoReportingEvent {
         ReportingEvent::Produce(ReportingProduce {
-            channel: Par::default(),
+            channel: SortedProc::default(),
             data: ListParWithRandom {
                 pars: vec![],
                 random_state: Blake2b512Random::default_random(),

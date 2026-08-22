@@ -17,6 +17,7 @@ use rchain_models::ast::{
 };
 use rchain_models::par_ops::{from_expr, par_concat, single_bundle, single_expr, typ};
 use rchain_models::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_models::sorter::{par_map, par_set};
 
 use crate::accounting::{CostAccounting, Costs};
@@ -1163,21 +1164,21 @@ fn eval_method(
 /// The result of a tuplespace produce/consume: the matched continuation, the list of
 /// (channel, matched data, removed data, persistent), and whether it was a peek.
 pub type Application =
-    Option<(TaggedContinuation, Vec<(Par, ListParWithRandom, ListParWithRandom, bool)>, bool)>;
+    Option<(TaggedContinuation, Vec<(SortedProc, ListParWithRandom, ListParWithRandom, bool)>, bool)>;
 
 /// The tuplespace interface the evaluator produces/consumes against (port of `RhoTuplespace`).
 #[async_trait]
 pub trait Tuplespace: std::marker::Send + std::marker::Sync {
     async fn produce(
         &self,
-        channel: &Par,
+        channel: &SortedProc,
         data: ListParWithRandom,
         persist: bool,
     ) -> Result<Application, RholangError>;
 
     async fn consume(
         &self,
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
         continuation: TaggedContinuation,
         persist: bool,
@@ -1209,8 +1210,8 @@ pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     space: T,
     dispatcher: D,
     urn_map: BTreeMap<String, Par>,
-    merge_chs: Mutex<Vec<Par>>,
-    mergeable_tag_name: Par,
+    merge_chs: Mutex<Vec<SortedProc>>,
+    mergeable_tag_name: SortedProc,
 }
 
 impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
@@ -1218,7 +1219,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         space: T,
         dispatcher: D,
         urn_map: BTreeMap<String, Par>,
-        mergeable_tag_name: Par,
+        mergeable_tag_name: SortedProc,
     ) -> Self {
         DebruijnInterpreter {
             space,
@@ -1338,7 +1339,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             .map(|d| substitute_par_and_charge(d, 0, env, cost))
             .collect::<Result<_, _>>()?;
         self.produce(
-            &unbundled,
+            &SortedProc::new(unbundled),
             ListParWithRandom {
                 pars: subst_data.into_iter().map(|d| d.eval()).collect(),
                 random_state: rand.clone(),
@@ -1357,7 +1358,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         cost.charge(Costs::receive_eval_cost())?;
-        let mut binds: Vec<(BindPattern, Par)> = Vec::new();
+        let mut binds: Vec<(BindPattern, SortedProc)> = Vec::new();
         for rb in &receive.binds {
             let q = self.unbundle_receive(rb, env, cost)?;
             let subst_patterns: Vec<Name> = rb
@@ -1371,7 +1372,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                     remainder: rb.remainder.as_deref().cloned(),
                     free_count: i32::from(rb.free_count),
                 },
-                q,
+                SortedProc::new(q),
             ));
         }
         let subst_body = substitute_par(&receive.body, 0, &env.shift(receive.bind_count))?;
@@ -1510,7 +1511,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
 
     async fn produce(
         &self,
-        chan: &Par,
+        chan: &SortedProc,
         data: ListParWithRandom,
         persistent: bool,
         cost: &CostAccounting,
@@ -1533,14 +1534,14 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
 
     async fn consume(
         &self,
-        binds: &[(BindPattern, Par)],
+        binds: &[(BindPattern, SortedProc)],
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         let patterns: Vec<BindPattern> = binds.iter().map(|(p, _)| p.clone()).collect();
-        let sources: Vec<Par> = binds.iter().map(|(_, s)| s.clone()).collect();
+        let sources: Vec<SortedProc> = binds.iter().map(|(_, s)| s.clone()).collect();
         for s in &sources {
             self.update_mergeable_channels(s);
         }
@@ -1575,7 +1576,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
 
     async fn produce_peeks(
         &self,
-        data_list: &[(Par, ListParWithRandom, ListParWithRandom, bool)],
+        data_list: &[(SortedProc, ListParWithRandom, ListParWithRandom, bool)],
         cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         for (chan, _, removed_data, persist) in data_list {
@@ -1589,13 +1590,13 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
     async fn dispatch(
         &self,
         continuation: &TaggedContinuation,
-        data_list: &[(Par, ListParWithRandom, ListParWithRandom, bool)],
+        data_list: &[(SortedProc, ListParWithRandom, ListParWithRandom, bool)],
     ) -> Result<(), RholangError> {
         let data: Vec<ListParWithRandom> = data_list.iter().map(|(_, d, _, _)| d.clone()).collect();
         self.dispatcher.dispatch(continuation.clone(), data).await
     }
 
-    fn update_mergeable_channels(&self, chan: &Par) {
+    fn update_mergeable_channels(&self, chan: &SortedProc) {
         if self.is_mergeable_channel(chan) {
             let mut chs = self.merge_chs.lock().unwrap_or_else(|p| p.into_inner());
             if !chs.contains(chan) {
@@ -1604,14 +1605,15 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         }
     }
 
-    fn is_mergeable_channel(&self, chan: &Par) -> bool {
-        chan.exprs
+    fn is_mergeable_channel(&self, chan: &SortedProc) -> bool {
+        chan.as_par()
+            .exprs
             .iter()
             .find_map(|e| match e {
                 Expr::ETuple(ETuple { ps, .. }) => ps.first(),
                 _ => None,
             })
-            .map_or(false, |head| head == &self.mergeable_tag_name)
+            .map_or(false, |head| head == self.mergeable_tag_name.as_par())
     }
 }
 
@@ -1689,13 +1691,13 @@ mod tests {
     }
 
     struct MockSpace {
-        produced: Mutex<Vec<(Par, ListParWithRandom, bool)>>,
+        produced: Mutex<Vec<(SortedProc, ListParWithRandom, bool)>>,
     }
     #[async_trait]
     impl Tuplespace for MockSpace {
         async fn produce(
             &self,
-            channel: &Par,
+            channel: &SortedProc,
             data: ListParWithRandom,
             persist: bool,
         ) -> Result<Application, RholangError> {
@@ -1707,7 +1709,7 @@ mod tests {
         }
         async fn consume(
             &self,
-            _channels: &[Par],
+            _channels: &[SortedProc],
             _patterns: &[BindPattern],
             _continuation: TaggedContinuation,
             _persist: bool,
@@ -1737,7 +1739,7 @@ mod tests {
             space,
             MockDispatch,
             BTreeMap::new(),
-            Par::default(),
+            SortedProc::default(),
         );
         let cost = CostAccounting::from_initial(Costs::unsafe_max());
         let env = Env::new();
@@ -1758,7 +1760,7 @@ mod tests {
 
         let produced = interp.space.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
-        assert_eq!(produced[0].0.exprs, vec![Expr::GInt(1)]);
+        assert_eq!(produced[0].0.as_par().exprs, vec![Expr::GInt(1)]);
         assert_eq!(produced[0].1.pars, vec![from_expr(Expr::GInt(2))]);
         assert!(!produced[0].2);
     }

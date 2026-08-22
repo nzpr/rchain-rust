@@ -8,9 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
-use rchain_models::ast::Par;
 use rchain_models::rholang::RhoType::RhoNumber;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rspace::hashing::stable_hash_provider::hash_produce;
 use rchain_rspace::history::history_reader::HistoryReader;
 use rchain_rspace::hot_store_trie_action::HotStoreTrieAction;
@@ -24,10 +24,10 @@ use crate::storage::RhoHistoryRepository;
 
 /// The concrete hot-store trie action type for the rholang runtime.
 pub type RhoHotStoreTrieAction =
-    HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+    HotStoreTrieAction<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>;
 
 /// The concrete (decoded) history reader.
-pub type RhoHistoryReader = dyn HistoryReader<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+pub type RhoHistoryReader = dyn HistoryReader<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>;
 
 /// Extract the number + random state from a number-channel datum (port of `getNumberWithRnd`).
 pub fn get_number_with_rnd(
@@ -80,7 +80,7 @@ pub async fn calculate_number_channel_merge(
     channel_hash: Blake2b256Hash,
     diff: i64,
     changes: &ChannelChange<Vec<u8>>,
-    base_reader: &(dyn HistoryReader<Par, BindPattern, ListParWithRandom, TaggedContinuation> + Sync),
+    base_reader: &(dyn HistoryReader<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation> + Sync),
 ) -> Result<RhoHotStoreTrieAction, String> {
     // Read the initial value of the number channel from the base state.
     let data = base_reader

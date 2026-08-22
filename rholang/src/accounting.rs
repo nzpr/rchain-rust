@@ -12,6 +12,7 @@ use num_bigint::BigInt;
 
 use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_shared::serialize::Serialize;
 
 use crate::errors::RholangError;
@@ -263,13 +264,13 @@ impl Costs {
     /// Consume storage cost: channels + patterns + the `ParBody` continuation body (port of
     /// `storageCostConsume`).
     pub fn storage_cost_consume(
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
         continuation: &TaggedContinuation,
     ) -> Cost {
         let channels_cost: i64 = channels
             .iter()
-            .map(|c| <Par as Serialize<Par>>::encode(c).len() as i64)
+            .map(|c| <SortedProc as Serialize<SortedProc>>::encode(c).len() as i64)
             .sum();
         let patterns_cost: i64 = patterns
             .iter()
@@ -285,8 +286,8 @@ impl Costs {
     }
 
     /// Produce storage cost: channel + the produced data (port of `storageCostProduce`).
-    pub fn storage_cost_produce(channel: &Par, data: &ListParWithRandom) -> Cost {
-        let channel_cost = <Par as Serialize<Par>>::encode(channel).len() as i64;
+    pub fn storage_cost_produce(channel: &SortedProc, data: &ListParWithRandom) -> Cost {
+        let channel_cost = <SortedProc as Serialize<SortedProc>>::encode(channel).len() as i64;
         let data_cost: i64 = data
             .pars
             .iter()

@@ -21,6 +21,7 @@ use rchain_models::par_ops::from_expr;
 use rchain_models::types::count_free_vars;
 use rchain_models::rholang::RhoType::RhoNumber;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_models::validator::Validator;
 use rchain_shared::refined::NonNegI64;
 use rchain_rholang::accounting::{Cost, CostAccounting};
@@ -72,22 +73,22 @@ pub trait ReplayRuntime {
 
     async fn create_soft_checkpoint(
         &self,
-    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+    ) -> SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>;
 
     async fn revert_to_soft_checkpoint(
         &self,
-        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
     );
 
     async fn rig(&self, log: Log);
 
     async fn check_replay_data(&self) -> Result<(), ReplayException>;
 
-    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError>;
+    async fn get_data(&self, channel: &SortedProc) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError>;
 
     async fn consume_result(
         &self,
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError>;
 
@@ -449,7 +450,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             remainder: None,
         };
         self.runtime
-            .consume_result(&[deploy.return_channel.clone()], &[pattern])
+            .consume_result(&[SortedProc::new(deploy.return_channel.clone())], &[pattern])
             .await
             .map_err(|e| e.to_string())
     }
@@ -513,7 +514,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
     ) -> Result<Option<(Blake2b256Hash, i64)>, ReplayFailure> {
         let data = self
             .runtime
-            .get_data(chan)
+            .get_data(&SortedProc::new(chan.clone()))
             .await
             .map_err(|e| ReplayFailure::internal_error(e.to_string()))?;
         if data.is_empty() {
@@ -562,13 +563,13 @@ impl ReplayRuntime for ReplayRhoRuntime {
 
     async fn create_soft_checkpoint(
         &self,
-    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+    ) -> SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation> {
         ReplayRhoRuntime::create_soft_checkpoint(self).await
     }
 
     async fn revert_to_soft_checkpoint(
         &self,
-        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) {
         ReplayRhoRuntime::revert_to_soft_checkpoint(self, checkpoint).await
     }
@@ -581,13 +582,13 @@ impl ReplayRuntime for ReplayRhoRuntime {
         ReplayRhoRuntime::check_replay_data(self).await
     }
 
-    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
+    async fn get_data(&self, channel: &SortedProc) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         ReplayRhoRuntime::get_data(self, channel).await
     }
 
     async fn consume_result(
         &self,
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
         ReplayRhoRuntime::consume_result(self, channels, patterns).await
@@ -631,13 +632,13 @@ impl ReplayRuntime for ReportingRuntime {
 
     async fn create_soft_checkpoint(
         &self,
-    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+    ) -> SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation> {
         ReportingRuntime::create_soft_checkpoint(self).await
     }
 
     async fn revert_to_soft_checkpoint(
         &self,
-        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) {
         ReportingRuntime::revert_to_soft_checkpoint(self, checkpoint).await
     }
@@ -650,13 +651,13 @@ impl ReplayRuntime for ReportingRuntime {
         ReportingRuntime::check_replay_data(self).await
     }
 
-    async fn get_data(&self, channel: &Par) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
+    async fn get_data(&self, channel: &SortedProc) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         ReportingRuntime::get_data(self, channel).await
     }
 
     async fn consume_result(
         &self,
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
         ReportingRuntime::consume_result(self, channels, patterns).await

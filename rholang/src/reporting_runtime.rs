@@ -10,6 +10,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_models::types::Closed;
 use rchain_shared::store_manager::KeyValueStoreManager;
 use rchain_rspace::checkpoint::{Checkpoint, SoftCheckpoint};
@@ -33,11 +34,11 @@ use crate::system_processes::BlockData;
 
 /// The concrete rholang reporting space (port of `RhoReportingRspace`).
 pub type RhoReportingRspace =
-    ReportingRspace<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+    ReportingRspace<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>;
 
 /// A single recorded reporting event (port of `RhoReportingEvent`).
 pub type RhoReportingEvent =
-    ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+    ReportingEvent<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>;
 
 /// Build a reporting space from the store manager + the rholang matcher (port of
 /// `ReportingRuntime.createReportingRSpace`).
@@ -60,7 +61,7 @@ pub struct ReportingRuntime {
 impl ReportingRuntime {
     pub async fn create(
         space: Arc<RhoReportingRspace>,
-        mergeable_tag_name: Par,
+        mergeable_tag_name: SortedProc,
     ) -> std::io::Result<ReportingRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
         let native_store = space.native_store();
@@ -141,13 +142,13 @@ impl ReportingRuntime {
 
     pub async fn create_soft_checkpoint(
         &self,
-    ) -> SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation> {
+    ) -> SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation> {
         self.space.create_soft_checkpoint().await
     }
 
     pub async fn revert_to_soft_checkpoint(
         &self,
-        checkpoint: SoftCheckpoint<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        checkpoint: SoftCheckpoint<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) {
         self.space.revert_to_soft_checkpoint(checkpoint).await;
     }
@@ -162,14 +163,14 @@ impl ReportingRuntime {
 
     pub async fn get_data(
         &self,
-        channel: &Par,
+        channel: &SortedProc,
     ) -> Result<Vec<Datum<ListParWithRandom>>, RSpaceError> {
         self.space.get_data(channel).await
     }
 
     pub async fn consume_result(
         &self,
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
         let result = self

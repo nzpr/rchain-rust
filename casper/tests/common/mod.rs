@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use rchain_casper::runtime_manager::{MergeableStore, RuntimeManager};
-use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rholang::merging::DeployMergeableDataCodec;
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::storage::RhoMatch;
@@ -19,7 +19,7 @@ use rchain_shared::typed_store::BytesCodec;
 pub async fn build_runtime_manager() -> RuntimeManager {
     let manager = InMemoryStoreManager::default();
     let history =
-        create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
+        create_history_repository::<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>(
             &manager,
             "rspace",
         )
@@ -28,10 +28,10 @@ pub async fn build_runtime_manager() -> RuntimeManager {
     let reader = history.get_history_reader(history.root()).await;
     let hot = Arc::new(InMemHotStore::new(reader.base()));
     let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
-    let rho = RhoRuntime::create(play, history.clone(), Par::default())
+    let rho = RhoRuntime::create(play, history.clone(), SortedProc::default())
         .await
         .expect("rho runtime");
-    let replay = ReplayRhoRuntime::create(Arc::new(replay), history.clone(), Par::default())
+    let replay = ReplayRhoRuntime::create(Arc::new(replay), history.clone(), SortedProc::default())
         .await
         .expect("replay runtime");
     let mergeable: MergeableStore = Arc::new(

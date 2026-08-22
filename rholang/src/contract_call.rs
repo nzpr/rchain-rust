@@ -3,6 +3,7 @@
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::Par;
 use rchain_models::runtime::ListParWithRandom;
+use rchain_models::sorted::SortedProc;
 
 use crate::errors::RholangError;
 use crate::reduce::{Dispatch, Tuplespace};
@@ -31,7 +32,7 @@ impl<T: Tuplespace, D: Dispatch> ContractCall<T, D> {
         let result = self
             .space
             .produce(
-                ch,
+                &SortedProc::new(ch.clone()),
                 ListParWithRandom {
                     pars: values.to_vec(),
                     random_state: rand.clone(),

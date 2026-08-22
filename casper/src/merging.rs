@@ -18,9 +18,9 @@ use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
     BlockMessage, Event, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
-use rchain_models::ast::Par;
 use rchain_models::fringe_data::FringeData;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_models::validator::Validator;
 use rchain_rholang::merging::{calculate_number_channel_merge, read_mergeable_values};
 use rchain_rholang::storage::RhoHistoryRepository;
@@ -685,7 +685,7 @@ impl MergeScope {
         // Pre-compute the mergeable-channel override actions.
         let mut overrides: BTreeMap<
             Blake2b256Hash,
-            HotStoreTrieAction<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+            HotStoreTrieAction<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
         > = BTreeMap::new();
         for (hash, diff) in &mergeable_diffs {
             let changes = all_changes.datums_changes.get(hash).cloned().unwrap_or_default();

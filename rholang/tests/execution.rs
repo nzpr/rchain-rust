@@ -7,8 +7,9 @@
 mod common;
 
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
-use rchain_models::ast::{Expr, Par};
+use rchain_models::ast::Expr;
 use rchain_models::par_ops::from_expr;
+use rchain_models::sorted::SortedProc;
 use rchain_models::types::Closed;
 use rchain_rholang::env::Env;
 use rchain_rholang::registry::registry_bootstrap_ast;
@@ -21,8 +22,8 @@ fn fixed_rand() -> Blake2b512Random {
     Blake2b512Random::from_init(&[0u8; 32])
 }
 
-fn chan(name: &str) -> Par {
-    from_expr(Expr::GString(name.to_string()))
+fn chan(name: &str) -> SortedProc {
+    SortedProc::new(from_expr(Expr::GString(name.to_string())))
 }
 
 /// Assert `hash` matches the committed golden vector for `case`.

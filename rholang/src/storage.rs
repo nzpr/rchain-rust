@@ -7,9 +7,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rchain_models::ast::{EList, Expr, Par, Var};
+use rchain_models::ast::{EList, Expr, Var};
 use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rspace::history::history_repository::HistoryRepository;
 use rchain_rspace::match_::Match;
 use rchain_rspace::tuple_space::{
@@ -23,18 +24,18 @@ use crate::reduce::{Application, Tuplespace};
 
 /// The rholang history repository (port of `RhoHistoryRepository`).
 pub type RhoHistoryRepository =
-    Arc<HistoryRepository<Par, BindPattern, ListParWithRandom, TaggedContinuation>>;
+    Arc<HistoryRepository<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>>;
 
 /// The rholang tuplespace (port of `RhoTuplespace`).
 pub type RhoTuplespace =
-    Arc<dyn RSpaceTuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation>>;
+    Arc<dyn RSpaceTuplespace<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>>;
 
 /// Convert an rspace produce/consume result into the rholang `Application` (port of
 /// `unpackOptionWithPeek`).
 pub fn to_application(
     r: Option<(
-        ContResult<Par, BindPattern, TaggedContinuation>,
-        Vec<RSpaceResult<Par, ListParWithRandom>>,
+        ContResult<SortedProc, BindPattern, TaggedContinuation>,
+        Vec<RSpaceResult<SortedProc, ListParWithRandom>>,
     )>,
 ) -> Application {
     r.map(|(cont, data)| {
@@ -105,7 +106,7 @@ impl ChargingRSpace {
 impl Tuplespace for ChargingRSpace {
     async fn produce(
         &self,
-        channel: &Par,
+        channel: &SortedProc,
         data: ListParWithRandom,
         persist: bool,
     ) -> Result<Application, RholangError> {
@@ -130,7 +131,7 @@ impl Tuplespace for ChargingRSpace {
 
     async fn consume(
         &self,
-        channels: &[Par],
+        channels: &[SortedProc],
         patterns: &[BindPattern],
         continuation: TaggedContinuation,
         persist: bool,
@@ -185,22 +186,22 @@ mod tests {
     }
 
     struct MockSpace {
-        produced: Mutex<Vec<(Par, ListParWithRandom, bool)>>,
+        produced: Mutex<Vec<(SortedProc, ListParWithRandom, bool)>>,
     }
 
     #[async_trait]
-    impl RSpaceTuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for MockSpace {
+    impl RSpaceTuplespace<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation> for MockSpace {
         async fn consume(
             &self,
-            _channels: &[Par],
+            _channels: &[SortedProc],
             _patterns: &[BindPattern],
             _continuation: TaggedContinuation,
             _persist: bool,
             _peeks: BTreeSet<usize>,
         ) -> Result<
             Option<(
-                ContResult<Par, BindPattern, TaggedContinuation>,
-                Vec<RSpaceResult<Par, ListParWithRandom>>,
+                ContResult<SortedProc, BindPattern, TaggedContinuation>,
+                Vec<RSpaceResult<SortedProc, ListParWithRandom>>,
             )>,
             RSpaceError,
         > {
@@ -209,13 +210,13 @@ mod tests {
 
         async fn produce(
             &self,
-            channel: Par,
+            channel: SortedProc,
             data: ListParWithRandom,
             persist: bool,
         ) -> Result<
             Option<(
-                ContResult<Par, BindPattern, TaggedContinuation>,
-                Vec<RSpaceResult<Par, ListParWithRandom>>,
+                ContResult<SortedProc, BindPattern, TaggedContinuation>,
+                Vec<RSpaceResult<SortedProc, ListParWithRandom>>,
             )>,
             RSpaceError,
         > {
@@ -228,7 +229,7 @@ mod tests {
 
         async fn install(
             &self,
-            _channels: &[Par],
+            _channels: &[SortedProc],
             _patterns: &[BindPattern],
             _continuation: TaggedContinuation,
         ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
@@ -245,7 +246,7 @@ mod tests {
         let charging = ChargingRSpace::new(mock, cost.clone());
 
         charging
-            .produce(&par(vec![Expr::GInt(1)]), lpw(vec![par(vec![Expr::GInt(2)])]), false)
+            .produce(&SortedProc::new(par(vec![Expr::GInt(1)])), lpw(vec![par(vec![Expr::GInt(2)])]), false)
             .await
             .unwrap();
         assert!(cost.total_charged() > 0, "produce must charge storage/event cost");
@@ -259,7 +260,7 @@ mod tests {
             tiny_cost,
         );
         let err = tiny
-            .produce(&par(vec![Expr::GInt(1)]), lpw(vec![par(vec![Expr::GInt(2)])]), false)
+            .produce(&SortedProc::new(par(vec![Expr::GInt(1)])), lpw(vec![par(vec![Expr::GInt(2)])]), false)
             .await;
         assert!(err.is_err(), "exhausted balance must fail produce");
     }
@@ -288,12 +289,12 @@ mod tests {
         let cont = ContResult {
             continuation: TaggedContinuation::Empty,
             persistent: false,
-            channels: vec![par(vec![Expr::GInt(1)])],
+            channels: vec![SortedProc::new(par(vec![Expr::GInt(1)]))],
             patterns: vec![],
             peek: true,
         };
         let data = RSpaceResult {
-            channel: par(vec![Expr::GInt(1)]),
+            channel: SortedProc::new(par(vec![Expr::GInt(1)])),
             matched_datum: ListParWithRandom {
                 pars: vec![],
                 random_state: rchain_crypto::hash::blake2b512_random::Blake2b512Random::new_random(128),

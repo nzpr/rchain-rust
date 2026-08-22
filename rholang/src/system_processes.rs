@@ -985,28 +985,29 @@ mod tests {
     use async_trait::async_trait;
     use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
     use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+    use rchain_models::sorted::SortedProc;
     use rchain_rspace::errors::RSpaceError;
     use rchain_rspace::tuple_space::{ContResult, Result as RSpaceResult, Tuplespace as RSpaceTuplespace};
     use std::collections::BTreeSet;
     use std::sync::{Arc, Mutex};
 
     struct MockSpace {
-        produced: Mutex<Vec<(Par, ListParWithRandom, bool)>>,
+        produced: Mutex<Vec<(SortedProc, ListParWithRandom, bool)>>,
     }
 
     #[async_trait]
-    impl RSpaceTuplespace<Par, BindPattern, ListParWithRandom, TaggedContinuation> for MockSpace {
+    impl RSpaceTuplespace<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation> for MockSpace {
         async fn consume(
             &self,
-            _channels: &[Par],
+            _channels: &[SortedProc],
             _patterns: &[BindPattern],
             _continuation: TaggedContinuation,
             _persist: bool,
             _peeks: BTreeSet<usize>,
         ) -> Result<
             Option<(
-                ContResult<Par, BindPattern, TaggedContinuation>,
-                Vec<RSpaceResult<Par, ListParWithRandom>>,
+                ContResult<SortedProc, BindPattern, TaggedContinuation>,
+                Vec<RSpaceResult<SortedProc, ListParWithRandom>>,
             )>,
             RSpaceError,
         > {
@@ -1015,13 +1016,13 @@ mod tests {
 
         async fn produce(
             &self,
-            channel: Par,
+            channel: SortedProc,
             data: ListParWithRandom,
             persist: bool,
         ) -> Result<
             Option<(
-                ContResult<Par, BindPattern, TaggedContinuation>,
-                Vec<RSpaceResult<Par, ListParWithRandom>>,
+                ContResult<SortedProc, BindPattern, TaggedContinuation>,
+                Vec<RSpaceResult<SortedProc, ListParWithRandom>>,
             )>,
             RSpaceError,
         > {
@@ -1031,7 +1032,7 @@ mod tests {
 
         async fn install(
             &self,
-            _channels: &[Par],
+            _channels: &[SortedProc],
             _patterns: &[BindPattern],
             _continuation: TaggedContinuation,
         ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, RSpaceError> {
@@ -1083,7 +1084,7 @@ mod tests {
 
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
-        assert_eq!(produced[0].0, ack);
+        assert_eq!(produced[0].0.as_par(), &ack);
         assert_eq!(produced[0].1.pars, vec![RhoByteArray::apply(blake2b256::hash(&input))]);
     }
 
@@ -1107,7 +1108,7 @@ mod tests {
         let uri = {
             let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
             assert_eq!(produced.len(), 1);
-            assert_eq!(produced[0].0, ret);
+            assert_eq!(produced[0].0.as_par(), &ret);
             produced[0].1.pars[0].clone()
         };
         assert!(RhoUri::unapply(&uri).is_some(), "insertArbitrary returns a URI");
@@ -1123,7 +1124,7 @@ mod tests {
 
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 2);
-        assert_eq!(produced[1].0, ret2);
+        assert_eq!(produced[1].0.as_par(), &ret2);
         let tuple = &produced[1].1.pars[0];
         let parts = RhoTupleN::unapply(tuple).expect("lookup returns a (uri, value) tuple");
         assert_eq!(parts.len(), 2);
@@ -1171,7 +1172,7 @@ mod tests {
 
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
-        assert_eq!(produced[0].0, ret);
+        assert_eq!(produced[0].0.as_par(), &ret);
         let map = RhoMap::unapply(&produced[0].1.pars[0]).expect("getBonds returns a map");
         assert_eq!(map.len(), 2);
     }
@@ -1235,12 +1236,12 @@ mod tests {
         // 2 deposits + 1 transfer + 2 getBalance = 5 produces.
         assert_eq!(produced.len(), 5);
         // The last two are the getBalance replies.
-        assert_eq!(produced[3].0, alice_ret);
+        assert_eq!(produced[3].0.as_par(), &alice_ret);
         assert_eq!(
             RhoNumber::unapply(&produced[3].1.pars[0]).expect("alice balance"),
             70
         );
-        assert_eq!(produced[4].0, bob_ret);
+        assert_eq!(produced[4].0.as_par(), &bob_ret);
         assert_eq!(
             RhoNumber::unapply(&produced[4].1.pars[0]).expect("bob balance"),
             80

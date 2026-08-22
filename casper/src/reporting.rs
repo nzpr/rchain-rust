@@ -8,7 +8,6 @@ use async_trait::async_trait;
 
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
-use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::{
     BlockMessage, Peek, ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
@@ -16,6 +15,7 @@ use rchain_models::casper::protocol::report::{
     ReportCommProto, ReportConsumeProto, ReportProduceProto, ReportProto,
 };
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rholang::reporting_runtime::{ReportingRuntime, RhoReportingRspace};
 use rchain_rholang::system_processes::BlockData;
 use rchain_rspace::reporting_rspace::{
@@ -28,7 +28,7 @@ use crate::runtime_replay::RuntimeReplayOps;
 
 /// The concrete reporting-event type.
 pub type RhoReportingEvent =
-    ReportingEvent<Par, BindPattern, ListParWithRandom, TaggedContinuation>;
+    ReportingEvent<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>;
 
 /// A user deploy's report result (port of `DeployReportResult`).
 #[derive(Clone, Debug)]
@@ -80,12 +80,12 @@ impl ReportingCasper for NoopReportingCasper {
 /// `ReportingProtoTransformer`).
 pub struct ReportingProtoTransformer;
 
-impl ReportingTransformer<Par, BindPattern, ListParWithRandom, TaggedContinuation, ReportProto>
+impl ReportingTransformer<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation, ReportProto>
     for ReportingProtoTransformer
 {
-    fn serialize_consume(&self, rc: &ReportingConsume<Par, BindPattern, TaggedContinuation>) -> ReportProto {
+    fn serialize_consume(&self, rc: &ReportingConsume<SortedProc, BindPattern, TaggedContinuation>) -> ReportProto {
         ReportProto::Consume(ReportConsumeProto {
-            channels: rc.channels.clone(),
+            channels: rc.channels.iter().map(|c| c.as_par().clone()).collect(),
             patterns: rc.patterns.clone(),
             peeks: rc
                 .peeks
@@ -97,19 +97,19 @@ impl ReportingTransformer<Par, BindPattern, ListParWithRandom, TaggedContinuatio
         })
     }
 
-    fn serialize_produce(&self, rp: &ReportingProduce<Par, ListParWithRandom>) -> ReportProto {
+    fn serialize_produce(&self, rp: &ReportingProduce<SortedProc, ListParWithRandom>) -> ReportProto {
         ReportProto::Produce(ReportProduceProto {
-            channel: rp.channel.clone(),
+            channel: rp.channel.as_par().clone(),
             data: rp.data.clone(),
         })
     }
 
     fn serialize_comm(
         &self,
-        rc: &ReportingComm<Par, BindPattern, ListParWithRandom, TaggedContinuation>,
+        rc: &ReportingComm<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>,
     ) -> ReportProto {
         let consume = ReportConsumeProto {
-            channels: rc.consume.channels.clone(),
+            channels: rc.consume.channels.iter().map(|c| c.as_par().clone()).collect(),
             patterns: rc.consume.patterns.clone(),
             peeks: rc
                 .consume
@@ -124,7 +124,7 @@ impl ReportingTransformer<Par, BindPattern, ListParWithRandom, TaggedContinuatio
             .produces
             .iter()
             .map(|p| ReportProduceProto {
-                channel: p.channel.clone(),
+                channel: p.channel.as_par().clone(),
                 data: p.data.clone(),
             })
             .collect();
@@ -135,7 +135,7 @@ impl ReportingTransformer<Par, BindPattern, ListParWithRandom, TaggedContinuatio
 /// Build a reporting casper that replays blocks with event collection (port of
 /// `ReportingCasper.rhoReporter`). The space factory is async because building a `ReplayRSpace`
 /// requires store access; `mergeable_tag_name` is the shard's non-negative mergeable tag.
-pub fn rho_reporter<F, Fut>(create_space: F, mergeable_tag_name: Par) -> impl ReportingCasper
+pub fn rho_reporter<F, Fut>(create_space: F, mergeable_tag_name: SortedProc) -> impl ReportingCasper
 where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<Arc<RhoReportingRspace>, String>> + Send + 'static,
@@ -152,7 +152,7 @@ struct RhoReporter {
             + Send
             + Sync,
     >,
-    mergeable_tag_name: Par,
+    mergeable_tag_name: SortedProc,
 }
 
 #[async_trait]

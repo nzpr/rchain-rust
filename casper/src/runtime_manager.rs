@@ -18,6 +18,7 @@ use rchain_models::par_ops::from_expr;
 use rchain_models::types::count_free_vars;
 use rchain_models::rholang::RhoType::RhoName;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_models::validator::Validator;
 use rchain_rholang::accounting::Cost;
 use rchain_rholang::evaluate_result::EvaluateResult;
@@ -165,7 +166,7 @@ impl RuntimeManager {
     pub async fn get_data(&self, hash: &StateHash, channel: &Par) -> Result<Vec<Par>, String> {
         self.runtime.reset(to_blake(hash)).await.map_err(|e| e)?;
         self.runtime
-            .get_data_par(channel)
+            .get_data_par(&SortedProc::new(channel.clone()))
             .await
             .map_err(|e| e.to_string())
     }
@@ -178,8 +179,9 @@ impl RuntimeManager {
         channels: &[Par],
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, String> {
         self.runtime.reset(to_blake(hash)).await.map_err(|e| e)?;
+        let channels: Vec<SortedProc> = channels.iter().map(|c| SortedProc::new(c.clone())).collect();
         self.runtime
-            .get_continuation_par(channels)
+            .get_continuation_par(&channels)
             .await
             .map_err(|e| e.to_string())
     }
@@ -399,7 +401,7 @@ impl RuntimeManager {
             remainder: None,
         };
         self.runtime
-            .consume_result(&[deploy.return_channel.clone()], &[pattern])
+            .consume_result(&[SortedProc::new(deploy.return_channel.clone())], &[pattern])
             .await
             .map_err(|e| e.to_string())
     }
@@ -584,7 +586,7 @@ impl RuntimeManager {
             return Err(format!("{:?}", eval.errors));
         }
         self.runtime
-            .get_data_par(return_channel)
+            .get_data_par(&SortedProc::new(return_channel.clone()))
             .await
             .map_err(|e| e.to_string())
     }

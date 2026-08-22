@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rholang::runtime::{RhoRuntime, ReplayRhoRuntime};
 use rchain_rholang::storage::RhoMatch;
 use rchain_rspace::factory::create_history_repository;
@@ -15,7 +15,7 @@ use rchain_shared::store_manager::InMemoryStoreManager;
 pub async fn build_runtime_pair() -> (RhoRuntime, ReplayRhoRuntime) {
     let manager = InMemoryStoreManager::default();
     let history =
-        create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
+        create_history_repository::<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>(
             &manager,
             "rspace",
         )
@@ -24,10 +24,10 @@ pub async fn build_runtime_pair() -> (RhoRuntime, ReplayRhoRuntime) {
     let reader = history.get_history_reader(history.root()).await;
     let hot = Arc::new(InMemHotStore::new(reader.base()));
     let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
-    let rho = RhoRuntime::create(play, history.clone(), Par::default())
+    let rho = RhoRuntime::create(play, history.clone(), SortedProc::default())
         .await
         .expect("rho runtime");
-    let replay = ReplayRhoRuntime::create(Arc::new(replay), history, Par::default())
+    let replay = ReplayRhoRuntime::create(Arc::new(replay), history, SortedProc::default())
         .await
         .expect("replay runtime");
     (rho, replay)

@@ -15,6 +15,7 @@ use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{Expr, Par, Var};
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
 use rchain_rholang::storage::RhoMatch;
 use rchain_rspace::factory::create_history_repository;
@@ -32,7 +33,7 @@ const WIDE_SETUP: &str = include_str!("resources/wide-setup.rho");
 async fn build_runtime_pair() -> (RhoRuntime, ReplayRhoRuntime) {
     let manager = InMemoryStoreManager::default();
     let history =
-        create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
+        create_history_repository::<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>(
             &manager, "rspace",
         )
         .await
@@ -40,10 +41,10 @@ async fn build_runtime_pair() -> (RhoRuntime, ReplayRhoRuntime) {
     let reader = history.get_history_reader(history.root()).await;
     let hot = Arc::new(InMemHotStore::new(reader.base()));
     let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
-    let rho = RhoRuntime::create(play, history.clone(), Par::default())
+    let rho = RhoRuntime::create(play, history.clone(), SortedProc::default())
         .await
         .expect("rho runtime");
-    let replay = ReplayRhoRuntime::create(Arc::new(replay), history, Par::default())
+    let replay = ReplayRhoRuntime::create(Arc::new(replay), history, SortedProc::default())
         .await
         .expect("replay runtime");
     (rho, replay)
@@ -99,11 +100,11 @@ fn key_bench(c: &mut Criterion) {
     });
 }
 
-fn channel(s: &str) -> Par {
-    Par {
+fn channel(s: &str) -> SortedProc {
+    SortedProc::new(Par {
         exprs: vec![Expr::GString(s.to_string())],
         ..Default::default()
-    }
+    })
 }
 
 fn wildcard() -> Par {

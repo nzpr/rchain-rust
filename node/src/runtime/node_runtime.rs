@@ -58,7 +58,6 @@ use rchain_comm::transport::grpc_transport_server::TransportLayerServer;
 use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_comm::who_am_i;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
-use rchain_models::ast::Par;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, CasperMessage, SignedDeployData};
@@ -67,6 +66,7 @@ use rchain_models::casper::protocol::report::BlockEventInfo;
 use rchain_models::comm::protocol::Protocol;
 use rchain_models::fringe_data::FringeData;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+use rchain_models::sorted::SortedProc;
 use rchain_rholang::merging::DeployMergeableDataCodec;
 use rchain_rholang::reporting_runtime::create_reporting_rspace;
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
@@ -100,7 +100,7 @@ fn reporting_casper(
     shard_id: &str,
 ) -> impl ReportingCasper {
     let store_manager = store_manager.clone();
-    let mergeable_tag_name = BlockRandomSeed::non_negative_mergeable_tag_name(shard_id);
+    let mergeable_tag_name = SortedProc::new(BlockRandomSeed::non_negative_mergeable_tag_name(shard_id));
     rho_reporter(
         move || {
             let manager = store_manager.clone();
@@ -902,7 +902,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
 
     // Runtime manager (play + replay runtimes + mergeable store).
     let history =
-        create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
+        create_history_repository::<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>(
             &store_manager,
             "rspace",
         )
@@ -911,11 +911,11 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
     let reader = history.get_history_reader(history.root()).await;
     let hot = Arc::new(InMemHotStore::new(reader.base()));
     let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
-    let rho_runtime = RhoRuntime::create(play.clone(), history.clone(), Par::default())
+    let rho_runtime = RhoRuntime::create(play.clone(), history.clone(), SortedProc::default())
         .await
         .map_err(|e| e.to_string())?;
     let replay_runtime =
-        ReplayRhoRuntime::create(Arc::new(replay), history.clone(), Par::default())
+        ReplayRhoRuntime::create(Arc::new(replay), history.clone(), SortedProc::default())
             .await
             .map_err(|e| e.to_string())?;
     let mergeable_store = Arc::new(
@@ -937,7 +937,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
     // Eval runtime for the Repl service — an isolated `eval-*` store set so REPL evaluation never
     // reads/writes the node's live chain state (port of Scala's `evalStores`).
     let eval_history =
-        create_history_repository::<Par, BindPattern, ListParWithRandom, TaggedContinuation>(
+        create_history_repository::<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>(
             &store_manager,
             "eval",
         )
@@ -948,7 +948,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
     let (eval_play, _) =
         RSpace::create_with_replay(eval_history.clone(), eval_hot, Arc::new(RhoMatch));
     let eval_runtime = Arc::new(
-        RhoRuntime::create(eval_play, eval_history, Par::default())
+        RhoRuntime::create(eval_play, eval_history, SortedProc::default())
             .await
             .map_err(|e| e.to_string())?,
     );
