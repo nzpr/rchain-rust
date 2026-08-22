@@ -11,11 +11,12 @@ use tonic::{Request, Response, Status};
 
 use rchain_models::casper::protocol::casper_message::{Peek, SignedDeployData, SystemDeployData};
 use rchain_models::casper::protocol::deploy_service::{
-    BlockInfo, BlockQuery, BlocksQuery, BlocksQueryByHeight, BondInfo, BondStatusQuery,
-    ContinuationAtNameQuery, ContinuationsWithBlockInfo, DataAtNameByBlockQuery, DataAtNameQuery,
-    DataWithBlockInfo, DeployExecStatus, DeployInfo, ExploratoryDeployQuery, FindDeployQuery,
-    IsFinalizedQuery, LightBlockInfo, MachineVerifyQuery, ReportQuery, ServiceError,
-    Status as CasperStatus, VersionInfo, VisualizeDagQuery, WaitingContinuationInfo,
+    deploy_info_from_wire, light_block_info_from_wire, BlockInfo, BlockQuery, BlocksQuery,
+    BlocksQueryByHeight, BondInfo, BondStatusQuery, ContinuationAtNameQuery,
+    ContinuationsWithBlockInfo, DataAtNameByBlockQuery, DataAtNameQuery, DataWithBlockInfo,
+    DeployExecStatus, DeployInfo, ExploratoryDeployQuery, FindDeployQuery, IsFinalizedQuery,
+    LightBlockInfo, MachineVerifyQuery, ReportQuery, ServiceError, Status as CasperStatus,
+    VersionInfo, VisualizeDagQuery, WaitingContinuationInfo,
 };
 use rchain_models::casper::protocol::propose_service::{ProposeQuery, ProposeResultQuery};
 use rchain_models::casper::protocol::report::{
@@ -327,49 +328,6 @@ pub fn block_event_info_to_wire(b: &BlockEventInfo) -> wire::BlockEventInfo {
             .map(system_deploy_info_with_event_data_to_wire)
             .collect(),
         post_state_hash: b.post_state_hash.clone(),
-    }
-}
-
-fn bond_info_from_wire(b: &wire::BondInfo) -> BondInfo {
-    BondInfo {
-        validator: b.validator.clone(),
-        stake: b.stake,
-    }
-}
-
-fn light_block_info_from_wire(b: &wire::LightBlockInfo) -> LightBlockInfo {
-    LightBlockInfo {
-        version: b.version,
-        shard_id: b.shard_id.clone(),
-        block_hash: b.block_hash.clone(),
-        block_number: b.block_number,
-        sender: b.sender.clone(),
-        seq_num: b.seq_num,
-        pre_state_hash: b.pre_state_hash.clone(),
-        post_state_hash: b.post_state_hash.clone(),
-        justifications: b.justifications.clone(),
-        bonds: b.bonds.iter().map(bond_info_from_wire).collect(),
-        sig_algorithm: b.sig_algorithm.clone(),
-        sig: b.sig.clone(),
-        block_size: b.block_size.clone(),
-        deploy_count: b.deploy_count,
-        rejected_deploys: b.rejected_deploys.clone(),
-    }
-}
-
-fn deploy_info_from_wire(d: &wire::DeployInfo) -> DeployInfo {
-    DeployInfo {
-        deployer: d.deployer.clone(),
-        term: d.term.clone(),
-        timestamp: d.timestamp,
-        sig: d.sig.clone(),
-        sig_algorithm: d.sig_algorithm.clone(),
-        phlo_price: d.phlo_price,
-        phlo_limit: d.phlo_limit,
-        valid_after_block_number: d.valid_after_block_number,
-        cost: d.cost,
-        errored: d.errored,
-        system_deploy_error: d.system_deploy_error.clone(),
     }
 }
 

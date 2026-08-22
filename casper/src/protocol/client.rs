@@ -17,10 +17,10 @@ use rchain_crypto::signatures::signed::Signed;
 use rchain_models::ast::Par;
 use rchain_models::casper::protocol::casper_message::{DeployData, SignedDeployData};
 use rchain_models::casper::protocol::deploy_service::{
-    BlockInfo, BlockQuery, BlocksQuery, BondInfo, BondStatusQuery, ContinuationAtNameQuery,
-    ContinuationsWithBlockInfo, DataAtNameQuery, DataWithBlockInfo, DeployExecStatus, DeployInfo,
-    FindDeployQuery, IsFinalizedQuery, LightBlockInfo, MachineVerifyQuery, Status, VersionInfo,
-    VisualizeDagQuery, WaitingContinuationInfo,
+    deploy_info_from_wire, light_block_info_from_wire, BlockInfo, BlockQuery, BlocksQuery,
+    BondStatusQuery, ContinuationAtNameQuery, ContinuationsWithBlockInfo, DataAtNameQuery,
+    DataWithBlockInfo, DeployExecStatus, FindDeployQuery, IsFinalizedQuery, MachineVerifyQuery,
+    Status, VersionInfo, VisualizeDagQuery, WaitingContinuationInfo,
 };
 use rchain_models::proto::casper as wire;
 use rchain_models::proto::casper::deploy_service_client::DeployServiceClient;
@@ -52,51 +52,10 @@ pub fn build_par(name: &Name) -> Result<Par, RholangError> {
 }
 
 // -------------------------------------------------------------------------------------------------
-// Wire -> domain conversion (mirror of the `*_to_wire` helpers in the node's gRPC server layer)
+// Wire -> domain conversion (shared with the node's gRPC server layer: see
+// `rchain_models::casper::protocol::deploy_service::{light_block_info_from_wire,
+// deploy_info_from_wire}`)
 // -------------------------------------------------------------------------------------------------
-
-fn light_block_info_from_wire(b: &wire::LightBlockInfo) -> LightBlockInfo {
-    LightBlockInfo {
-        version: b.version,
-        shard_id: b.shard_id.clone(),
-        block_hash: b.block_hash.clone(),
-        block_number: b.block_number,
-        sender: b.sender.clone(),
-        seq_num: b.seq_num,
-        pre_state_hash: b.pre_state_hash.clone(),
-        post_state_hash: b.post_state_hash.clone(),
-        justifications: b.justifications.clone(),
-        bonds: b
-            .bonds
-            .iter()
-            .map(|b| BondInfo {
-                validator: b.validator.clone(),
-                stake: b.stake,
-            })
-            .collect(),
-        sig_algorithm: b.sig_algorithm.clone(),
-        sig: b.sig.clone(),
-        block_size: b.block_size.clone(),
-        deploy_count: b.deploy_count,
-        rejected_deploys: b.rejected_deploys.clone(),
-    }
-}
-
-fn deploy_info_from_wire(d: &wire::DeployInfo) -> DeployInfo {
-    DeployInfo {
-        deployer: d.deployer.clone(),
-        term: d.term.clone(),
-        timestamp: d.timestamp,
-        sig: d.sig.clone(),
-        sig_algorithm: d.sig_algorithm.clone(),
-        phlo_price: d.phlo_price,
-        phlo_limit: d.phlo_limit,
-        valid_after_block_number: d.valid_after_block_number,
-        cost: d.cost,
-        errored: d.errored,
-        system_deploy_error: d.system_deploy_error.clone(),
-    }
-}
 
 fn block_info_from_wire(b: &wire::BlockInfo) -> Result<BlockInfo, String> {
     let bi = b.block_info.as_ref().ok_or("missing block_info")?;

@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ast::Par;
+use crate::proto::casper as wire;
 use crate::runtime::BindPattern;
 
 /// A validator bond (port of `BondInfo`).
@@ -226,4 +227,54 @@ pub struct ExploratoryDeployQuery {
     pub term: String,
     pub block_hash: String,
     pub use_pre_state_hash: bool,
+}
+
+// -------------------------------------------------------------------------------------------------
+// Wire -> domain conversion (shared by the node gRPC server and the casper client)
+// -------------------------------------------------------------------------------------------------
+
+/// `wire::BondInfo` → domain `BondInfo`.
+pub fn bond_info_from_wire(b: &wire::BondInfo) -> BondInfo {
+    BondInfo {
+        validator: b.validator.clone(),
+        stake: b.stake,
+    }
+}
+
+/// `wire::LightBlockInfo` → domain `LightBlockInfo`.
+pub fn light_block_info_from_wire(b: &wire::LightBlockInfo) -> LightBlockInfo {
+    LightBlockInfo {
+        version: b.version,
+        shard_id: b.shard_id.clone(),
+        block_hash: b.block_hash.clone(),
+        block_number: b.block_number,
+        sender: b.sender.clone(),
+        seq_num: b.seq_num,
+        pre_state_hash: b.pre_state_hash.clone(),
+        post_state_hash: b.post_state_hash.clone(),
+        justifications: b.justifications.clone(),
+        bonds: b.bonds.iter().map(bond_info_from_wire).collect(),
+        sig_algorithm: b.sig_algorithm.clone(),
+        sig: b.sig.clone(),
+        block_size: b.block_size.clone(),
+        deploy_count: b.deploy_count,
+        rejected_deploys: b.rejected_deploys.clone(),
+    }
+}
+
+/// `wire::DeployInfo` → domain `DeployInfo`.
+pub fn deploy_info_from_wire(d: &wire::DeployInfo) -> DeployInfo {
+    DeployInfo {
+        deployer: d.deployer.clone(),
+        term: d.term.clone(),
+        timestamp: d.timestamp,
+        sig: d.sig.clone(),
+        sig_algorithm: d.sig_algorithm.clone(),
+        phlo_price: d.phlo_price,
+        phlo_limit: d.phlo_limit,
+        valid_after_block_number: d.valid_after_block_number,
+        cost: d.cost,
+        errored: d.errored,
+        system_deploy_error: d.system_deploy_error.clone(),
+    }
 }
