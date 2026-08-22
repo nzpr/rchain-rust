@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
+use rchain_models::ast::Par;
 use rchain_rholang::accounting::Cost;
 use rchain_rholang::normalizer::source_to_adt;
 use rchain_rholang::pretty_printer::PrettyPrinter;
@@ -65,7 +66,7 @@ impl ReplGrpcService {
             Ok(term) => {
                 // Port of `printNormalizedTerm`: echo the normalized term on the node console.
                 println!("\nEvaluating:");
-                println!("{}", PrettyPrinter::new().build_string(term.as_par()));
+                println!("{}", PrettyPrinter::new().build_string(&Par::from(term.clone())));
                 let rand = Blake2b512Random::default_random();
                 // Bound the Repl evaluation: a phlo cap (the reducer aborts when the balance is
                 // exhausted) + a wall-clock deadline.

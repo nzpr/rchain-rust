@@ -99,7 +99,7 @@ impl ReportingRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
-            .eval(par.as_par(), env, rand, self.cost.as_ref())
+            .eval(&Par::from(par.clone()), env, rand, self.cost.as_ref())
             .await
     }
 
