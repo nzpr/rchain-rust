@@ -15,6 +15,7 @@ IV.
 | The rholang language & the ρ-calculus (the software) | [`docs/src/rholang/`](docs/src/rholang/) (book Part I) |
 | The ρ-calculus, formally — grammar, sorts, the 19-law mapping | [`docs/src/formal/`](docs/src/formal/) (book Part II) |
 | The node — consensus, RSpace, storage, operation | [`docs/src/node/`](docs/src/node/) (book Part III) |
+| Running/operating the node — REPL, standalone genesis, ports, Docker network | [`docs/src/node/operating.md`](docs/src/node/operating.md) |
 | Reader/agent navigation map (goal-indexed) | [`docs/src/ai-entrypoint.md`](docs/src/ai-entrypoint.md) |
 | The ρ-calculus core spec (grammar, sorts, operations, refinements) | [`spec/RHO-CALCULUS.md`](spec/RHO-CALCULUS.md) |
 | The 19-law invariant catalog | [`spec/INVENTORY.md`](spec/INVENTORY.md) |
@@ -202,6 +203,24 @@ Bottom-up order: `sdk` → `shared` → `crypto` + `graphz` → `models` →
 - **Hoist `Blake2b256Hash`** out of `rspace` into `crypto`/`shared` so `models` stops depending on
   `rspace` (`models/.../ByteStringSyntax.scala`, `FringeData.scala`, `BlockMetadata.scala`).
 
+## Running the node
+
+Build and run the `rnode` binary (Rust pinned in `rust-toolchain.toml`):
+
+```sh
+cargo build --release -p rchain-node --bin rnode
+rnode run -s \
+  --validator-private-key 67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530 \
+  --host 127.0.0.1 --api-host 127.0.0.1 --no-upnp
+```
+
+Standalone (`run -s`) is the **genesis master**: it needs a secp256k1 `--validator-private-key`
+(32-byte base16; the PEM-path flag is parsed but not wired into the runtime) and a
+`~/.rnode/genesis/wallets.txt` (must exist; may be empty — `bonds.txt` auto-generates). The API host
+must be a literal IP (`SocketAddr::from_str` rejects hostnames like `localhost`). Deploy serves on
+**40401**; Propose/Repl on loopback **40402**. Full instructions:
+[`docs/src/node/operating.md`](docs/src/node/operating.md).
+
 ## Open questions
 
 1. `casper/src/main/resources/casper.tla` models only the genesis **bootstrap ceremony**, not the
@@ -221,6 +240,10 @@ Bottom-up order: `sdk` → `shared` → `crypto` + `graphz` → `models` →
   `block-storage`, `rspace`, `rholang`, `casper`, `comm`, `node`) are ported at the
   workspace root. The proofs-first *pause* was lifted in practice; the port was written against the
   verified spec rather than waiting on Laws 1–11.
+- **Node — operational**: `rnode` builds and runs. A standalone node reaches the `Running` state
+  (genesis block created) and serves the API — Deploy **40401**, Propose/Repl **40402** (loopback),
+  HTTP **40403**, admin **40405**, protocol **40400**, discovery **40404**. Run instructions:
+  [`docs/src/node/operating.md`](docs/src/node/operating.md).
 - **Formalization — residual**: Law 1's idempotence/commutativity is proven, conditional on the 30
   element-comparator `axiom`s in `Rchain/Sort.lean` (the remaining "total order" obligation). Law 2's
   core (≡) and Law 4's core (COMM) are proven in `Rchain/Rho.lean`, Law 6 is proven in `Rchain/Ty.lean`;
