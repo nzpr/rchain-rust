@@ -62,7 +62,6 @@ macro_rules! non_neg_signed {
 }
 
 non_neg_signed!(NonNegI64, i64);
-non_neg_signed!(NonNegI32, i32);
 
 impl NonNegI64 {
     /// The value one (total: `1` is non-negative).
@@ -234,24 +233,6 @@ impl From<Port> for u32 {
     }
 }
 
-/// A phantom/execution cost (non-negative by construction; the wire type is `uint64`). Replaces
-/// `u64 ↔ i64` cost casts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Cost(u64);
-
-impl Cost {
-    /// Total constructor: a `u64` is already non-negative.
-    pub const fn new(cost: u64) -> Self {
-        Cost(cost)
-    }
-}
-
-impl From<Cost> for u64 {
-    fn from(v: Cost) -> u64 {
-        v.0
-    }
-}
-
 /// Define a fixed-width length newtype. Construction is `TryFrom<usize>` (validates the value fits
 /// the wire width); discharge is `From<Newtype> for Inner`.
 macro_rules! len_newtype {
@@ -281,6 +262,8 @@ macro_rules! len_newtype {
     };
 }
 
+// `ByteLen`/`ShortLen` are reserved for the deferred seed-length refinement (spec/AUDIT.md §8
+// item 1c); they have no production consumer yet.
 len_newtype!(ByteLen, u8);
 len_newtype!(ShortLen, u16);
 len_newtype!(WireLen, u32);
@@ -306,13 +289,6 @@ mod tests {
         assert_eq!(i64::from(v), 5);
         assert!(NonNegI64::try_from(0).is_ok());
         assert!(NonNegI64::try_from(-1).is_err());
-    }
-
-    #[test]
-    fn non_neg_i32() {
-        let v: NonNegI32 = 3.try_into().unwrap();
-        assert_eq!(i32::from(v), 3);
-        assert!(NonNegI32::try_from(-3).is_err());
     }
 
     #[test]
@@ -342,12 +318,6 @@ mod tests {
         assert_eq!(u16::from(Port::try_from(65535).unwrap()), 65535);
         assert!(Port::try_from(-1).is_err());
         assert!(Port::try_from(70000).is_err());
-    }
-
-    #[test]
-    fn cost_is_non_negative() {
-        let c = Cost::new(42);
-        assert_eq!(u64::from(c), 42);
     }
 
     #[test]
