@@ -116,14 +116,14 @@ fn wildcard() -> Par {
 
 fn datum() -> ListParWithRandom {
     ListParWithRandom {
-        pars: vec![Par::default()],
+        pars: vec![SortedProc::default()],
         random_state: Blake2b512Random::default_random(),
     }
 }
 
 fn pattern() -> BindPattern {
     BindPattern {
-        patterns: vec![wildcard()],
+        patterns: vec![SortedProc::new(wildcard())],
         remainder: None,
         free_count: 0,
     }

@@ -51,6 +51,26 @@ impl<S: Sort> Default for Sorted<S> {
     }
 }
 
+/// serde round-trips the sorted inner `Par`; deserialization re-sorts so the invariant holds across
+/// a JSON round-trip.
+impl<S: Sort> serde::Serialize for Sorted<S> {
+    fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
+    where
+        Ser: serde::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de, S: Sort> serde::Deserialize<'de> for Sorted<S> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Par::<S>::deserialize(deserializer).map(Sorted::new)
+    }
+}
+
 /// `Hash` on the canonical serialized form (order-insensitive; avoids deriving `Hash` on `Par` and
 /// its sub-types, which don't implement it).
 impl<S: Sort> Hash for Sorted<S> {

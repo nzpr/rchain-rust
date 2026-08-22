@@ -17,6 +17,7 @@ use crate::errors::ModelsError;
 use crate::proto::rholang as p;
 use crate::types::FreeCount;
 use crate::runtime::{BindPattern, ListParWithRandom, ParWithRandom, TaggedContinuation};
+use crate::sorted::SortedProc;
 
 // --- TypeMapper encodings -----------------------------------------------------------------------
 
@@ -547,14 +548,14 @@ pub fn par_from_proto<S: a::Sort>(p: &p::Par) -> Result<a::Par<S>, ModelsError> 
 
 pub fn bind_pattern_to_proto(bp: &BindPattern) -> p::BindPattern {
     p::BindPattern {
-        patterns: bp.patterns.iter().map(par_to_proto).collect(),
+        patterns: bp.patterns.iter().map(|p| par_to_proto(p.as_par())).collect(),
         remainder: bp.remainder.as_ref().map(var_to_proto),
         free_count: bp.free_count,
     }
 }
 pub fn bind_pattern_from_proto(p: &p::BindPattern) -> Result<BindPattern, ModelsError> {Ok(
     BindPattern {
-        patterns: p.patterns.iter().map(|p| par_from_proto(p)).collect::<Result<Vec<_>, ModelsError>>()?,
+        patterns: p.patterns.iter().map(|p| par_from_proto(p).map(SortedProc::new)).collect::<Result<Vec<_>, ModelsError>>()?,
         remainder: p.remainder.as_ref().map(var_from_proto),
         free_count: p.free_count,
     }
@@ -562,13 +563,13 @@ pub fn bind_pattern_from_proto(p: &p::BindPattern) -> Result<BindPattern, Models
 
 pub fn list_par_with_random_to_proto(l: &ListParWithRandom) -> p::ListParWithRandom {
     p::ListParWithRandom {
-        pars: l.pars.iter().map(par_to_proto).collect(),
+        pars: l.pars.iter().map(|p| par_to_proto(p.as_par())).collect(),
         random_state: l.random_state.to_bytes(),
     }
 }
 pub fn list_par_with_random_from_proto(p: &p::ListParWithRandom) -> Result<ListParWithRandom, String> {
     Ok(ListParWithRandom {
-        pars: p.pars.iter().map(par_from_proto).collect::<Result<Vec<_>, ModelsError>>().map_err(|e| e.to_string())?,
+        pars: p.pars.iter().map(|p| par_from_proto(p).map(SortedProc::new)).collect::<Result<Vec<_>, ModelsError>>().map_err(|e| e.to_string())?,
         random_state: Blake2b512Random::from_bytes(
             &SerializedRandom::try_from(p.random_state.as_slice()).map_err(|e| e.to_string())?,
         )
@@ -578,13 +579,13 @@ pub fn list_par_with_random_from_proto(p: &p::ListParWithRandom) -> Result<ListP
 
 pub fn par_with_random_to_proto(pw: &ParWithRandom) -> p::ParWithRandom {
     p::ParWithRandom {
-        body: Some(par_to_proto(&pw.body)),
+        body: Some(par_to_proto(pw.body.as_par())),
         random_state: pw.random_state.to_bytes(),
     }
 }
 pub fn par_with_random_from_proto(p: &p::ParWithRandom) -> Result<ParWithRandom, String> {
     Ok(ParWithRandom {
-        body: par_from_proto(p.body.as_ref().ok_or(ModelsError::Malformed("body")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?,
+        body: SortedProc::new(par_from_proto(p.body.as_ref().ok_or(ModelsError::Malformed("body")).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?),
         random_state: Blake2b512Random::from_bytes(
             &SerializedRandom::try_from(p.random_state.as_slice()).map_err(|e| e.to_string())?,
         )

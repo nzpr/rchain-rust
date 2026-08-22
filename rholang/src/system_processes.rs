@@ -1061,7 +1061,7 @@ mod tests {
 
     fn lpw(pars: Vec<Par>) -> ListParWithRandom {
         ListParWithRandom {
-            pars,
+            pars: pars.into_iter().map(SortedProc::new).collect(),
             random_state: Blake2b512Random::new_random(128),
         }
     }
@@ -1085,7 +1085,7 @@ mod tests {
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0.as_par(), &ack);
-        assert_eq!(produced[0].1.pars, vec![RhoByteArray::apply(blake2b256::hash(&input))]);
+        assert_eq!(produced[0].1.pars, vec![SortedProc::new(RhoByteArray::apply(blake2b256::hash(&input)))]);
     }
 
     #[tokio::test]
@@ -1111,14 +1111,14 @@ mod tests {
             assert_eq!(produced[0].0.as_par(), &ret);
             produced[0].1.pars[0].clone()
         };
-        assert!(RhoUri::unapply(&uri).is_some(), "insertArbitrary returns a URI");
+        assert!(RhoUri::unapply(uri.as_par()).is_some(), "insertArbitrary returns a URI");
 
         let lookup = defs
             .iter()
             .find(|d| d.body_ref == BodyRefs::REG_LOOKUP)
             .expect("lookup definition");
         let ret2 = FixedChannels::stdout_ack();
-        (lookup.handler)(vec![lpw(vec![uri.clone(), ret2.clone()])])
+        (lookup.handler)(vec![lpw(vec![uri.as_par().clone(), ret2.clone()])])
             .await
             .unwrap();
 
@@ -1126,9 +1126,9 @@ mod tests {
         assert_eq!(produced.len(), 2);
         assert_eq!(produced[1].0.as_par(), &ret2);
         let tuple = &produced[1].1.pars[0];
-        let parts = RhoTupleN::unapply(tuple).expect("lookup returns a (uri, value) tuple");
+        let parts = RhoTupleN::unapply(tuple.as_par()).expect("lookup returns a (uri, value) tuple");
         assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], uri);
+        assert_eq!(parts[0], *uri.as_par());
         assert_eq!(parts[1], data);
     }
 
@@ -1173,7 +1173,7 @@ mod tests {
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0.as_par(), &ret);
-        let map = RhoMap::unapply(&produced[0].1.pars[0]).expect("getBonds returns a map");
+        let map = RhoMap::unapply(produced[0].1.pars[0].as_par()).expect("getBonds returns a map");
         assert_eq!(map.len(), 2);
     }
 
@@ -1238,12 +1238,12 @@ mod tests {
         // The last two are the getBalance replies.
         assert_eq!(produced[3].0.as_par(), &alice_ret);
         assert_eq!(
-            RhoNumber::unapply(&produced[3].1.pars[0]).expect("alice balance"),
+            RhoNumber::unapply(produced[3].1.pars[0].as_par()).expect("alice balance"),
             70
         );
         assert_eq!(produced[4].0.as_par(), &bob_ret);
         assert_eq!(
-            RhoNumber::unapply(&produced[4].1.pars[0]).expect("bob balance"),
+            RhoNumber::unapply(produced[4].1.pars[0].as_par()).expect("bob balance"),
             80
         );
     }

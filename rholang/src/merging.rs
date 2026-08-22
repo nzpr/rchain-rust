@@ -34,7 +34,7 @@ pub fn get_number_with_rnd(
     par_with_rnd: &ListParWithRandom,
 ) -> Result<(i64, Blake2b512Random), String> {
     let num = match par_with_rnd.pars.as_slice() {
-        [p] => RhoNumber::unapply(p)
+        [p] => RhoNumber::unapply(p.as_par())
             .ok_or_else(|| "Number channel should contain single Int term.".to_string())?,
         _ => {
             return Err(format!(
@@ -61,7 +61,7 @@ pub fn create_datum_encoded(
 ) -> Vec<u8> {
     let num_par = RhoNumber::apply(num);
     let par_with_rnd = ListParWithRandom {
-        pars: vec![num_par],
+        pars: vec![SortedProc::new(num_par)],
         random_state: rnd,
     };
     let data_hash = hash_produce(channel_hash.as_bytes(), &par_with_rnd, false);

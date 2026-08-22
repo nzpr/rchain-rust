@@ -100,7 +100,7 @@ async fn install_system_processes(
     for (name, arity, remainder, body_ref) in proc_defs {
         let patterns = vec![BindPattern {
             patterns: (0..*arity)
-                .map(|i| from_expr(Expr::EVar(Box::new(Var::FreeVar(i)))))
+                .map(|i| SortedProc::new(from_expr(Expr::EVar(Box::new(Var::FreeVar(i))))))
                 .collect(),
             remainder: if *remainder { Some(Var::FreeVar(*arity)) } else { None },
             free_count: if *remainder { *arity + 1 } else { *arity },
@@ -325,7 +325,7 @@ impl RhoRuntime {
     /// Read all `Par`s at a channel (port of `getDataPar`).
     pub async fn get_data_par(&self, channel: &SortedProc) -> Result<Vec<Par>, RSpaceError> {
         let data = self.space.get_data(channel).await?;
-        Ok(data.into_iter().flat_map(|d| d.a.pars).collect())
+        Ok(data.into_iter().flat_map(|d| d.a.pars.into_iter().map(|p| p.as_par().clone())).collect())
     }
 
     /// Read the waiting `ParBody` continuations as `(patterns, body)` (port of
@@ -338,7 +338,7 @@ impl RhoRuntime {
         Ok(conts
             .into_iter()
             .filter_map(|wc| match wc.continuation {
-                TaggedContinuation::ParBody(pwr) => Some((wc.patterns, pwr.body)),
+                TaggedContinuation::ParBody(pwr) => Some((wc.patterns, pwr.body.as_par().clone())),
                 _ => None,
             })
             .collect())
@@ -491,7 +491,7 @@ impl ReplayRhoRuntime {
     /// Read all `Par`s at a channel (port of `getDataPar`).
     pub async fn get_data_par(&self, channel: &SortedProc) -> Result<Vec<Par>, RSpaceError> {
         let data = self.space.get_data(channel).await?;
-        Ok(data.into_iter().flat_map(|d| d.a.pars).collect())
+        Ok(data.into_iter().flat_map(|d| d.a.pars.into_iter().map(|p| p.as_par().clone())).collect())
     }
 
     /// Consume the result at a channel with a pattern (port of `consumeResult`).
@@ -607,8 +607,8 @@ mod tests {
 
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
-        assert_eq!(produced[0].1.pars, vec![rchain_models::par_ops::from_expr(
+        assert_eq!(produced[0].1.pars, vec![SortedProc::new(rchain_models::par_ops::from_expr(
             rchain_models::ast::Expr::GInt(2)
-        )]);
+        ))]);
     }
 }

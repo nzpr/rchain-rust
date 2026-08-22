@@ -32,7 +32,7 @@ pub type EvalBodyFn = Box<
 
 /// Build an environment from the data captured by a match (port of `Dispatch.buildEnv`).
 pub fn build_env(data_list: &[ListParWithRandom]) -> Env<Par> {
-    Env::make_env(data_list.iter().flat_map(|d| d.pars.iter().cloned()))
+    Env::make_env(data_list.iter().flat_map(|d| d.pars.iter().map(|p| p.as_par().clone())))
 }
 
 /// Dispatches a continuation: eval `ParBody`, invoke the built-in handler for `ScalaBodyRef`, or
@@ -79,7 +79,7 @@ impl Dispatch for RholangAndScalaDispatcher {
                     let f = eval.as_ref().ok_or_else(|| {
                         RholangError::BugFoundError("dispatcher eval not set".to_string())
                     })?;
-                    f(pwr.body.clone(), env, merged)
+                    f(pwr.body.as_par().clone(), env, merged)
                 };
                 fut.await
             }

@@ -10,7 +10,6 @@ use std::sync::Mutex;
 
 use num_bigint::BigInt;
 
-use rchain_models::ast::Par;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::sorted::SortedProc;
 use rchain_shared::serialize::Serialize;
@@ -278,7 +277,7 @@ impl Costs {
             .sum();
         let body_cost: i64 = match continuation {
             TaggedContinuation::ParBody(pwr) => {
-                <Par as Serialize<Par>>::encode(&pwr.body).len() as i64
+                <SortedProc as Serialize<SortedProc>>::encode(&pwr.body).len() as i64
             }
             _ => 0,
         };
@@ -291,7 +290,7 @@ impl Costs {
         let data_cost: i64 = data
             .pars
             .iter()
-            .map(|p| <Par as Serialize<Par>>::encode(p).len() as i64)
+            .map(|p| <SortedProc as Serialize<SortedProc>>::encode(p).len() as i64)
             .sum();
         Cost::new(channel_cost + data_cost, "produces storage")
     }

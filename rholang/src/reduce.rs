@@ -1341,7 +1341,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         self.produce(
             &SortedProc::new(unbundled),
             ListParWithRandom {
-                pars: subst_data.into_iter().map(|d| d.eval()).collect(),
+                pars: subst_data.into_iter().map(|d| SortedProc::new(d.eval())).collect(),
                 random_state: rand.clone(),
             },
             send.persistent,
@@ -1368,7 +1368,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 .collect::<Result<_, _>>()?;
             binds.push((
                 BindPattern {
-                    patterns: subst_patterns.into_iter().map(|p| p.eval()).collect(),
+                    patterns: subst_patterns.into_iter().map(|p| SortedProc::new(p.eval())).collect(),
                     remainder: rb.remainder.as_deref().cloned(),
                     free_count: i32::from(rb.free_count),
                 },
@@ -1379,7 +1379,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         self.consume(
             &binds,
             ParWithRandom {
-                body: subst_body,
+                body: SortedProc::new(subst_body),
                 random_state: rand.clone(),
             },
             receive.persistent,
@@ -1761,7 +1761,7 @@ mod tests {
         let produced = interp.space.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
         assert_eq!(produced[0].0.as_par().exprs, vec![Expr::GInt(1)]);
-        assert_eq!(produced[0].1.pars, vec![from_expr(Expr::GInt(2))]);
+        assert_eq!(produced[0].1.pars, vec![SortedProc::new(from_expr(Expr::GInt(2)))]);
         assert!(!produced[0].2);
     }
 

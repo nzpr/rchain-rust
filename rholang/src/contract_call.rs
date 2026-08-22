@@ -34,7 +34,7 @@ impl<T: Tuplespace, D: Dispatch> ContractCall<T, D> {
             .produce(
                 &SortedProc::new(ch.clone()),
                 ListParWithRandom {
-                    pars: values.to_vec(),
+                    pars: values.iter().map(|p| SortedProc::new(p.clone())).collect(),
                     random_state: rand.clone(),
                 },
                 false,
@@ -55,7 +55,7 @@ impl<T: Tuplespace, D: Dispatch> ContractCall<T, D> {
         contract_args: &[ListParWithRandom],
     ) -> Option<(Vec<Par>, Blake2b512Random)> {
         if let [single] = contract_args {
-            Some((single.pars.clone(), single.random_state.clone()))
+            Some((single.pars.iter().map(|p| p.as_par().clone()).collect(), single.random_state.clone()))
         } else {
             None
         }

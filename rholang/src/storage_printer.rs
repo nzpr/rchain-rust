@@ -65,7 +65,7 @@ fn to_sends(data: &[Datum<ListParWithRandom>], channels: &[SortedProc]) -> Par {
         for channel in channels {
             let send = Send {
                 chan: Box::new(channel.as_par().clone().quote()),
-                data: datum.a.pars.iter().map(|p| p.clone().quote()).collect(),
+                data: datum.a.pars.iter().map(|p| p.as_par().clone().quote()).collect(),
                 persistent: datum.persist,
                 locally_free: AlwaysEqual(vec![]),
                 connective_used: false,
@@ -83,7 +83,7 @@ fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], chan
             .iter()
             .zip(wk.patterns.iter())
             .map(|(channel, pattern)| ReceiveBind {
-                patterns: pattern.patterns.iter().map(|p| p.clone().quote()).collect(),
+                patterns: pattern.patterns.iter().map(|p| p.as_par().clone().quote()).collect(),
                 source: Box::new(channel.as_par().clone().quote()),
                 remainder: pattern.remainder.clone().map(Box::new),
                 free_count: FreeCount::from_nonneg(pattern.free_count),
@@ -91,7 +91,7 @@ fn to_receive(wks: &[WaitingContinuation<BindPattern, TaggedContinuation>], chan
             .collect();
         let (body, bind_count) = match &wk.continuation {
             TaggedContinuation::ParBody(p) => (
-                p.body.clone(),
+                p.body.as_par().clone(),
                 wk.patterns.iter().map(|p| p.free_count).sum(),
             ),
             _ => (Par::default(), 0),

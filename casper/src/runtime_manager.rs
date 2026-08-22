@@ -394,9 +394,9 @@ impl RuntimeManager {
         &self,
         deploy: &SystemDeploy,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, String> {
-        let patterns = vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0))))];
+        let patterns = vec![SortedProc::new(from_expr(Expr::EVar(Box::new(Var::FreeVar(0)))))];
         let pattern = BindPattern {
-            free_count: count_free_vars(&patterns[0]),
+            free_count: count_free_vars(patterns[0].as_par()),
             patterns,
             remainder: None,
         };
@@ -422,7 +422,7 @@ impl RuntimeManager {
         match consumed {
             Some((_, data)) => match data.as_slice() {
                 [single] if single.pars.len() == 1 => {
-                    let result = process_bool_result(&single.pars[0]);
+                    let result = process_bool_result(single.pars[0].as_par());
                     Ok((result, eval_result))
                 }
                 _ => Err("Unexpected system-deploy result".to_string()),

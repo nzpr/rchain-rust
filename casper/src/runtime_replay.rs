@@ -406,7 +406,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             Some((_, data)) => match data.as_slice() {
                 [single] => match single.pars.as_slice() {
                     [p] => {
-                        let result = process_bool_result(p);
+                        let result = process_bool_result(p.as_par());
                         Ok((result, eval_result))
                     }
                     _ => Err("Unexpected system-deploy result".to_string()),
@@ -443,9 +443,9 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         &self,
         deploy: &SystemDeploy,
     ) -> Result<Option<(TaggedContinuation, Vec<ListParWithRandom>)>, String> {
-        let patterns = vec![from_expr(Expr::EVar(Box::new(Var::FreeVar(0))))];
+        let patterns = vec![SortedProc::new(from_expr(Expr::EVar(Box::new(Var::FreeVar(0)))))];
         let pattern = BindPattern {
-            free_count: count_free_vars(&patterns[0]),
+            free_count: count_free_vars(patterns[0].as_par()),
             patterns,
             remainder: None,
         };
@@ -675,7 +675,7 @@ impl ReplayRuntime for ReportingRuntime {
 /// Extract the numeric value from a number-channel datum (port of `getNumberWithRnd`).
 fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> Result<i64, String> {
     match par_with_rnd.pars.as_slice() {
-        [p] => RhoNumber::unapply(p)
+        [p] => RhoNumber::unapply(p.as_par())
             .ok_or_else(|| "Number channel should contain single Int term.".to_string()),
         _ => Err(format!(
             "Number channel should contain single Int term, found {} pars.",

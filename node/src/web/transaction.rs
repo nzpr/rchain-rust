@@ -100,10 +100,10 @@ impl TransactionAPIImpl {
                     return None;
                 }
                 let produce = comm.produces.first()?;
-                let from_addr = produce.data.pars.first()?.exprs.first().and_then(expr_string)?;
-                let to_addr = produce.data.pars.get(2)?.exprs.first().and_then(expr_string)?;
-                let amount = produce.data.pars.get(3)?.exprs.first().and_then(expr_int)?;
-                let ret_unforgeable = produce.data.pars.get(5)?.clone();
+                let from_addr = produce.data.pars.first()?.as_par().exprs.first().and_then(expr_string)?;
+                let to_addr = produce.data.pars.get(2)?.as_par().exprs.first().and_then(expr_string)?;
+                let amount = produce.data.pars.get(3)?.as_par().exprs.first().and_then(expr_int)?;
+                let ret_unforgeable = produce.data.pars.get(5)?.as_par().clone();
                 Some(Transaction {
                     from_addr,
                     to_addr,
@@ -263,6 +263,7 @@ mod tests {
         };
         use rchain_models::par_ops::from_expr;
         use rchain_models::runtime::ListParWithRandom;
+        use rchain_models::sorted::SortedProc;
 
         let transfer = from_expr(Expr::GString("transfer".to_string()));
         let from = from_expr(Expr::GString("fromAddr".to_string()));
@@ -274,12 +275,12 @@ mod tests {
             channel: transfer.clone(),
             data: ListParWithRandom {
                 pars: vec![
-                    from.clone(),
-                    from.clone(),
-                    to.clone(),
-                    amount.clone(),
-                    from.clone(),
-                    ret.clone(),
+                    SortedProc::new(from.clone()),
+                    SortedProc::new(from.clone()),
+                    SortedProc::new(to.clone()),
+                    SortedProc::new(amount.clone()),
+                    SortedProc::new(from.clone()),
+                    SortedProc::new(ret.clone()),
                 ],
                 random_state: Blake2b512Random::default_random(),
             },

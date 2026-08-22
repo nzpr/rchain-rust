@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rchain_models::ast::{EList, Expr, Var};
+use rchain_models::ast::{EList, Expr, Par, Var};
 use rchain_models::par_ops::from_expr;
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
 use rchain_models::sorted::SortedProc;
@@ -55,9 +55,11 @@ pub struct RhoMatch;
 
 impl Match<BindPattern, ListParWithRandom> for RhoMatch {
     fn get(&self, pattern: &BindPattern, data: &ListParWithRandom) -> Option<ListParWithRandom> {
+        let data_pars: Vec<Par> = data.pars.iter().map(|p| p.as_par().clone()).collect();
+        let pattern_pars: Vec<Par> = pattern.patterns.iter().map(|p| p.as_par().clone()).collect();
         let matches = fold_match(
-            &data.pars,
-            &pattern.patterns,
+            &data_pars,
+            &pattern_pars,
             pattern.remainder.as_ref(),
             &FreeMap::new(),
             &spatial_match,
@@ -77,7 +79,7 @@ impl Match<BindPattern, ListParWithRandom> for RhoMatch {
         }
 
         let pars = (0..pattern.free_count)
-            .map(|i| remainder_map.get(&i).cloned().unwrap_or_default())
+            .map(|i| SortedProc::new(remainder_map.get(&i).cloned().unwrap_or_default()))
             .collect();
         Some(ListParWithRandom {
             pars,
@@ -180,7 +182,7 @@ mod tests {
 
     fn lpw(pars: Vec<Par>) -> ListParWithRandom {
         ListParWithRandom {
-            pars,
+            pars: pars.into_iter().map(SortedProc::new).collect(),
             random_state: Blake2b512Random::new_random(128),
         }
     }
@@ -268,20 +270,20 @@ mod tests {
     #[test]
     fn rho_match_binds_free_vars() {
         let pattern = BindPattern {
-            patterns: vec![Par {
+            patterns: vec![SortedProc::new(Par {
                 exprs: vec![Expr::EVar(Box::new(Var::FreeVar(0)))],
                 connective_used: true,
                 ..Default::default()
-            }],
+            })],
             remainder: None,
             free_count: 1,
         };
         let data = ListParWithRandom {
-            pars: vec![par(vec![Expr::GInt(42)])],
+            pars: vec![SortedProc::new(par(vec![Expr::GInt(42)]))],
             random_state: rchain_crypto::hash::blake2b512_random::Blake2b512Random::new_random(128),
         };
         let result = RhoMatch.get(&pattern, &data).unwrap();
-        assert_eq!(result.pars, vec![par(vec![Expr::GInt(42)])]);
+        assert_eq!(result.pars, vec![SortedProc::new(par(vec![Expr::GInt(42)]))]);
     }
 
     #[test]
