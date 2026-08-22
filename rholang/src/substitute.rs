@@ -10,10 +10,7 @@ use rchain_models::ast::{
     MatchCase, Name, New, Par, ParMap, ParSet, Receive, ReceiveBind, Send, Sort, Var, VarRef,
 };
 use rchain_models::par_ops::{par_concat, prepend_connective, prepend_expr, single_bundle, until_free};
-use rchain_models::sorter::{
-    sort_expr_term, sort_match_term, sort_new_term, sort_par_term, sort_pairs, sort_pars,
-    sort_receive_term, sort_send_term,
-};
+use rchain_models::sorter::{sort_par_term, sort_pairs, sort_pars};
 
 use crate::accounting::{Chargeable, Cost, CostAccounting};
 use crate::env::Env;
@@ -207,10 +204,6 @@ pub fn substitute_send_no_sort(
     })
 }
 
-pub fn substitute_send(send: &Send, depth: i32, env: &Env<Par>) -> Result<Send, RholangError> {
-    Ok(sort_send_term(&substitute_send_no_sort(send, depth, env)?))
-}
-
 pub fn substitute_receive_no_sort(
     receive: &Receive,
     depth: i32,
@@ -246,16 +239,6 @@ pub fn substitute_receive_no_sort(
     })
 }
 
-pub fn substitute_receive(
-    receive: &Receive,
-    depth: i32,
-    env: &Env<Par>,
-) -> Result<Receive, RholangError> {
-    Ok(sort_receive_term(&substitute_receive_no_sort(
-        receive, depth, env,
-    )?))
-}
-
 pub fn substitute_new_no_sort(
     new: &New,
     depth: i32,
@@ -269,10 +252,6 @@ pub fn substitute_new_no_sort(
         injections: new.injections.clone(),
         locally_free: AlwaysEqual(until_free(&new.locally_free.0, env.shift_amount())),
     })
-}
-
-pub fn substitute_new(new: &New, depth: i32, env: &Env<Par>) -> Result<New, RholangError> {
-    Ok(sort_new_term(&substitute_new_no_sort(new, depth, env)?))
 }
 
 pub fn substitute_match_no_sort(
@@ -302,27 +281,12 @@ pub fn substitute_match_no_sort(
     })
 }
 
-pub fn substitute_match(m: &Match, depth: i32, env: &Env<Par>) -> Result<Match, RholangError> {
-    Ok(sort_match_term(&substitute_match_no_sort(m, depth, env)?))
-}
-
 pub fn substitute_bundle_no_sort(
     bundle: &Bundle,
     depth: i32,
     env: &Env<Par>,
 ) -> Result<Bundle, RholangError> {
     let sub = substitute_par_no_sort(&bundle.body, depth, env)?;
-    Ok(match single_bundle(&sub) {
-        Some(single) => bundle.merge(single),
-        None => Bundle {
-            body: Box::new(sub),
-            ..bundle.clone()
-        },
-    })
-}
-
-pub fn substitute_bundle(bundle: &Bundle, depth: i32, env: &Env<Par>) -> Result<Bundle, RholangError> {
-    let sub = substitute_par(&bundle.body, depth, env)?;
     Ok(match single_bundle(&sub) {
         Some(single) => bundle.merge(single),
         None => Bundle {
@@ -506,15 +470,6 @@ fn substitute_expr_delegate(
             expr.clone()
         }
     })
-}
-
-pub fn substitute_expr(expr: &Expr, depth: i32, env: &Env<Par>) -> Result<Expr, RholangError> {
-    Ok(sort_expr_term(&substitute_expr_delegate(
-        expr,
-        depth,
-        env,
-        substitute_par,
-    )?))
 }
 
 pub fn substitute_expr_no_sort(
