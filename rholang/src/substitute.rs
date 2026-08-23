@@ -2,8 +2,8 @@
 //!
 //! Mirrors `rholang/src/main/scala/coop/rchain/rholang/interpreter/Substitute.scala`. The cats
 //! `Substitute[M, A]` typeclass collapses to concrete `fn`s returning `Result<_, RholangError>`;
-//! the `substituteAndCharge` wrapper is deferred (the `Chargeable` proto-size instances need wire
-//! serialization).
+//! the `substituteAndCharge` wrapper is implemented as `substitute_par_and_charge` and wired into
+//! the reducer.
 
 use rchain_models::ast::{
     AlwaysEqual, Bundle, Connective, ConnectiveBody, EMethod, EList, ETuple, Expr, Match,

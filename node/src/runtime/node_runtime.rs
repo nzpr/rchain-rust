@@ -467,10 +467,11 @@ pub fn wire_block_processing(
     log: Arc<dyn Log>,
     autopropose: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> (
-    mpsc::UnboundedSender<BlockMessage>,
+    mpsc::Sender<BlockMessage>,
     mpsc::UnboundedSender<BlockMessage>,
 ) {
-    let (incoming_blocks_tx, incoming_blocks_rx) = mpsc::unbounded_channel();
+    let (incoming_blocks_tx, incoming_blocks_rx) =
+        mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
     let (validated_blocks_tx, validated_blocks_rx) = mpsc::unbounded_channel();
 
     // Tap the validated-blocks stream for autopropose (fire a propose on each validated block).
@@ -495,7 +496,7 @@ pub fn wire_block_processing(
     let put_to_incoming_queue: Arc<dyn Fn(BlockMessage) + Send + Sync> = Arc::new({
         let incoming_blocks_tx = incoming_blocks_tx.clone();
         move |block| {
-            let _ = incoming_blocks_tx.send(block);
+            let _ = incoming_blocks_tx.try_send(block);
         }
     });
     let validation_rx = block_receiver::apply(
@@ -1041,6 +1042,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
         block_api.clone(),
         block_report_api.clone(),
         eval_runtime,
+        conf.api_server.enable_reporting,
     );
     let transfer_unforgeable = BlockRandomSeed::transfer_unforgeable(&shard_id);
     let transaction_api = Arc::new(TransactionAPIImpl::new(

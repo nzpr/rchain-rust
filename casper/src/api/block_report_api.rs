@@ -25,6 +25,10 @@ use crate::validator_identity::ValidatorIdentity;
 /// A report store: `BlockHash → BlockEventInfo` (port of `ReportStore`).
 pub type ReportStore = Arc<dyn KeyValueTypedStore<BlockHash, BlockEventInfo>>;
 
+/// Bound on the per-hash replay lock map: once full, the oldest entry is evicted so a long-running
+/// read-only node cannot grow this map without bound.
+const MAX_LOCKED_BLOCKS: usize = 4096;
+
 /// The block report API (port of `BlockReportApi`).
 pub struct BlockReportApi {
     block_store: BlockStore,
@@ -81,6 +85,13 @@ impl BlockReportApi {
     ) -> Result<BlockEventInfo, String> {
         let lock = {
             let mut map = self.block_lock_map.lock().await;
+            if !map.contains_key(&block.block_hash) && map.len() >= MAX_LOCKED_BLOCKS {
+                // Evict the oldest (first) key to bound the map. The evicted entry's `Arc` is still
+                // valid for any task that already cloned it, so this cannot invalidate a held lock.
+                if let Some(oldest) = map.keys().next().copied() {
+                    map.remove(&oldest);
+                }
+            }
             map.entry(block.block_hash)
                 .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
                 .clone()

@@ -241,6 +241,13 @@ async fn get_block_unsafe(block_store: &BlockStore, hash: &BlockHash) -> Result<
         .ok_or_else(|| format!("missing block {}", hash.to_hex()))
 }
 
+/// Normalize a deploy signature to its low-S form so a high-S / low-S pair of the same ECDSA
+/// signature are treated as the same deploy (signature malleability). `algorithm` is the deploy's
+/// `sig_algorithm` (e.g. `"secp256k1"`). Delegates to the crypto crate's canonicalizer.
+fn normalize_signature_low_s(algorithm: &str, signature: &[u8]) -> Vec<u8> {
+    rchain_crypto::signatures::signatures_alg::normalize_signature_low_s(algorithm, signature)
+}
+
 /// Validate that no deploy with the same sig has been produced in the chain within the expiration
 /// window (port of `repeatDeploy`).
 pub async fn repeat_deploy(
@@ -249,8 +256,12 @@ pub async fn repeat_deploy(
     block: &BlockMessage,
     expiration_threshold: i64,
 ) -> Result<ValidBlockProcessing, String> {
-    let deploy_key_set: BTreeSet<Vec<u8>> =
-        block.state.deploys.iter().map(|d| d.deploy.sig.clone()).collect();
+    let deploy_key_set: BTreeSet<Vec<u8>> = block
+        .state
+        .deploys
+        .iter()
+        .map(|d| normalize_signature_low_s(&d.deploy.sig_algorithm, &d.deploy.sig))
+        .collect();
 
     let block_metadata = BlockMetadata::from_block(block);
     let init_parents = get_parents_metadata(dag, &block_metadata).await?;
@@ -268,7 +279,9 @@ pub async fn repeat_deploy(
         visited.insert(curr.block_hash);
 
         let b = get_block_unsafe(block_store, &curr.block_hash).await?;
-        if b.state.deploys.iter().any(|d| deploy_key_set.contains(&d.deploy.sig)) {
+        if b.state.deploys.iter().any(|d| {
+            deploy_key_set.contains(&normalize_signature_low_s(&d.deploy.sig_algorithm, &d.deploy.sig))
+        }) {
             return Ok(Err(BlockStatus::InvalidRepeatDeploy));
         }
 

@@ -302,7 +302,7 @@ async fn send_to_validate(
 /// Process incoming blocks (port of `incomingBlocks`): filter, store, resolve dependencies, and
 /// forward dependency-free blocks to the output queue.
 async fn incoming_blocks(
-    mut incoming_blocks_rx: mpsc::UnboundedReceiver<BlockMessage>,
+    mut incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
     conf_shard_name: Arc<str>,
     block_store: BlockStore,
@@ -353,7 +353,16 @@ async fn incoming_blocks(
             .copied()
             .unwrap_or(false);
         if !block_stored {
-            let _ = block_store.put(&[(block.block_hash, block.clone())]).await;
+            if let Err(e) = block_store.put(&[(block.block_hash, block.clone())]).await {
+                log.error(
+                    source,
+                    &format!(
+                        "Failed to store block {}, skipping: {e}",
+                        block.block_hash.to_hex()
+                    ),
+                );
+                continue;
+            }
         }
 
         let mut parents = Vec::new();
@@ -442,7 +451,7 @@ async fn validated_blocks(
 /// `BlockReceiver.apply`). Returns the queue of block hashes ready for validation.
 pub fn apply(
     state: Arc<tokio::sync::Mutex<BlockReceiverState<BlockHash>>>,
-    incoming_blocks_rx: mpsc::UnboundedReceiver<BlockMessage>,
+    incoming_blocks_rx: mpsc::Receiver<BlockMessage>,
     finished_processing_rx: mpsc::UnboundedReceiver<BlockMessage>,
     conf_shard_name: String,
     block_store: BlockStore,

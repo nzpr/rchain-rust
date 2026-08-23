@@ -367,7 +367,7 @@ impl BlockApi for BlockApiImpl {
         depth: i32,
         listening_name: &Par,
     ) -> ApiErr<(Vec<DataWithBlockInfo>, i32)> {
-        if depth > self.max_depth_limit {
+        if depth < 0 || depth > self.max_depth_limit {
             return Err(format!(
                 "Your request on getListeningName depth {depth} exceed the max limit {}",
                 self.max_depth_limit
@@ -399,7 +399,7 @@ impl BlockApi for BlockApiImpl {
         depth: i32,
         listening_names: &[Par],
     ) -> ApiErr<(Vec<ContinuationsWithBlockInfo>, i32)> {
-        if depth > self.max_depth_limit {
+        if depth < 0 || depth > self.max_depth_limit {
             return Err(format!(
                 "Your request on getListeningNameContinuation depth {depth} exceed the max limit {}",
                 self.max_depth_limit
@@ -431,7 +431,13 @@ impl BlockApi for BlockApiImpl {
         start_block_number: i64,
         end_block_number: i64,
     ) -> ApiErr<Vec<LightBlockInfo>> {
-        if end_block_number - start_block_number > self.max_depth_limit as i64 {
+        let range = end_block_number.checked_sub(start_block_number).ok_or_else(|| {
+            format!(
+                "Your request startBlockNumber {start_block_number} and endBlockNumber {end_block_number} exceed the max limit {}",
+                self.max_depth_limit
+            )
+        })?;
+        if range > self.max_depth_limit as i64 {
             return Err(format!(
                 "Your request startBlockNumber {start_block_number} and endBlockNumber {end_block_number} exceed the max limit {}",
                 self.max_depth_limit
@@ -458,10 +464,11 @@ impl BlockApi for BlockApiImpl {
         _show_justification_lines: bool,
     ) -> ApiErr<Vec<String>> {
         let dag = self.dag.get_representation().await;
-        let start_block_num = if start_block_number == 0 {
+        let start = start_block_number.max(0);
+        let start_block_num = if start == 0 {
             dag.latest_block_number()
         } else {
-            start_block_number as i64
+            start as i64
         };
         let depth_limited = if depth <= 0 || depth > self.max_depth_limit {
             self.max_depth_limit

@@ -346,8 +346,15 @@ where
         Err(e) => return Err(ValidateError::Internal(format!("neglectedInvalidBlock failed: {e}"))),
     }
 
-    // Phlo price (best-effort; treated as valid on failure, per the Scala recoverWith).
-    let _ = crate::validate::phlo_price(block, min_phlo_price);
+    // Phlo price. The Scala treated this best-effort (recoverWith); here a low-cost deploy is a
+    // validation failure rather than being silently discarded.
+    let status = crate::validate::phlo_price(block, min_phlo_price);
+    if !status.is_valid() {
+        return Err(ValidateError::ValidationFailed(
+            mark_failed(&block_metadata),
+            status,
+        ));
+    }
 
     // Build/cache the block index.
     let _ = BlockIndex::get_block_index(runtime, block_store, block.block_hash).await;

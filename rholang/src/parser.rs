@@ -233,6 +233,11 @@ fn lex(src: &str) -> Result<Vec<Tok>, RholangError> {
 /// any real rholang term yet well within a 2 MiB async-thread stack.
 const MAX_PARSE_DEPTH: usize = 128;
 
+/// Maximum number of terms folded into a single left-leaning operator chain (`a+b+c+…`). The
+/// recursion-depth guard (`with_depth`) never triggers on such a flat chain, so a separate bound is
+/// needed to keep the resulting AST depth (and the normalizer/sort/eval recursion into it) bounded.
+const MAX_CHAIN_LENGTH: usize = 512;
+
 struct Parser {
     toks: Vec<Tok>,
     pos: usize,
@@ -263,6 +268,16 @@ impl Parser {
         let result = f(self);
         self.depth -= 1;
         result
+    }
+    /// Count one operator in a flat chain, rejecting once `MAX_CHAIN_LENGTH` is exceeded.
+    fn chain_link(&mut self, count: &mut usize) -> Result<(), RholangError> {
+        *count += 1;
+        if *count > MAX_CHAIN_LENGTH {
+            return Err(RholangError::SyntaxError(
+                "operator chain too long".to_string(),
+            ));
+        }
+        Ok(())
     }
     fn eat_ident(&mut self, kw: &str) -> bool {
         if let Tok::Ident(id) = self.peek() {
@@ -299,7 +314,9 @@ impl Parser {
     fn parse_proc(&mut self) -> Result<Proc, RholangError> {
         self.with_depth(|p| {
             let mut left = p.parse_proc1()?;
+            let mut chain = 0;
             while p.peek() == &Tok::Pipe {
+                p.chain_link(&mut chain)?;
                 p.next();
                 let right = p.parse_proc1()?;
                 left = Proc::PPar(Box::new(left), Box::new(right));
@@ -465,11 +482,14 @@ impl Parser {
 
     fn parse_proc4(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc5()?;
+        let mut chain = 0;
         loop {
             if self.eat_ident("or") {
+                self.chain_link(&mut chain)?;
                 let right = self.parse_proc5()?;
                 left = Proc::POr(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::OrOr {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc5()?;
                 left = Proc::PShortOr(Box::new(left), Box::new(right));
@@ -482,11 +502,14 @@ impl Parser {
 
     fn parse_proc5(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc6()?;
+        let mut chain = 0;
         loop {
             if self.eat_ident("and") {
+                self.chain_link(&mut chain)?;
                 let right = self.parse_proc6()?;
                 left = Proc::PAnd(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::AndAnd {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc6()?;
                 left = Proc::PShortAnd(Box::new(left), Box::new(right));
@@ -499,16 +522,20 @@ impl Parser {
 
     fn parse_proc6(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc7()?;
+        let mut chain = 0;
         loop {
             if self.peek() == &Tok::EqEq {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc7()?;
                 left = Proc::PEq(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Neq {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc7()?;
                 left = Proc::PNeq(Box::new(left), Box::new(right));
             } else if self.eat_ident("matches") {
+                self.chain_link(&mut chain)?;
                 let right = self.parse_proc7()?;
                 left = Proc::PMatches(Box::new(left), Box::new(right));
             } else {
@@ -520,20 +547,25 @@ impl Parser {
 
     fn parse_proc7(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc8()?;
+        let mut chain = 0;
         loop {
             if self.peek() == &Tok::Lt {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc8()?;
                 left = Proc::PLt(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Lte {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc8()?;
                 left = Proc::PLte(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Gt {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc8()?;
                 left = Proc::PGt(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Gte {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc8()?;
                 left = Proc::PGte(Box::new(left), Box::new(right));
@@ -546,20 +578,25 @@ impl Parser {
 
     fn parse_proc8(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc9()?;
+        let mut chain = 0;
         loop {
             if self.peek() == &Tok::Plus {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc9()?;
                 left = Proc::PAdd(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Minus {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc9()?;
                 left = Proc::PMinus(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::PlusPlus {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc9()?;
                 left = Proc::PPlusPlus(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::MinusMinus {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc9()?;
                 left = Proc::PMinusMinus(Box::new(left), Box::new(right));
@@ -572,20 +609,25 @@ impl Parser {
 
     fn parse_proc9(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc10()?;
+        let mut chain = 0;
         loop {
             if self.peek() == &Tok::Star {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc10()?;
                 left = Proc::PMult(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Percent {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc10()?;
                 left = Proc::PMod(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::PercentPercent {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc10()?;
                 left = Proc::PPercentPercent(Box::new(left), Box::new(right));
             } else if self.peek() == &Tok::Slash {
+                self.chain_link(&mut chain)?;
                 self.next();
                 let right = self.parse_proc10()?;
                 left = Proc::PDiv(Box::new(left), Box::new(right));
@@ -613,8 +655,10 @@ impl Parser {
 
     fn parse_proc11(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc12()?;
+        let mut chain = 0;
         loop {
             if self.peek() == &Tok::Dot {
+                self.chain_link(&mut chain)?;
                 self.next();
                 if let Tok::Ident(method) = self.next() {
                     self.expect(Tok::LParen)?;
@@ -668,7 +712,9 @@ impl Parser {
 
     fn parse_proc14(&mut self) -> Result<Proc, RholangError> {
         let mut left = self.parse_proc15()?;
+        let mut chain = 0;
         while self.peek() == &Tok::Conj {
+            self.chain_link(&mut chain)?;
             self.next();
             let right = self.parse_proc15()?;
             left = Proc::PConjunction(Box::new(left), Box::new(right));
@@ -704,7 +750,9 @@ impl Parser {
         };
         // Method calls (`receiver.method` / `receiver.method(args...)`) bind tighter than the
         // operators above and chain left-to-right.
+        let mut chain = 0;
         while self.peek() == &Tok::Dot {
+            self.chain_link(&mut chain)?;
             self.next();
             let method = self.parse_source_var()?;
             let args = if self.peek() == &Tok::LParen {

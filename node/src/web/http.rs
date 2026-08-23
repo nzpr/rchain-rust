@@ -201,6 +201,16 @@ async fn api_get_transaction(
     State(state): State<HttpState>,
     Path(hash): Path<String>,
 ) -> Response {
+    // Reporting is disabled by default (`api-server.enable-reporting = false`); the route answers
+    // 404 unless explicitly enabled (M6 — the flag was read but never enforced for the transaction
+    // route).
+    if !state.enable_reporting {
+        return (StatusCode::NOT_FOUND, ()).into_response();
+    }
+    if !state.deploy_rate_limiter.allow() {
+        return (StatusCode::TOO_MANY_REQUESTS, Json("deploy rate limit exceeded".to_string()))
+            .into_response();
+    }
     json_result(state.web_api.get_transaction(&hash).await)
 }
 
@@ -465,6 +475,10 @@ async fn reporting_trace(
     if !state.enable_reporting {
         return (StatusCode::NOT_FOUND, ()).into_response();
     }
+    if !state.deploy_rate_limiter.allow() {
+        return (StatusCode::TOO_MANY_REQUESTS, Json("deploy rate limit exceeded".to_string()))
+            .into_response();
+    }
     // Validate-on-ingress: a malformed block hash (non-hex / wrong length) must be a 400, not a
     // panic in `BlockHash::from_hex`.
     let hash = match BlockHash::try_from_hex(&query.block_hash) {
@@ -546,9 +560,11 @@ pub fn router(state: HttpState) -> Router {
 pub fn admin_router(state: AdminState) -> Router {
     Router::new()
         .route("/api/propose", post(admin_propose))
-        .route("/api/v1/propose", get(admin_propose))
+        .route("/api/v1/propose", post(admin_propose))
         .route("/api/v1/openapi.json", get(api_v1_openapi))
-        .layer(CorsLayer::permissive())
+        // Restrictive CORS (no allowed origins) so a browser on another origin cannot trigger
+        // block production via the loopback admin server (H-3).
+        .layer(CorsLayer::new())
         .with_state(state)
 }
 

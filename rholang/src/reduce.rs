@@ -24,7 +24,7 @@ use crate::accounting::{CostAccounting, Costs};
 use crate::env::Env;
 use crate::errors::RholangError;
 use crate::matcher::spatial_match_result;
-use crate::substitute::{substitute_par, substitute_par_and_charge};
+use crate::substitute::substitute_par_and_charge;
 
 fn union_free(a: Vec<i32>, b: Vec<i32>) -> Vec<i32> {
     let mut set: BTreeSet<i32> = a.into_iter().collect();
@@ -278,6 +278,9 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
                     if *r == 0 {
                         return Err(RholangError::ReduceError("/ by zero".to_string()));
                     }
+                    if *l == i64::MIN && *r == -1 {
+                        return Err(RholangError::ReduceError("division overflow".to_string()));
+                    }
                     cost.charge(Costs::division_cost())?;
                     Ok(Expr::GInt(l / r))
                 }
@@ -311,6 +314,9 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
                 (Expr::GInt(l), Expr::GInt(r)) => {
                     if *r == 0 {
                         return Err(RholangError::ReduceError("/ by zero".to_string()));
+                    }
+                    if *l == i64::MIN && *r == -1 {
+                        return Err(RholangError::ReduceError("modulo overflow".to_string()));
                     }
                     cost.charge(Costs::modulo_cost())?;
                     Ok(Expr::GInt(l % r))
@@ -1375,7 +1381,8 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 SortedProc::new(q),
             ));
         }
-        let subst_body = substitute_par(&receive.body, 0, &env.shift(receive.bind_count))?;
+        let subst_body =
+            substitute_par_and_charge(&receive.body, 0, &env.shift(receive.bind_count), cost)?;
         self.consume(
             &binds,
             ParWithRandom {
@@ -1663,6 +1670,24 @@ mod tests {
             Box::new(from_expr(Expr::GBigInt(BigInt::from(0i64)))),
         ));
         assert!(eval_single_expr(&big_mod_zero, &e, &cost).is_err());
+    }
+
+    #[test]
+    fn division_and_modulo_overflow_are_errors() {
+        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let e = Env::new();
+
+        let div_overflow = from_expr(Expr::EDiv(
+            Box::new(from_expr(Expr::GInt(i64::MIN))),
+            Box::new(from_expr(Expr::GInt(-1))),
+        ));
+        assert!(eval_single_expr(&div_overflow, &e, &cost).is_err());
+
+        let mod_overflow = from_expr(Expr::EMod(
+            Box::new(from_expr(Expr::GInt(i64::MIN))),
+            Box::new(from_expr(Expr::GInt(-1))),
+        ));
+        assert!(eval_single_expr(&mod_overflow, &e, &cost).is_err());
     }
 
     #[test]

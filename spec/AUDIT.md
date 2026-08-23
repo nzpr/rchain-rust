@@ -455,3 +455,80 @@ violations (the `expect(Tok::…)` parser exclusion was widened to cover the `wi
 overflowed the 2 MiB test-thread stack during recursion; 128 is stack-safe and far deeper than any
 real rholang term).
 
+---
+
+## 12. Security remediation (pass 3)
+
+A third, fresh red-team pass (attacker's-eye over crypto / interpreter / P2P / consensus-storage /
+HTTP-config) surfaced ~40 new findings beyond §5/§10/§11. This section records the remediation. Each
+finding is either **fixed** (code change + regression test) or **documented** (assessed faithful /
+residual — the accepted outcome for changes that would otherwise break the ρ-calculus/Scala oracle or
+consensus determinism). The machine gate (`tools/audit-type-system.sh`) and clippy were already clean;
+these are logic/crypto/resource-exhaustion/identity-binding issues, not memory-safety issues.
+
+Decisions (confirmed): ECDSA high-S malleability is fixed by **normalizing `s → low-S` at the deploy
+dedup key** (verify semantics unchanged); the P2P `header.sender`-not-bound-to-TLS gap is addressed by
+**pragmatic mitigation** (bounds + endpoint validation) with the residual documented; changes are
+committed and pushed to `origin/dev`.
+
+### Fixed (bug fixes)
+
+| # | Site | Fix |
+|---|---|---|
+| S1 | `crypto/util/certificate_helper.rs` | `encode_signature_rs_to_der` rejects RS length ≠ 64; `der_integer` guards empty input — closes the `secp256k1:eth` 1-byte-sig remote panic. |
+| S2 | `crypto/util/certificate_helper.rs` | `decode_signature_der_to_rs` validates `end`/integer lengths **before** slicing — no panic on crafted DER. |
+| S3 | `crypto/encryption/curve25519.rs` | `to_public`/`secret_key_from` return `CryptoError::InvalidLength` instead of `copy_from_slice` panic. |
+| S4 | `crypto/signatures/signatures_alg.rs` | `normalize_signature_low_s` (DER + raw-RS) canonicalizes `s → n−s` when high; idempotent, never panics. |
+| S5 | `rholang/src/reduce.rs` | `EDiv`/`EMod` reject `l == i64::MIN && r == -1` — no `MIN / -1` / `MIN % -1` panic. |
+| S6 | `rholang/src/accounting.rs` | `charge` clamps the balance at 0 on exhaustion (no negative cell). |
+| S7 | `rholang/src/reduce.rs` | Receive continuation body uses `substitute_par_and_charge` (deviation: Scala charges). |
+| S8 | `rholang/src/parser.rs` | `MAX_CHAIN_LENGTH = 512` guard on the ten flat operator/pipe/conjunction/method chains — no depth-N left-leaning AST. |
+| S9 | `comm/transport/grpc_transport_receiver.rs` | `MAX_CONCURRENT_STREAMS = 1024` semaphore on the inbound `stream` RPC. |
+| S10 | `comm/transport/grpc_transport_client.rs` | client `stream` wrapped in `DEFAULT_SEND_TIMEOUT`; `channels` cache capped (`MAX_CACHED_CHANNELS = 1024`). |
+| S11 | `comm/rp/connect.rs` + `handle_messages.rs` | `connections` capped (`MAX_CONNECTIONS = 1024`); residual identity-binding gap documented. |
+| S12 | `comm/discovery/grpc_kademlia_rpc_server.rs` | reject private/loopback/link-local/unspecified discovery endpoints (SSRF). |
+| S13 | `comm/upnp/gateway.rs` | `is_safe_url` rejects loopback/link-local/unspecified/multicast (allows RFC1918); bodies capped at 64 KiB. |
+| S14 | `comm/who_am_i.rs` | external-IP body capped at 8 KiB. |
+| S15 | `casper/multi_parent_casper.rs` | `phlo_price` result is honored — below-min-price blocks rejected (deviation from Scala `recoverWith`). |
+| S16 | `block-storage/dag/metadata_store.rs` | `validate_dag_state` returns `Result` instead of `assert!`; propagated at both call sites. |
+| S17 | `casper/blocks/block_receiver.rs` | block-store `put` error is logged and the block skipped. |
+| S18 | `casper/engine/node_running.rs` + `node/runtime/node_runtime.rs` | `incoming_blocks` is a bounded channel (`MAX_PENDING_BLOCKS = 1024`, `try_send`); receiver side re-typed. |
+| S19 | `casper/blocks/block_processor.rs` | validation-failed / internal-error blocks are no longer re-broadcast. |
+| S20 | `casper/block_random_seed.rs` | `bytes.len() as u8` → `u8::try_from` (no truncation). |
+| S21 | `casper/api/block_api_impl.rs` | negative `depth` rejected (listen-at-name); `visualize_dag` clamps `start_block_number ≥ 0`; block-range check uses `checked_sub`. |
+| S22 | `casper/api/block_report_api.rs` | `block_lock_map` bounded (`MAX_LOCKED_BLOCKS = 4096`, oldest evicted). |
+| S23 | `casper/validate.rs` | `repeat_deploy` keys the dedup set on `normalize_signature_low_s` (malleability). |
+| S24 | `node/api/grpc/tonic.rs` + `node/web/{http,transaction}.rs` | `getEventByHash` and `/api/transactions/:hash` gated on `enable-reporting`. |
+| S25 | `node/web/http.rs` | `/api/v1/propose` `GET → POST`; admin CORS restricted; report/replay routes rate-limited. |
+| S26 | `node/configuration/configuration.rs` | `data_dir` escaped before HOCON interpolation. |
+
+### Documented (assessed faithful / residual)
+
+- **ECDSA/Ed25519 high-S acceptance** (`crypto/signatures/{secp256k1,ed25519}.rs`) — verify stays
+  faithful to the Scala/libsecp256k1 oracle; malleability is neutralized at the dedup key (S4/S23).
+- **Synchronous COMM recursion** (`rholang/reduce.rs`) — mirrors the Scala synchronous interpreter; a
+  depth cap would be a semantic deviation. Residual: a funded deployer can still overflow the stack
+  before gas exhaustion.
+- **Matcher CPU uncharged** (`rholang/reduce.rs:449,1491`) — bounded by `MAX_SPLIT_COMBINATIONS`.
+- **Deployer-declared `phlo_limit` / `i32::MAX` default pool** (`rholang/runtime.rs`) — gas is
+  economic, not a hard bound.
+- **Cost-metadata arithmetic overflow** (`rholang/accounting.rs`) — deploy-size-bounded.
+- **Validation-failed block wedging its sender's seq** (`casper/dag.rs`) — liveness edge; changing the
+  equivocation gate risks safety.
+- **Genesis-bonds path trusts peer bonds** (`casper/interpreter_util.rs`) — cross-checked by
+  `bonds_cache`.
+- **Unpruned block store / DAG map** — inherent chain history; the ingress queue is bounded (S18).
+- **`--validator-private-key` visible in `/proc/<pid>/cmdline`** — config design.
+- **Error-body echo** (`node/web/http.rs`) — mostly attacker-input reflection.
+- **Fixed-window rate limiter burst** (`shared/rate_limiter.rs`) — per-server, not per-source.
+- **Missing key zeroization / `Debug` on `PrivateKey`** — deferred hygiene.
+
+### Verification
+
+- `cargo check --workspace` — clean (only the pre-existing `nom v4.2.3` future-incompat notice).
+- `tools/audit-type-system.sh` — zero hard violations (`panic`/`unsafe`/`silent`).
+- `cargo test --lib` for `rchain-crypto` (52), `rchain-comm` (59), `rchain-casper` (110),
+  `rchain-block-storage` (17), `rchain-rholang` (72) — all green, including the new regression tests
+  (`division_and_modulo_overflow_are_errors`, `normalize_signature_low_s_*`,
+  `verify_short_eth_signature_returns_false_without_panicking`).
+

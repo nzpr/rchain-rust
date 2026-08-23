@@ -71,17 +71,22 @@ impl BlockRandomSeed {
     }
 
     /// Serialize the seed (port of the scodec `codecBlockRandomSeed`).
-    pub fn encode(&self) -> Vec<u8> {
-        let mut bytes = var_size(self.shard_id.as_bytes());
+    pub fn encode(&self) -> Result<Vec<u8>, String> {
+        let mut bytes = var_size(self.shard_id.as_bytes())?;
         bytes.extend(vlong_encode(self.block_number));
-        bytes.extend(var_size(self.sender.bytes()));
+        bytes.extend(var_size(self.sender.bytes())?);
         bytes.extend_from_slice(self.pre_state_hash.as_bytes());
-        bytes
+        Ok(bytes)
     }
 
     /// Derive the random generator from this seed (port of `randomGenerator(BlockRandomSeed)`).
     pub fn random_generator(&self) -> Blake2b512Random {
-        Blake2b512Random::from_init(&self.encode())
+        // `var_size`'s inputs (the ASCII shard id and the sender public key) are always far below
+        // 256 bytes, so the length prefix cannot overflow; `expect` documents that invariant.
+        let encoded = self
+            .encode()
+            .expect("block random seed components always fit a 1-byte length prefix");
+        Blake2b512Random::from_init(&encoded)
     }
 
     /// `randomGenerator(shardId, blockNumber, sender, preStateHash)`.
@@ -154,11 +159,13 @@ impl BlockRandomSeed {
 }
 
 /// `variableSizeBytes(uint8, X)` — a 1-byte length prefix followed by the bytes.
-fn var_size(bytes: &[u8]) -> Vec<u8> {
+fn var_size(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let len = u8::try_from(bytes.len())
+        .map_err(|_| format!("seed component too long for a 1-byte length prefix: {} bytes", bytes.len()))?;
     let mut out = Vec::with_capacity(bytes.len() + 1);
-    out.push(bytes.len() as u8);
+    out.push(len);
     out.extend_from_slice(bytes);
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -175,10 +182,15 @@ mod tests {
     #[test]
     fn seed_is_deterministic() {
         let seed = BlockRandomSeed::from_shard_id("root");
-        assert_eq!(seed.encode(), BlockRandomSeed::from_shard_id("root").encode());
+        assert_eq!(
+            seed.encode().unwrap(),
+            BlockRandomSeed::from_shard_id("root").encode().unwrap()
+        );
         assert_ne!(
-            seed.encode(),
-            BlockRandomSeed::new("root".to_string(), 1, PublicKey::new(vec![]), Blake2b256Hash::create(&[])).encode()
+            seed.encode().unwrap(),
+            BlockRandomSeed::new("root".to_string(), 1, PublicKey::new(vec![]), Blake2b256Hash::create(&[]))
+                .encode()
+                .unwrap()
         );
     }
 

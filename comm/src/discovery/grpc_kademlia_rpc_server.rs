@@ -17,6 +17,7 @@ use tonic::{Request, Response, Status};
 
 use crate::discovery::{to_node, to_peer_node};
 use crate::peer_node::PeerNode;
+use crate::rp::handle_messages::is_local_address;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
@@ -58,7 +59,11 @@ impl KademliaRpcService for GrpcKademliaRpcServer {
         if ping.network_id == self.network_id {
             if let Some(sender) = ping.sender.as_ref() {
                 if let Ok(peer) = to_peer_node(sender) {
-                    (self.ping_handler)(peer).await;
+                    // Reject attacker-chosen private/loopback/link-local/unspecified hosts before
+                    // they reach the routing table (SSRF guard; see FIX 5).
+                    if !is_local_address(&peer.endpoint.host) {
+                        (self.ping_handler)(peer).await;
+                    }
                 }
             }
         }
@@ -77,11 +82,13 @@ impl KademliaRpcService for GrpcKademliaRpcServer {
         let lookup = request.into_inner();
         let nodes = if lookup.network_id == self.network_id {
             match lookup.sender.as_ref().and_then(|s| to_peer_node(s).ok()) {
-                Some(sender) => {
+                // Reject attacker-chosen private/loopback/link-local/unspecified hosts before they
+                // reach the routing table (SSRF guard; see FIX 5).
+                Some(sender) if !is_local_address(&sender.endpoint.host) => {
                     let peers = (self.lookup_handler)(sender, lookup.id).await;
                     peers.iter().map(to_node).collect()
                 }
-                None => Vec::new(),
+                _ => Vec::new(),
             }
         } else {
             Vec::new()
@@ -94,6 +101,10 @@ impl KademliaRpcService for GrpcKademliaRpcServer {
 }
 
 /// Serve the Kademlia RPC on the given port (plaintext).
+///
+/// Residual (documented, not fixed): the discovery service remains plaintext on `0.0.0.0`. The
+/// SSRF guard above rejects private/loopback/link-local/unspecified inbound peer hosts, but the
+/// transport itself is still unauthenticated and unencrypted.
 pub async fn serve(addr: SocketAddr, service: GrpcKademliaRpcServer) -> Result<(), String> {
     tonic::transport::Server::builder()
         .add_service(KademliaRpcServiceServer::new(service))

@@ -43,3 +43,18 @@ impl SignaturesAlg for Secp256k1Eth {
         Secp256k1.sig_length()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_short_eth_signature_returns_false_without_panicking() {
+        let data = b"data";
+        let pub_key = [0u8; 33];
+        // A 1-byte and a 31-byte RS signature must be rejected by the DER encoder without
+        // panicking (previously `split_at` on a short slice reached `der_integer(&[])`).
+        assert!(!Secp256k1Eth.verify(data, &[0u8], &pub_key));
+        assert!(!Secp256k1Eth.verify(data, &[0u8; 31], &pub_key));
+    }
+}

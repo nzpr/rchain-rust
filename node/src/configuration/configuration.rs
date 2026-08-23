@@ -119,11 +119,22 @@ pub fn check_dev_mode(node_conf: NodeConf) -> NodeConf {
     }
 }
 
+/// Escape a string for embedding inside a quoted HOCON string value: backslash-escape `\` and `"`,
+/// and strip newlines/carriage returns so a `data_dir` value cannot break out of the quoted string
+/// or inject additional config lines.
+fn escape_hocon_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "")
+        .replace('\r', "")
+}
+
 /// Parse the bundled `defaults.conf` with `default-data-dir` injected (port of the
 /// `ConfigSource.resources("defaults.conf").withFallback(...)` default source).
 pub fn parse_defaults(data_dir: &str) -> Result<Hocon, String> {
     let defaults = include_str!("defaults.conf");
-    let combined = format!("default-data-dir = \"{data_dir}\"\n{defaults}");
+    let escaped = escape_hocon_string(data_dir);
+    let combined = format!("default-data-dir = \"{escaped}\"\n{defaults}");
     hocon::HoconLoader::new()
         .load_str(&combined)
         .map_err(|e| e.to_string())?

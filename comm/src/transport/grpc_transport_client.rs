@@ -30,6 +30,11 @@ use crate::transport::transport_layer::TransportLayer;
 /// The default send timeout (port of `GrpcTransportClient.DefaultSendTimeout`).
 pub const DEFAULT_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Cap on the number of cached per-peer TLS channels. The cache never evicted, so a peer could grow
+/// it without bound (one entry per distinct `PeerNode`). At capacity the oldest entry is evicted
+/// before a new one is inserted.
+const MAX_CACHED_CHANNELS: usize = 1024;
+
 /// The gRPC transport client (port of `GrpcTransportClient`).
 #[derive(Clone)]
 pub struct GrpcTransportClient {
@@ -91,6 +96,12 @@ impl GrpcTransportClient {
         if let Some(channel) = channels.get(peer) {
             return Ok(channel.clone());
         }
+        // Bound the cache: when full and the key is new, evict an arbitrary (first) entry.
+        if channels.len() >= MAX_CACHED_CHANNELS {
+            if let Some(oldest) = channels.keys().next().cloned() {
+                channels.remove(&oldest);
+            }
+        }
         let channel = self.create_channel(peer).await?;
         channels.insert(peer.clone(), channel.clone());
         Ok(channel)
@@ -130,14 +141,20 @@ impl TransportLayer for GrpcTransportClient {
                     };
                     let mut client = TransportLayerClient::new(channel)
                         .max_decoding_message_size(this.max_message_size);
-                    let _ = grpc_transport::stream(
-                        &mut client,
-                        &peer,
-                        &this.network_id,
-                        &blob,
-                        this.packet_chunk_size,
+                    // Mirror `send`: bound the stream RPC with the same timeout so a stalled peer
+                    // cannot hold a stream task open indefinitely.
+                    let _ = tokio::time::timeout(
+                        DEFAULT_SEND_TIMEOUT,
+                        grpc_transport::stream(
+                            &mut client,
+                            &peer,
+                            &this.network_id,
+                            &blob,
+                            this.packet_chunk_size,
+                        ),
                     )
-                    .await;
+                    .await
+                    .map_err(|_| CommError::TimeOut);
                 })
             })
             .collect();

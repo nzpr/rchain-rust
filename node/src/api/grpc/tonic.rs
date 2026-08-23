@@ -800,6 +800,12 @@ impl DeployService for DeployGrpcServiceV1 {
         &self,
         request: Request<wire::ReportQuery>,
     ) -> Result<Response<wire::EventInfoResponse>, Status> {
+        // Reporting is disabled by default (`api-server.enable-reporting = false`); the RPC answers
+        // NotFound unless explicitly enabled (M6 — the flag was read but never enforced for the
+        // event-report RPC).
+        if !self.enable_reporting {
+            return Err(Status::not_found("reporting is disabled"));
+        }
         let req = request.into_inner();
         let r = self
             .get_event_by_hash(&ReportQuery {

@@ -244,6 +244,11 @@ pub async fn handle_finalized_fringe_request(
     log.info(source, &format!("FinalizedFringe sent to {peer}"));
 }
 
+/// Bound on the inbound block queue. The channel is created upstream (node crate) with
+/// `tokio::sync::mpsc::channel(MAX_PENDING_BLOCKS)`; `NodeRunning` only holds the bounded sender and
+/// drops blocks (via `try_send`) rather than blocking the inbound task when it is full.
+pub const MAX_PENDING_BLOCKS: usize = 1024;
+
 /// The running-state engine (port of the `NodeRunning` class): message handling and the
 /// store-items (LFS state-sync) serving are ported.
 pub struct NodeRunning<E: RSpaceExporter> {
@@ -255,7 +260,7 @@ pub struct NodeRunning<E: RSpaceExporter> {
     log: Arc<dyn Log>,
     log_source: LogSource,
     validator_id: Option<ValidatorIdentity>,
-    incoming_blocks: tokio::sync::mpsc::UnboundedSender<BlockMessage>,
+    incoming_blocks: tokio::sync::mpsc::Sender<BlockMessage>,
     block_request_limit: Arc<PeerRateLimiter>,
     exporter: E,
 }
@@ -270,7 +275,7 @@ impl<E: RSpaceExporter> NodeRunning<E> {
         block_retriever: Arc<BlockRetriever>,
         log: Arc<dyn Log>,
         validator_id: Option<ValidatorIdentity>,
-        incoming_blocks: tokio::sync::mpsc::UnboundedSender<BlockMessage>,
+        incoming_blocks: tokio::sync::mpsc::Sender<BlockMessage>,
         exporter: E,
     ) -> Self {
         NodeRunning {
@@ -387,11 +392,20 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                         ),
                     );
                 } else {
-                    let _ = self.incoming_blocks.send(b.clone());
-                    self.log.debug(
-                        self.log_source,
-                        &format!("Incoming BlockMessage #{} from {}", b.block_number, peer.endpoint.host),
-                    );
+                    if self.incoming_blocks.try_send(b.clone()).is_err() {
+                        self.log.warn(
+                            self.log_source,
+                            &format!(
+                                "Block ingress queue full or closed; dropping block {} from {peer}",
+                                b.block_hash.to_hex()
+                            ),
+                        );
+                    } else {
+                        self.log.debug(
+                            self.log_source,
+                            &format!("Incoming BlockMessage #{} from {}", b.block_number, peer.endpoint.host),
+                        );
+                    }
                 }
             }
             CasperMessage::BlockRequest(br) => {
@@ -435,7 +449,15 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                         if let Some(block) =
                             self.block_store.get(&[hash]).await.unwrap_or_default().into_iter().flatten().next()
                         {
-                            let _ = self.incoming_blocks.send(block);
+                            if self.incoming_blocks.try_send(block).is_err() {
+                                self.log.warn(
+                                    self.log_source,
+                                    &format!(
+                                        "Block ingress queue full or closed; dropping block {} from {peer}",
+                                        hash.to_hex()
+                                    ),
+                                );
+                            }
                         }
                     }
                 } else {

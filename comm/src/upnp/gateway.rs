@@ -6,7 +6,7 @@
 //! `roxmltree`.
 
 use std::io::{Read, Write};
-use std::net::{TcpStream, UdpSocket};
+use std::net::{IpAddr, TcpStream, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,6 +18,9 @@ const SSDP_MULTICAST: &str = "239.255.255.250:1900";
 const IGD_DEVICE_TYPE: &str = "urn:schemas-upnp-org:device:InternetGatewayDevice:1";
 const WAN_IP_SERVICE: &str = "urn:schemas-upnp-org:service:WANIPConnection:1";
 const WAN_PPP_SERVICE: &str = "urn:schemas-upnp-org:service:WANPPPConnection:1";
+/// Cap on HTTP response bodies fetched during discovery (SSDP device descriptions and SOAP
+/// responses). A malicious or broken endpoint must not force an unbounded allocation.
+const MAX_HTTP_BODY: u64 = 64 * 1024;
 
 // -------------------------------------------------------------------------------------------------
 // SSDP discovery
@@ -92,8 +95,51 @@ fn split_url(url: &str) -> Option<(String, u16, String)> {
     Some((host, port, format!("/{path}")))
 }
 
+/// Whether a discovery URL is safe to contact: the scheme must be plain http(s) and the host must
+/// not be an SSRF-unsafe address (loopback / link-local / unspecified / multicast). `LOCATION`/
+/// `controlURL` are taken from attacker-influenced SSDP responses, so this guards against using
+/// discovery to reach the node's own loopback or the cloud-metadata endpoint
+/// (`http://169.254.169.254/...`). Private (RFC1918) addresses are deliberately allowed — a UPnP
+/// gateway lives on the local network by definition.
+fn is_safe_url(url: &str) -> bool {
+    let rest = match url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    {
+        Some(r) => r,
+        None => return false,
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.split(':').next().unwrap_or("");
+    !is_ssrf_unsafe_host(host)
+}
+
+/// Whether a host is an SSRF target: loopback, link-local (incl. cloud metadata), unspecified, or
+/// multicast. Private (RFC1918) addresses are NOT unsafe — they are where a legitimate gateway sits.
+fn is_ssrf_unsafe_host(host: &str) -> bool {
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            let o = ip.octets();
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                || (o[0] == 169 && o[1] == 254) // link-local 169.254/16
+        }
+        Ok(IpAddr::V6(ip)) => {
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                || (ip.segments()[0] & 0xfe00) == 0xfe80 // link-local fe80::/10
+        }
+        Err(_) => false, // hostname, not an IP-based SSRF target
+    }
+}
+
 /// HTTP GET returning the response body.
 fn http_get(url: &str) -> Option<String> {
+    if !is_safe_url(url) {
+        return None;
+    }
     let (host, port, path) = split_url(url)?;
     let mut stream = TcpStream::connect((host.as_str(), port)).ok()?;
     stream
@@ -102,7 +148,7 @@ fn http_get(url: &str) -> Option<String> {
     let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).ok()?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).ok()?;
+    stream.take(MAX_HTTP_BODY).read_to_end(&mut response).ok()?;
     let response = String::from_utf8_lossy(&response);
     Some(response.split("\r\n\r\n").nth(1)?.to_string())
 }
@@ -126,6 +172,9 @@ fn resolve_url(location: &str, control_url: &str) -> Option<String> {
 
 /// SOAP POST returning the response body (port of the weupnp SOAP client).
 fn soap_post(control_url: &str, service_type: &str, action: &str, args: &str) -> Option<String> {
+    if !is_safe_url(control_url) {
+        return None;
+    }
     let (host, port, path) = split_url(control_url)?;
     let body = format!(
         "<?xml version=\"1.0\"?>\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{service_type}\">{args}</u:{action}></s:Body></s:Envelope>"
@@ -140,7 +189,7 @@ fn soap_post(control_url: &str, service_type: &str, action: &str, args: &str) ->
         .ok()?;
     stream.write_all(request.as_bytes()).ok()?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).ok()?;
+    stream.take(MAX_HTTP_BODY).read_to_end(&mut response).ok()?;
     let response = String::from_utf8_lossy(&response);
     Some(response.split("\r\n\r\n").nth(1)?.to_string())
 }

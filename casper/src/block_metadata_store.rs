@@ -30,7 +30,7 @@ impl BlockMetadataStore {
             .iter()
             .map(|(hash, meta)| (*hash, block_metadata_to_info(meta)))
             .collect();
-        let dag_state = recreate_in_memory_state(&info_map);
+        let dag_state = recreate_in_memory_state(&info_map)?;
         Ok(BlockMetadataStore {
             store,
             dag_state: tokio::sync::RwLock::new(dag_state),
@@ -43,7 +43,7 @@ impl BlockMetadataStore {
         {
             let mut state = self.dag_state.write().await;
             *state = add_block_to_dag_state(&info, &state);
-            validate_dag_state(&state);
+            validate_dag_state(&state)?;
         }
         self.store.put(&[(block.block_hash, block)]).await?;
         Ok(())

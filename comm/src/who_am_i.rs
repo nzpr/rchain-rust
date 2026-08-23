@@ -13,6 +13,9 @@ use crate::peer_node::{NodeIdentifier, PeerNode};
 
 const AMAZON: &str = "http://checkip.amazonaws.com";
 const WHAT_IS_MY_IP: &str = "http://bot.whatismyipaddress.com";
+/// Cap on the external-IP response body. A malicious or broken endpoint must not force an unbounded
+/// allocation while the first body line is parsed.
+const MAX_IP_BODY: u64 = 8 * 1024;
 
 /// Fetch a local peer node, guessing the external IP when `host` is absent (port of
 /// `fetchLocalPeerNode`).
@@ -134,7 +137,7 @@ fn check_from_real(from: &str) -> Option<String> {
     let request = format!("GET /{path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).ok()?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).ok()?;
+    stream.take(MAX_IP_BODY).read_to_end(&mut response).ok()?;
     let response = String::from_utf8_lossy(&response);
     let body = response.split("\r\n\r\n").nth(1)?;
     let ip = body.lines().next()?.trim();

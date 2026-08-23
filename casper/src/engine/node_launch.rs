@@ -181,7 +181,7 @@ async fn create_store_broadcast_genesis(
 #[allow(clippy::too_many_arguments)]
 pub async fn apply<I: RSpaceImporter, E: RSpaceExporter>(
     mut packet_rx: mpsc::Receiver<PeerMessage>,
-    incoming_blocks: mpsc::UnboundedSender<BlockMessage>,
+    incoming_blocks: mpsc::Sender<BlockMessage>,
     conf: CasperConf,
     trim_state: bool,
     // The store-items response is served unconditionally; `disable_state_exporter` would gate it,

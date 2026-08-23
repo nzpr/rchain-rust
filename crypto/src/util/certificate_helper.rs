@@ -34,11 +34,10 @@ pub fn public_address(input: &[u8]) -> Vec<u8> {
 
 /// Encode a raw 64-byte RS signature as a DER `SEQUENCE { INTEGER r, INTEGER s }`.
 pub fn encode_signature_rs_to_der(signature_rs: &[u8]) -> Result<Vec<u8>, String> {
-    if signature_rs.is_empty() {
-        return Err("Input array must not be empty".to_string());
+    if signature_rs.len() != 64 {
+        return Err("Input array must have length 64".to_string());
     }
-    let taken = &signature_rs[..signature_rs.len().min(64)];
-    let (r, s) = taken.split_at(taken.len().min(32));
+    let (r, s) = signature_rs.split_at(32);
 
     let r_enc = der_integer(r);
     let s_enc = der_integer(s);
@@ -65,11 +64,17 @@ pub fn decode_signature_der_to_rs(signature_der: &[u8]) -> Result<Vec<u8>, Strin
     }
     let (seq_len, mut pos) = read_length(signature_der, 1)?;
     let end = pos + seq_len;
+    if end > signature_der.len() {
+        return Err("Input array is not valid DER message format".to_string());
+    }
 
     if signature_der.get(pos) != Some(&0x02) {
         return Err("Input array is not valid DER message format".to_string());
     }
     let (r_len, r_pos) = read_length(signature_der, pos + 1)?;
+    if r_pos + r_len > signature_der.len() {
+        return Err("Input array is not valid DER message format".to_string());
+    }
     let r = &signature_der[r_pos..r_pos + r_len];
     pos = r_pos + r_len;
 
@@ -77,11 +82,10 @@ pub fn decode_signature_der_to_rs(signature_der: &[u8]) -> Result<Vec<u8>, Strin
         return Err("Input array is not valid DER message format".to_string());
     }
     let (s_len, s_pos) = read_length(signature_der, pos + 1)?;
-    let s = &signature_der[s_pos..s_pos + s_len];
-
-    if end > signature_der.len() {
+    if s_pos + s_len > signature_der.len() {
         return Err("Input array is not valid DER message format".to_string());
     }
+    let s = &signature_der[s_pos..s_pos + s_len];
 
     let mut out = Vec::with_capacity(64);
     out.extend_from_slice(&left_pad_32(r)?);
@@ -94,6 +98,10 @@ fn der_integer(unsigned: &[u8]) -> Vec<u8> {
     let mut bytes = unsigned;
     while bytes.len() > 1 && bytes[0] == 0 {
         bytes = &bytes[1..];
+    }
+    if bytes.is_empty() {
+        // A zero-length integer has no significant bytes; encode it as the integer 0.
+        return vec![0x00];
     }
     let mut out = Vec::with_capacity(bytes.len() + 1);
     if bytes[0] & 0x80 != 0 {

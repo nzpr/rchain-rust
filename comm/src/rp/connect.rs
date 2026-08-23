@@ -14,6 +14,11 @@ use crate::rp::protocol_helper;
 use crate::rp::rp_conf::RPConf;
 use crate::transport::transport_layer::TransportLayer;
 
+/// Bound on the size of the `connections` table. Inbound handshakes (`add_conn`) grow the table
+/// without bound; a peer that keeps asserting fresh node ids could otherwise exhaust memory. At the
+/// cap the oldest entries are evicted (mirrors the `PeerTable` bucket eviction style).
+pub const MAX_CONNECTIONS: usize = 1024;
+
 /// Shuffle the connections and take up to `max` (port of `ConnectionsCell.random`).
 pub fn random_connections(connections: &[PeerNode], max: usize) -> Vec<PeerNode> {
     let mut shuffled: Vec<PeerNode> = connections.to_vec();
@@ -23,6 +28,9 @@ pub fn random_connections(connections: &[PeerNode], max: usize) -> Vec<PeerNode>
 }
 
 /// Append `to_be_added`, first removing any existing peer with the same id (port of `addConn`).
+///
+/// The result is capped at [`MAX_CONNECTIONS`]; when the cap is exceeded the oldest (front) entries
+/// are evicted, so a peer asserting fresh node ids cannot grow the connection table without bound.
 pub fn add_conn(connections: &[PeerNode], to_be_added: &[PeerNode]) -> Vec<PeerNode> {
     let ids: HashSet<Vec<u8>> = to_be_added.iter().map(|p| p.key().to_vec()).collect();
     let mut rest: Vec<PeerNode> = connections
@@ -31,6 +39,9 @@ pub fn add_conn(connections: &[PeerNode], to_be_added: &[PeerNode]) -> Vec<PeerN
         .cloned()
         .collect();
     rest.extend(to_be_added.iter().cloned());
+    if rest.len() > MAX_CONNECTIONS {
+        rest.drain(..rest.len() - MAX_CONNECTIONS);
+    }
     rest
 }
 

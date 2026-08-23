@@ -100,6 +100,11 @@ const MAX_CONCURRENT_DISPATCH: usize = 1024;
 /// every subsequent inbound connection, so each handshake is spawned and its result fed through a
 /// bounded channel.
 const MAX_CONCURRENT_HANDSHAKES: usize = 128;
+/// Bound on concurrent inbound `stream` RPCs. The unary `send` path is bounded by
+/// `MAX_CONCURRENT_DISPATCH`; the streaming path was unbounded, so a peer could open arbitrarily
+/// many concurrent streams (each buffering chunks up to `max_stream_message_size`). Exhaustion
+/// returns `ResourceExhausted` without buffering.
+const MAX_CONCURRENT_STREAMS: usize = 1024;
 
 /// The inbound gRPC `TransportLayer` service (port of the `RoutingGrpcMonix.TransportLayer` impl).
 pub struct GrpcTransportReceiver {
@@ -109,6 +114,7 @@ pub struct GrpcTransportReceiver {
     dispatch: Arc<dyn Fn(Protocol) -> BoxFuture<CommunicationResponse> + Send + Sync>,
     handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
     dispatch_slots: Arc<tokio::sync::Semaphore>,
+    stream_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[async_trait]
@@ -153,6 +159,13 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
         &self,
         request: Request<Streaming<Chunk>>,
     ) -> Result<Response<TlResponse>, Status> {
+        // Bound concurrent stream RPCs (the unary `send` analog of `dispatch_slots`). The permit is
+        // held across the whole handler (including the chunk drain), so a peer cannot accumulate an
+        // unbounded number of in-flight streams.
+        let _stream_permit = match self.stream_slots.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => return Err(Status::resource_exhausted("stream dispatch queue full")),
+        };
         let mut incoming = request.into_inner();
         let mut chunks = Vec::new();
         // Enforce the size cap *while* draining, so a peer cannot stream an unbounded number of
@@ -258,6 +271,7 @@ pub async fn serve(
         dispatch,
         handle_streamed,
         dispatch_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DISPATCH)),
+        stream_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
     };
 
     tonic::transport::Server::builder()

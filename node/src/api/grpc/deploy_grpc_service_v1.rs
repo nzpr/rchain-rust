@@ -23,13 +23,19 @@ use rchain_shared::base16;
 pub struct DeployGrpcServiceV1 {
     block_api: Arc<dyn BlockApi>,
     block_report_api: Arc<BlockReportApi>,
+    pub(crate) enable_reporting: bool,
 }
 
 impl DeployGrpcServiceV1 {
-    pub fn new(block_api: Arc<dyn BlockApi>, block_report_api: Arc<BlockReportApi>) -> Self {
+    pub fn new(
+        block_api: Arc<dyn BlockApi>,
+        block_report_api: Arc<BlockReportApi>,
+        enable_reporting: bool,
+    ) -> Self {
         DeployGrpcServiceV1 {
             block_api,
             block_report_api,
+            enable_reporting,
         }
     }
 

@@ -74,26 +74,28 @@ pub fn add_block_to_dag_state(block: &BlockInfo, state: &DagState) -> DagState {
 }
 
 /// Validate that the height-map keys form a contiguous range (Law 18).
-pub fn validate_dag_state(state: &DagState) {
+pub fn validate_dag_state(state: &DagState) -> Result<(), String> {
     let m = &state.height_map;
     let (min, max) = match (m.keys().next(), m.keys().next_back()) {
         (Some(first), Some(last)) => (*first, *last + NonNegI64::one()),
         _ => (BlockHeight::zero(), BlockHeight::zero()),
     };
-    assert!(
-        max - min == i64::try_from(m.len()).unwrap_or(i64::MAX),
-        "DAG store height map has numbers not in sequence."
-    );
+    if max - min != i64::try_from(m.len()).unwrap_or(i64::MAX) {
+        return Err("DAG store height map has numbers not in sequence.".to_string());
+    }
+    Ok(())
 }
 
 /// Rebuild in-memory state from a block-info map, then validate.
-pub fn recreate_in_memory_state(blocks: &BTreeMap<BlockHash, BlockInfo>) -> DagState {
+pub fn recreate_in_memory_state(
+    blocks: &BTreeMap<BlockHash, BlockInfo>,
+) -> Result<DagState, String> {
     let mut state = DagState::empty();
     for block in blocks.values() {
         state = add_block_to_dag_state(block, &state);
     }
-    validate_dag_state(&state);
-    state
+    validate_dag_state(&state)?;
+    Ok(state)
 }
 
 #[cfg(test)]
@@ -124,17 +126,19 @@ mod tests {
         blocks.insert(hash(0), h0);
         blocks.insert(hash(1), h1);
         blocks.insert(hash(2), h2);
-        recreate_in_memory_state(&blocks); // does not panic
+        recreate_in_memory_state(&blocks).unwrap(); // no error
     }
 
     #[test]
-    #[should_panic(expected = "numbers not in sequence")]
-    fn law18_height_map_with_holes_panics() {
+    fn law18_height_map_with_holes_errors() {
         let mut blocks = BTreeMap::new();
         blocks.insert(hash(0), info(hash(0), &[], 0));
         // block_num 2 with no block_num 1 -> hole.
         blocks.insert(hash(2), info(hash(2), &[hash(0)], 2));
-        recreate_in_memory_state(&blocks);
+        assert_eq!(
+            recreate_in_memory_state(&blocks).unwrap_err(),
+            "DAG store height map has numbers not in sequence."
+        );
     }
 
     #[test]

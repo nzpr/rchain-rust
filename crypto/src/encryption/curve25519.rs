@@ -25,10 +25,12 @@ pub fn new_nonce() -> Vec<u8> {
 }
 
 /// Compute the 32-byte public key from a 32-byte secret key.
-pub fn to_public(sec: &[u8]) -> Vec<u8> {
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(sec);
-    BoxSecretKey::from(arr).public_key().as_bytes().to_vec()
+pub fn to_public(sec: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    let arr: [u8; 32] = sec.try_into().map_err(|_| CryptoError::InvalidLength {
+        expected: 32,
+        actual: sec.len(),
+    })?;
+    Ok(BoxSecretKey::from(arr).public_key().as_bytes().to_vec())
 }
 
 /// Encrypt `message` with the box keyed by `(pub, sec)` and `nonce`.
@@ -38,7 +40,7 @@ pub fn encrypt(
     nonce: &[u8],
     message: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    let sender_sk = secret_key_from(sec);
+    let sender_sk = secret_key_from(sec)?;
     let recipient_pk = public_key_from(pub_key)?;
     let b = SalsaBox::new(&recipient_pk, &sender_sk);
     let nonce = Nonce::<SalsaBox>::from_slice(nonce);
@@ -53,7 +55,7 @@ pub fn decrypt(
     nonce: &[u8],
     cipher: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    let sender_sk = secret_key_from(sec);
+    let sender_sk = secret_key_from(sec)?;
     let recipient_pk = public_key_from(pub_key)?;
     let b = SalsaBox::new(&recipient_pk, &sender_sk);
     let nonce = Nonce::<SalsaBox>::from_slice(nonce);
@@ -61,10 +63,12 @@ pub fn decrypt(
         .map_err(|_| CryptoError::EncryptionFailed)
 }
 
-fn secret_key_from(bytes: &[u8]) -> BoxSecretKey {
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(bytes);
-    BoxSecretKey::from(arr)
+fn secret_key_from(bytes: &[u8]) -> Result<BoxSecretKey, CryptoError> {
+    let arr: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidLength {
+        expected: 32,
+        actual: bytes.len(),
+    })?;
+    Ok(BoxSecretKey::from(arr))
 }
 
 fn public_key_from(bytes: &[u8]) -> Result<BoxPublicKey, CryptoError> {
@@ -119,6 +123,6 @@ mod tests {
             base16::unsafe_decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
         let alice_pub =
             base16::unsafe_decode("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
-        assert_eq!(to_public(&alice_sec), alice_pub);
+        assert_eq!(to_public(&alice_sec).expect("compute public key"), alice_pub);
     }
 }

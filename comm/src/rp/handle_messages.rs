@@ -49,6 +49,11 @@ pub fn check_peer_on_same_network(conf: &RPConf, peer: &PeerNode) -> bool {
 ///
 /// The connections cell is an `RwLock` rather than `&mut Vec` so the write lock is held only for the
 /// brief mutation, never across the outbound `send` in the handshake path (H3).
+///
+/// Residual (documented, not fixed): the protocol `sender` (taken from the message header) is not
+/// cryptographically bound to the TLS peer certificate. A peer presenting a self-signed certificate
+/// may assert an arbitrary node id. The `MAX_CONNECTIONS` bound mitigates the resulting unbounded
+/// growth of the connection table, but does not eliminate the identity-spoofing vector.
 pub async fn handle<T: TransportLayer + ?Sized>(
     proto: Protocol,
     conf: &RPConf,

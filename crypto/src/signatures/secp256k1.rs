@@ -111,6 +111,7 @@ impl SignaturesAlg for Secp256k1 {
 mod tests {
     use super::*;
     use crate::hash::sha256;
+    use crate::signatures::signatures_alg::normalize_signature_low_s;
     use rchain_shared::base16;
 
     #[test]
@@ -188,5 +189,47 @@ mod tests {
         assert!(Secp256k1::parse_pem_file(&public_path, "password").is_err());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn normalize_signature_low_s_is_idempotent() {
+        // A k256-produced DER signature is already low-S; re-normalizing is a no-op.
+        let (PrivateKey(sec), _pk) = Secp256k1.new_key_pair();
+        let data = sha256::hash(b"idempotent");
+        let der = Secp256k1::sign_bytes(&data, &sec).expect("sign with valid secret key");
+        let once = normalize_signature_low_s("secp256k1", &der);
+        assert_eq!(normalize_signature_low_s("secp256k1", &once), once);
+
+        // Raw 64-byte RS path: a high-S signature normalizes once, then is idempotent.
+        let high_s = base16::unsafe_decode(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140",
+        );
+        let mut sig = vec![0x11u8; 32];
+        sig.extend_from_slice(&high_s);
+        let once = normalize_signature_low_s("secp256k1:eth", &sig);
+        assert_eq!(normalize_signature_low_s("secp256k1:eth", &once), once);
+    }
+
+    #[test]
+    fn normalize_signature_low_s_produces_low_s_twin() {
+        // `high_s = n - 1` (the largest valid, and a high-S, scalar): normalizing must yield the
+        // low-S twin `(r, n - s) = (r, 1)`.
+        let high_s = base16::unsafe_decode(
+            "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140",
+        );
+        let mut sig = vec![0x11u8; 32];
+        sig.extend_from_slice(&high_s);
+
+        let normalized = normalize_signature_low_s("secp256k1:eth", &sig);
+        assert_eq!(&normalized[..32], &[0x11u8; 32][..], "r half is unchanged");
+        let mut expected_s = [0u8; 32];
+        expected_s[31] = 1;
+        assert_eq!(&normalized[32..], &expected_s[..], "s becomes n - s == 1");
+
+        // Re-normalizing the low-S twin is a no-op.
+        assert_eq!(
+            normalize_signature_low_s("secp256k1:eth", &normalized),
+            normalized
+        );
     }
 }

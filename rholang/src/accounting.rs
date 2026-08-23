@@ -2,8 +2,9 @@
 //!
 //! Mirrors `rholang/.../interpreter/accounting/` (`Cost`, `Costs`, `Chargeable`, `CostAccounting`).
 //! The proto-size-dependent costs (`equalityCheckCost`, `storageCost*`, `toByteArrayCost`, and
-//! `Chargeable.fromProtobuf`) are deferred until wire serialization is ported. The cats-mtl
-//! `_cost[F]` monad stack is modeled as the synchronous [`CostAccounting`] state cell.
+//! `Chargeable.fromProtobuf`) are implemented (backed by the `Serialize` wire-size codecs) and
+//! wired into the reducer. The cats-mtl `_cost[F]` monad stack is modeled as the synchronous
+//! [`CostAccounting`] state cell.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
@@ -376,10 +377,14 @@ impl CostAccounting {
         }
         let amount_value = amount.value;
         self.log.lock().unwrap_or_else(|p| p.into_inner()).push(amount);
-        self.value.store(current - amount_value, Ordering::SeqCst);
-        if self.value.load(Ordering::SeqCst) < 0 {
+        let new_balance = current - amount_value;
+        if new_balance < 0 {
+            // Clamp the stored balance at 0 rather than leaving the cost cell negative on
+            // exhaustion (the error is still raised).
+            self.value.store(0, Ordering::SeqCst);
             return Err(RholangError::OutOfPhlogistonsError);
         }
+        self.value.store(new_balance, Ordering::SeqCst);
         Ok(())
     }
 }

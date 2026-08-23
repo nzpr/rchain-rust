@@ -78,6 +78,14 @@ pub async fn apply<F, Fut>(
         )
         .await;
         match result {
+            Ok(Ok(())) => {
+                // Only forward/broadcast blocks that validated successfully; a validation-failed or
+                // internal-error block must not be re-broadcast (amplification).
+                let _ = validated_tx.send(block.clone());
+                comm_util
+                    .send_block_hash(&block.block_hash, block.sender.as_bytes())
+                    .await;
+            }
             Ok(Err(status)) => log.warn(
                 source,
                 &format!(
@@ -89,11 +97,6 @@ pub async fn apply<F, Fut>(
                 source,
                 &format!("Block {} processing error: {err}", block.block_hash.to_hex()),
             ),
-            Ok(Ok(())) => {}
         }
-        let _ = validated_tx.send(block.clone());
-        comm_util
-            .send_block_hash(&block.block_hash, block.sender.as_bytes())
-            .await;
     }
 }

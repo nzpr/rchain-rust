@@ -34,9 +34,10 @@ impl GrpcServices {
         block_api: Arc<dyn BlockApi>,
         block_report_api: Arc<BlockReportApi>,
         runtime: Arc<RhoRuntime>,
+        enable_reporting: bool,
     ) -> GrpcServices {
         let repl = ReplGrpcService::new(runtime);
-        let deploy = DeployGrpcServiceV1::new(block_api.clone(), block_report_api);
+        let deploy = DeployGrpcServiceV1::new(block_api.clone(), block_report_api, enable_reporting);
         let propose = ProposeGrpcServiceV1::new(block_api);
         GrpcServices {
             deploy,
