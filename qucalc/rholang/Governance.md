@@ -6,6 +6,9 @@ castVote / tallyVotes) onto the QuCalc substrate — the same capability + ZFA
 machinery as the [proof system](qucalc.rho). This is the RChain side of
 quantum-os's governance layer.
 
+> **Documentation**: the QuCalc documentation index (overview, mutual benefits,
+> architecture, examples) lives in [`../docs/README.md`](../docs/README.md).
+
 ## What it provides
 
 | Capability | Rholang library (this repo) | Backing implementation |
