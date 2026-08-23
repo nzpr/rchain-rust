@@ -68,8 +68,18 @@ theorem parStep_to_reduce {p q : Par} (h : ParStep p q) :
       exact Relation.ReflTransGen.trans (reflTransGen_parLeft ihp) (reflTransGen_parRight ihq)
 
 /-- Diamond / confluence of parallel reduction: two parallel steps from `p` converge to a common
-    `ParStep`-reduct. (Target — the `comm`-vs-`comm` and `comm`-vs-`par` cases need the injectivity of
-    `sendPar`/`receivePar`/`parMerge`.) -/
+    `ParStep`-reduct.
+
+    **Open.** The flat `Par` carries `parMerge` as a *field-wise monoid* (`parMerge p q` appends the
+    eight lists), so decomposition into `par`-summands is **not unique** — e.g. `sendPar chan data =
+    parMerge (sendPar chan data) nilPar`. A structural `cases` therefore fails ("dependent elimination")
+    on the `par` case. The proof needs a mutual induction over the eight list fields: (a) inertness of
+    `sendPar`/`receivePar`/`nilPar` under `ParStep`, and (b) the COMM-redex decomposition
+    `parMerge p q = parMerge (sendPar chan [data]) (receivePar chan body) ⟹ p'`/`q'` still commute to
+    `body`. With those, the diamond closes by the standard induction (`refl`/`comm`/`par` cases, using
+    the IHs for `par`-vs-`par`).
+
+    Combined with `StrCong` (Law 2), this discharges `reduce_deterministic` (Law 4). -/
 theorem parStep_diamond {p q r : Par} (hpq : ParStep p q) (hpr : ParStep p r) :
     ∃ s, ParStep q s ∧ ParStep r s := by
   sorry
