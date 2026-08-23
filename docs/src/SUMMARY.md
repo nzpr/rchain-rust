@@ -23,6 +23,7 @@
 - [The 19 laws](formal/the-19-laws.md)
 - [Structural congruence and reduction](formal/congruence-reduction.md)
 - [Concurrent reduction](formal/concurrent-reduction.md)
+- [Effect scheduling](formal/effect-scheduling.md)
 - [Substitution and matching](formal/substitution-matching.md)
 - [Closedness and the Calculus of Constructions](formal/closedness-coc.md)
 

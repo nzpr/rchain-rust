@@ -147,7 +147,7 @@ of parallel branches. The merge associativity/commutativity is already an **axio
 | Theorem | Mechanism carrying it (today, reused) | Location |
 |---------|----------------------------------------|----------|
 | C.1 Diamond | `≡` reassociation (`StrCong`) + per-channel atomicity | `spec/Rchain/Rho.lean`; `rspace/src/concurrent/{multi_lock,two_step_lock}.rs` |
-| C.2 Linearization | canonical order `Sorted<Par>` + first-match-in-insertion-order | `models/src/sorted.rs`; `rspace/src/space_matcher.rs` |
+| C.2 Linearization | canonical order `Sorted<Par>` + sorted-first candidate selection | `models/src/sorted.rs`; `rspace/src/space_matcher.rs` |
 | C.3 Commutative merge | `StateChange`/`ChannelChange` monoid + `compute_trie_actions` | `rspace/src/merger/*` |
 | C.4 RNG determinism | `Blake2b512Random::{split_byte,split_short,merge}` | `crypto/src/hash/blake2b512_random.rs` |
 
@@ -171,4 +171,4 @@ This document specifies **within-deploy** concurrency: independent sub-processes
 - **Actor runtime** (Laws 12–13) — the Rosette VM is orphaned in this port; its fork-join barrier is
   *prior art* for the scheduler's rejoin discipline, not a component to rebuild.
 
-> Next: how the *data* moves in a comm — [Substitution and matching](substitution-matching.md).
+> Next: the effect level of the scheduler — [Effect scheduling](effect-scheduling.md).

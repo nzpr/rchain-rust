@@ -12,6 +12,7 @@ use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, SignedDeployData};
 use rchain_rholang::errors::RholangError;
+use rchain_rholang::runtime::ReplayRhoRuntime;
 use rchain_rholang::system_processes::BlockData;
 use rchain_shared::base16;
 
@@ -28,9 +29,11 @@ pub fn mk_term(rho: &str, env: &BTreeMap<String, Par>) -> Result<Par, RholangErr
     rchain_rholang::normalizer::source_to_adt_with_env(rho, env).map(Par::from)
 }
 
-/// Replay a block's deploys and return the computed state hash (port of `replayBlock`).
+/// Replay a block's deploys and return the computed state hash (port of `replayBlock`). The replay
+/// mutates only `replay_runtime` (a per-block fork); the mergeable-channel save uses `runtime`.
 pub async fn replay_block(
     runtime: &RuntimeManager,
+    replay_runtime: &ReplayRhoRuntime,
     block: &BlockMessage,
     rand: &Blake2b512Random,
 ) -> Result<Blake2b256Hash, ReplayFailure> {
@@ -38,7 +41,8 @@ pub async fn replay_block(
     let block_data = BlockData::from_block(block);
     let with_cost_accounting = !block.justifications.is_empty();
     let (state_hash, _mergeable) = runtime
-        .replay_compute_state(
+        .replay_compute_state_with(
+            replay_runtime,
             &start_hash,
             &block.state.deploys,
             &block.state.system_deploys,
@@ -155,7 +159,10 @@ where
     } else {
         let rand = BlockRandomSeed::random_generator_from_block(block);
         let post_state_hash = Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
-        let replay_result = replay_block(runtime, block, &rand).await;
+        // Fork a fresh replay runtime at the block's pre-state (read-only history fork) so block
+        // validation is self-contained and can run concurrently with other blocks.
+        let forked = runtime.fork_replay_runtime(pre_state.pre_state_hash).await?;
+        let replay_result = replay_block(runtime, &forked, block, &rand).await;
         let handled = handle_errors(&post_state_hash, replay_result)?;
         Ok(handled.is_some())
     };

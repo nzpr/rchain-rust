@@ -28,10 +28,12 @@ use rchain_rholang::merging::{
     NumberChannel,
 };
 use rchain_rholang::runtime::{ReplayRhoRuntime, RhoRuntime};
-use rchain_rholang::storage::RhoHistoryRepository;
+use rchain_rholang::storage::{RhoHistoryRepository, RhoMatch};
 use rchain_rholang::system_processes::BlockData;
+use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::merger::event_log_index::NumberChannelsDiff;
 use rchain_rspace::native_store::PREFIX_POS;
+use rchain_rspace::rspace::RSpace;
 use rchain_shared::typed_store::KeyValueTypedStore;
 
 use crate::event_converter::to_casper_event;
@@ -90,6 +92,21 @@ impl RuntimeManager {
 
     pub fn replay_runtime(&self) -> &ReplayRhoRuntime {
         &self.replay_runtime
+    }
+
+    /// Fork a fresh replay runtime seeded at `root` via the read-only history fork, for parallel
+    /// block validation (replay is verify-only; each block replays from its own pre-state root).
+    pub async fn fork_replay_runtime(
+        &self,
+        root: Blake2b256Hash,
+    ) -> Result<ReplayRhoRuntime, String> {
+        let reader = self.history_repo.get_history_reader(root).await;
+        let hot = Arc::new(InMemHotStore::new(reader.base()));
+        let (_play, replay) =
+            RSpace::create_with_replay(self.history_repo.clone(), hot, Arc::new(RhoMatch));
+        ReplayRhoRuntime::create(Arc::new(replay), self.history_repo.clone(), SortedProc::default())
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Load mergeable channels from the store (port of `loadMergeableChannels`).
@@ -530,9 +547,36 @@ impl RuntimeManager {
         with_cost_accounting: bool,
         bonds: &BTreeMap<Validator, NonNegI64>,
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
+        self.replay_compute_state_with(
+            &self.replay_runtime,
+            start_hash,
+            terms,
+            system_deploys,
+            rand,
+            block_data,
+            with_cost_accounting,
+            bonds,
+        )
+        .await
+    }
+
+    /// Replay using an explicit replay runtime (the per-block fork for parallel validation). The
+    /// replay mutates only `replay_runtime`; the mergeable-channel save uses the shared store.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn replay_compute_state_with(
+        &self,
+        replay_runtime: &ReplayRhoRuntime,
+        start_hash: &Blake2b256Hash,
+        terms: &[ProcessedDeploy],
+        system_deploys: &[ProcessedSystemDeploy],
+        rand: &Blake2b512Random,
+        block_data: BlockData,
+        with_cost_accounting: bool,
+        bonds: &BTreeMap<Validator, NonNegI64>,
+    ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         let creator = block_data.sender.bytes().to_vec();
         let seq_num = i64::from(block_data.seq_num);
-        let (state_hash, mergeable_chs) = RuntimeReplayOps::new(&self.replay_runtime)
+        let (state_hash, mergeable_chs) = RuntimeReplayOps::new(replay_runtime)
             .replay_compute_state(
                 start_hash,
                 rand,
@@ -611,4 +655,65 @@ impl RuntimeManager {
 
 fn to_blake(hash: &StateHash) -> Blake2b256Hash {
     Blake2b256Hash::from_byte_array(hash.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};
+    use rchain_rholang::merging::DeployMergeableDataCodec;
+    use rchain_rspace::factory::create_history_repository;
+    use rchain_shared::store_manager::{database, InMemoryStoreManager};
+    use rchain_shared::typed_store::BytesCodec;
+
+    /// A forked replay runtime (used for parallel block validation) must be constructible at the
+    /// empty root and able to replay an empty deploy set.
+    #[tokio::test]
+    async fn fork_replay_runtime_replays_empty() {
+        let manager = InMemoryStoreManager::default();
+        let history = create_history_repository::<
+            SortedProc,
+            BindPattern,
+            ListParWithRandom,
+            TaggedContinuation,
+        >(&manager, "rspace")
+        .await
+        .unwrap();
+        let empty_root = history.root();
+        let reader = history.get_history_reader(empty_root).await;
+        let hot = Arc::new(InMemHotStore::new(reader.base()));
+        let (play, replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
+        let rho = RhoRuntime::create(play, history.clone(), SortedProc::default())
+            .await
+            .unwrap();
+        let replay = ReplayRhoRuntime::create(Arc::new(replay), history.clone(), SortedProc::default())
+            .await
+            .unwrap();
+        let mergeable_store = Arc::new(
+            database(
+                &manager,
+                "mergeable",
+                Arc::new(BytesCodec),
+                Arc::new(DeployMergeableDataCodec),
+            )
+            .await
+            .unwrap(),
+        );
+        let runtime = RuntimeManager::new(rho, replay, history, mergeable_store);
+
+        let forked = runtime.fork_replay_runtime(empty_root).await.unwrap();
+        let result = runtime
+            .replay_compute_state_with(
+                &forked,
+                &empty_root,
+                &[],
+                &[],
+                &Blake2b512Random::new_random(128),
+                BlockData::empty(),
+                false,
+                &BTreeMap::new(),
+            )
+            .await;
+        assert!(result.is_ok());
+    }
 }
