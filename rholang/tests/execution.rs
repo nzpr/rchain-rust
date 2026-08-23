@@ -15,7 +15,7 @@ use rchain_rholang::env::Env;
 use rchain_rholang::registry::registry_bootstrap_ast;
 use rchain_rspace::history::history::empty_root_hash_value;
 
-use common::{build_runtime_pair, load_golden};
+use common::{build_runtime, build_runtime_pair, load_golden};
 
 /// A fixed, deterministic random seed so post-state hashes are reproducible.
 fn fixed_rand() -> Blake2b512Random {
@@ -135,4 +135,30 @@ async fn list_channel_matches() {
         rt.get_data_par(&chan("listch")).await.unwrap(),
         vec![from_expr(Expr::GInt(7))]
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_and_sequential_state_hashes_match() {
+    // The concurrent reducer (fork-join) must produce the same post-state hash as the sequential
+    // reference (concurrency off) — the executable form of the linearization theorem (Laws 4/8).
+    let terms: &[&str] = &[
+        r#"@"chan"!(42)"#,
+        r#"new c in { c!(42) | for (@x <- c) { @"out"!(x) } }"#,
+        r#"new c in { c!!(42) | for (@x <- c) { @"p1"!(x) } | for (@y <- c) { @"p2"!(y) } }"#,
+        r#"new c in { c!(42) | for (@x <<- c) { @"peek"!(x) } }"#,
+        r#"new storeToken, Make in { contract Make(@initVal, @node) = { @[node, *storeToken]!(initVal) } | Make!(7, "key") | for (@x <- @["key", *storeToken]) { @"listch"!(x) } }"#,
+        r#"@"a"!(1) | @"b"!(2) | @"c"!(3) | @"d"!(4) | @"e"!(5) | @"f"!(6) | @"g"!(7) | @"h"!(8) | @"i"!(9) | @"j"!(10)"#,
+    ];
+    for term in terms {
+        let rt_c = build_runtime(true).await;
+        let rt_s = build_runtime(false).await;
+        let rand = fixed_rand();
+        let rc = rt_c.evaluate(term, &rand).await.unwrap();
+        assert!(rc.succeeded(), "concurrent deploy errors for {term}: {:?}", rc.errors);
+        let rs = rt_s.evaluate(term, &rand).await.unwrap();
+        assert!(rs.succeeded(), "sequential deploy errors for {term}: {:?}", rs.errors);
+        let hc = rt_c.create_checkpoint().await.unwrap().root;
+        let hs = rt_s.create_checkpoint().await.unwrap().root;
+        assert_eq!(hc, hs, "concurrent vs sequential state hash mismatch for {term}");
+    }
 }

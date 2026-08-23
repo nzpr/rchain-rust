@@ -6,13 +6,13 @@
 //! collection methods (`union`/`diff`/`add`/`delete`/`contains`/`slice`/`keys`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use num_bigint::BigInt;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
 use rchain_models::ast::{
-    AlwaysEqual, Bundle, EList, ETuple, Expr, GPrivate, GUnforgeable, Match, MatchCase, Name, New,
+    AlwaysEqual, Bundle, EList, ETuple, Expr, GPrivate, GUnforgeable, Match, Name, New,
     Par, ParMap, ParSet, Receive, ReceiveBind, Send, Sort, SortJoin, Var,
 };
 use rchain_models::par_ops::{from_expr, par_concat, single_bundle, single_expr, typ};
@@ -30,6 +30,18 @@ fn union_free(a: Vec<i32>, b: Vec<i32>) -> Vec<i32> {
     let mut set: BTreeSet<i32> = a.into_iter().collect();
     set.extend(b);
     set.into_iter().collect()
+}
+
+/// Split the reduction RNG for the `i`-th of `n` sibling terms. This is the sequential
+/// interpreter's index-based split, preserved exactly so `new`-name freshness is unchanged.
+fn split_rand(rand: &Blake2b512Random, i: usize, n: usize) -> Result<Blake2b512Random, RholangError> {
+    if n == 1 {
+        Ok((*rand).clone())
+    } else if n > 256 {
+        Ok(rand.split_short(u16::try_from(i).map_err(|e| RholangError::ReduceError(e.to_string()))?))
+    } else {
+        Ok(rand.split_byte(u8::try_from(i).map_err(|e| RholangError::ReduceError(e.to_string()))?))
+    }
 }
 
 /// Recompute a `Par`'s cached `locallyFree` from its sub-terms (port of `updateLocallyFree`).
@@ -1202,22 +1214,239 @@ pub trait Dispatch: std::marker::Send + std::marker::Sync {
     ) -> Result<(), RholangError>;
 }
 
-enum Term<'a> {
-    Send(&'a Send),
-    Receive(&'a Receive),
-    New(&'a New),
-    Match(&'a Match),
-    Bundle(&'a Bundle),
-    Expr(&'a Expr),
+/// An owned, flattened term (the borrow-free unit the scheduler reduces).
+enum OwnedTerm {
+    Send(Send),
+    Receive(Receive),
+    New(New),
+    Match(Match),
+    Bundle(Bundle),
+    ExprVar(Var),
+    ExprMethod(Expr),
+}
+
+/// A unit of reduction work. `Par` expands into its sub-terms; `Produce`/`Consume`/`ProducePeeks`
+/// are resolved tuple-space effects. The scheduler drains these LIFO (in reverse insertion order)
+/// to reproduce the depth-first, left-to-right reduction order of the sequential interpreter.
+enum Work {
+    Par(Par, Env<Par>, Blake2b512Random),
+    Produce(SortedProc, ListParWithRandom, bool),
+    Consume(Vec<(BindPattern, SortedProc)>, ParWithRandom, bool, bool),
+    ProducePeeks(Vec<(SortedProc, ListParWithRandom, ListParWithRandom, bool)>),
+}
+
+/// Resolve one flattened term to a unit of work (or `None` for a match with no matching case).
+/// Pure w.r.t. the tuple space (only atomic cost charges and pre-split RNG), so it can run
+/// concurrently across a `Par`'s terms and still produce the same result as the sequential
+/// interpreter.
+fn resolve_term(
+    term: OwnedTerm,
+    env: Env<Par>,
+    rand: Blake2b512Random,
+    urn_map: Arc<BTreeMap<String, Par>>,
+    cost: Arc<CostAccounting>,
+) -> Result<Option<Work>, RholangError> {
+    match term {
+        OwnedTerm::Send(s) => resolve_send(&s, &env, &rand, cost.as_ref()).map(Some),
+        OwnedTerm::Receive(r) => resolve_receive(&r, &env, &rand, cost.as_ref()).map(Some),
+        OwnedTerm::New(n) => resolve_new(&n, &env, &rand, urn_map.as_ref(), cost.as_ref()).map(Some),
+        OwnedTerm::Match(m) => resolve_match(&m, &env, &rand, cost.as_ref()),
+        OwnedTerm::Bundle(b) => Ok(Some(Work::Par(*b.body, env, rand))),
+        OwnedTerm::ExprVar(v) => {
+            eval_var(&v, &env, cost.as_ref()).map(|p| Some(Work::Par(p, env, rand)))
+        }
+        OwnedTerm::ExprMethod(e) => {
+            eval_expr_to_par(&e, &env, cost.as_ref()).map(|p| Some(Work::Par(p, env, rand)))
+        }
+    }
+}
+
+/// Pure part of `eval(Send)`: resolve the channel and data, returning the produce arguments.
+fn resolve_send(
+    send: &Send,
+    env: &Env<Par>,
+    rand: &Blake2b512Random,
+    cost: &CostAccounting,
+) -> Result<Work, RholangError> {
+    cost.charge(Costs::send_eval_cost())?;
+    let eval_chan = eval_expr(send.chan.as_ref(), env, cost)?;
+    let sub_chan = substitute_par_and_charge(&eval_chan, 0, env, cost)?;
+    let unbundled = match single_bundle(&sub_chan) {
+        Some(value) => {
+            if !value.write_flag {
+                return Err(RholangError::ReduceError(
+                    "Trying to send on non-writeable channel.".to_string(),
+                ));
+            }
+            (*value.body).clone()
+        }
+        None => sub_chan.eval(),
+    };
+    let data: Vec<Name> = send
+        .data
+        .iter()
+        .map(|d| eval_expr(d, env, cost))
+        .collect::<Result<_, _>>()?;
+    let subst_data: Vec<Name> = data
+        .iter()
+        .map(|d| substitute_par_and_charge(d, 0, env, cost))
+        .collect::<Result<_, _>>()?;
+    Ok(Work::Produce(
+        SortedProc::new(unbundled),
+        ListParWithRandom {
+            pars: subst_data.into_iter().map(|d| SortedProc::new(d.eval())).collect(),
+            random_state: (*rand).clone(),
+        },
+        send.persistent,
+    ))
+}
+
+/// Pure part of `eval(Receive)`: resolve the sources/patterns/body, returning the consume arguments.
+fn resolve_receive(
+    receive: &Receive,
+    env: &Env<Par>,
+    rand: &Blake2b512Random,
+    cost: &CostAccounting,
+) -> Result<Work, RholangError> {
+    cost.charge(Costs::receive_eval_cost())?;
+    let mut binds: Vec<(BindPattern, SortedProc)> = Vec::new();
+    for rb in &receive.binds {
+        let q = unbundle_receive(rb, env, cost)?;
+        let subst_patterns: Vec<Name> = rb
+            .patterns
+            .iter()
+            .map(|p| substitute_par_and_charge(p, 1, env, cost))
+            .collect::<Result<_, _>>()?;
+        binds.push((
+            BindPattern {
+                patterns: subst_patterns.into_iter().map(|p| SortedProc::new(p.eval())).collect(),
+                remainder: rb.remainder.as_deref().cloned(),
+                free_count: i32::from(rb.free_count),
+            },
+            SortedProc::new(q),
+        ));
+    }
+    let subst_body =
+        substitute_par_and_charge(&receive.body, 0, &env.shift(receive.bind_count), cost)?;
+    Ok(Work::Consume(
+        binds,
+        ParWithRandom {
+            body: SortedProc::new(subst_body),
+            random_state: (*rand).clone(),
+        },
+        receive.persistent,
+        receive.peek,
+    ))
+}
+
+fn unbundle_receive(
+    rb: &ReceiveBind,
+    env: &Env<Par>,
+    cost: &CostAccounting,
+) -> Result<Par, RholangError> {
+    let eval_src = eval_expr(rb.source.as_ref(), env, cost)?;
+    let subst = substitute_par_and_charge(&eval_src, 0, env, cost)?;
+    match single_bundle(&subst) {
+        Some(value) => {
+            if !value.read_flag {
+                Err(RholangError::ReduceError(
+                    "Trying to read from non-readable channel.".to_string(),
+                ))
+            } else {
+                Ok((*value.body).clone())
+            }
+        }
+        None => Ok(subst.eval()),
+    }
+}
+
+/// Pure part of `eval(New)`: allocate fresh names and return the body to reduce.
+fn resolve_new(
+    new: &New,
+    env: &Env<Par>,
+    rand: &Blake2b512Random,
+    urn_map: &BTreeMap<String, Par>,
+    cost: &CostAccounting,
+) -> Result<Work, RholangError> {
+    cost.charge(Costs::new_bindings_cost(new.bind_count as i64))?;
+    let mut r = (*rand).clone();
+    let new_env = alloc(new.bind_count, &new.uri, &new.injections, env, urn_map, &mut r)?;
+    Ok(Work::Par((*new.p).clone(), new_env, (*rand).clone()))
+}
+
+fn alloc(
+    count: i32,
+    urns: &[String],
+    injections: &BTreeMap<String, Par>,
+    env: &Env<Par>,
+    urn_map: &BTreeMap<String, Par>,
+    rand: &mut Blake2b512Random,
+) -> Result<Env<Par>, RholangError> {
+    let mut new_env = (*env).clone();
+    for _ in 0..(count - urns.len() as i32) {
+        let bytes = rand.next();
+        let addr = Par {
+            unforgeables: vec![GUnforgeable::GPrivate(GPrivate { id: bytes })],
+            ..Default::default()
+        };
+        new_env = new_env.put(addr);
+    }
+    for urn in urns {
+        new_env = add_urn(new_env, urn, injections, urn_map)?;
+    }
+    Ok(new_env)
+}
+
+fn add_urn(
+    env: Env<Par>,
+    urn: &str,
+    injections: &BTreeMap<String, Par>,
+    urn_map: &BTreeMap<String, Par>,
+) -> Result<Env<Par>, RholangError> {
+    if let Some(p) = urn_map.get(urn) {
+        Ok(env.put(p.clone()))
+    } else if let Some(p) = injections.get(urn) {
+        Ok(env.put(p.clone()))
+    } else {
+        Err(RholangError::BugFoundError(format!(
+            "No value set for `{urn}`. This is a bug in the normalizer or on the path from it."
+        )))
+    }
+}
+
+/// Pure part of `eval(Match)`: spatial-match the target against cases, returning the winning body.
+fn resolve_match(
+    m: &Match,
+    env: &Env<Par>,
+    rand: &Blake2b512Random,
+    cost: &CostAccounting,
+) -> Result<Option<Work>, RholangError> {
+    cost.charge(Costs::match_eval_cost())?;
+    let evaled_target = eval_expr(m.target.as_ref(), env, cost)?;
+    let subst_target = substitute_par_and_charge(&evaled_target, 0, env, cost)?;
+    let target = subst_target.eval();
+    for case in &m.cases {
+        let pattern = substitute_par_and_charge(&case.pattern, 1, env, cost)?;
+        if let Some(free_map) = spatial_match_result(&target, &pattern.eval())? {
+            let mut new_env = (*env).clone();
+            for e in 0..i32::from(case.free_count) {
+                new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
+            }
+            return Ok(Some(Work::Par((*case.source).clone(), new_env, (*rand).clone())));
+        }
+    }
+    Ok(None)
 }
 
 /// The reducer (port of `DebruijnInterpreter`).
 pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     space: T,
     dispatcher: D,
-    urn_map: BTreeMap<String, Par>,
+    urn_map: Arc<BTreeMap<String, Par>>,
     merge_chs: Mutex<Vec<SortedProc>>,
     mergeable_tag_name: SortedProc,
+    queue: Mutex<Vec<Work>>,
+    concurrent: bool,
 }
 
 impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
@@ -1230,39 +1459,102 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         DebruijnInterpreter {
             space,
             dispatcher,
-            urn_map,
+            urn_map: Arc::new(urn_map),
             merge_chs: Mutex::new(Vec::new()),
             mergeable_tag_name,
+            queue: Mutex::new(Vec::new()),
+            concurrent: true,
         }
     }
 
-    /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`).
+    /// Toggle concurrent per-term resolution (on by default). With concurrency disabled, `expand_par`
+    /// resolves terms in a plain sequential loop — the reference used by the differential tests.
+    pub fn set_concurrent(&mut self, concurrent: bool) {
+        self.concurrent = concurrent;
+    }
+
+    /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`): enqueue the process and drain the
+    /// work queue to completion. The queue is drained LIFO so sub-processes reduce in the same
+    /// depth-first, left-to-right order as the sequential interpreter.
     pub async fn eval(
         &self,
         par: &Par,
         env: &Env<Par>,
         rand: &Blake2b512Random,
-        cost: &CostAccounting,
+        cost: &Arc<CostAccounting>,
     ) -> Result<(), RholangError> {
-        let mut terms: Vec<Term> = Vec::new();
+        self.enqueue(Work::Par((*par).clone(), (*env).clone(), (*rand).clone()));
+        self.drain(cost).await
+    }
+
+    /// Push a unit of work onto the scheduler queue (LIFO).
+    fn enqueue(&self, work: Work) {
+        self.queue.lock().unwrap_or_else(|p| p.into_inner()).push(work);
+    }
+
+    /// Enqueue a `Par` reduction job — the continuation-dispatch hook used by the dispatcher's eval
+    /// closure. Continuations are scheduled rather than reduced inline, decoupling matching from
+    /// execution.
+    pub fn enqueue_par(&self, par: Par, env: Env<Par>, rand: Blake2b512Random) {
+        self.enqueue(Work::Par(par, env, rand));
+    }
+
+    /// Drain the work queue to completion. A single coordinator pops work in DFS order; `expand_par`
+    /// fans out the pure per-term resolution to the tokio runtime and rejoins before any tuple-space
+    /// effect is applied, so effects stay in the sequential reducer's order.
+    async fn drain(&self, cost: &Arc<CostAccounting>) -> Result<(), RholangError> {
+        loop {
+            let work = self.queue.lock().unwrap_or_else(|p| p.into_inner()).pop();
+            match work {
+                Some(w) => self.process_work(w, cost).await?,
+                None => return Ok(()),
+            }
+        }
+    }
+
+    /// Process one unit of work.
+    async fn process_work(&self, work: Work, cost: &Arc<CostAccounting>) -> Result<(), RholangError> {
+        match work {
+            Work::Par(par, env, rand) => self.expand_par(&par, &env, &rand, cost).await,
+            Work::Produce(chan, data, persistent) => self.produce(&chan, data, persistent).await,
+            Work::Consume(binds, body, persistent, peek) => {
+                self.consume(&binds, body, persistent, peek).await
+            }
+            Work::ProducePeeks(data_list) => self.produce_peeks(&data_list).await,
+        }
+    }
+
+    /// Flatten a `Par` into its owned sub-terms, resolve each term's pure part concurrently, then
+    /// enqueue the resolved effects/children in reverse order so they reduce left-to-right in DFS
+    /// order. Each term keeps the same index-based RNG split as the sequential interpreter.
+    async fn expand_par(
+        &self,
+        par: &Par,
+        env: &Env<Par>,
+        rand: &Blake2b512Random,
+        cost: &Arc<CostAccounting>,
+    ) -> Result<(), RholangError> {
+        let mut terms: Vec<OwnedTerm> = Vec::new();
         for s in &par.sends {
-            terms.push(Term::Send(s));
+            terms.push(OwnedTerm::Send(s.clone()));
         }
         for r in &par.receives {
-            terms.push(Term::Receive(r));
+            terms.push(OwnedTerm::Receive(r.clone()));
         }
         for n in &par.news {
-            terms.push(Term::New(n));
+            terms.push(OwnedTerm::New(n.clone()));
         }
         for m in &par.matches {
-            terms.push(Term::Match(m));
+            terms.push(OwnedTerm::Match(m.clone()));
         }
         for b in &par.bundles {
-            terms.push(Term::Bundle(b));
+            terms.push(OwnedTerm::Bundle(b.clone()));
         }
         for e in &par.exprs {
-            if matches!(e, Expr::EVar(_) | Expr::EMethod(_)) {
-                terms.push(Term::Expr(e));
+            match e {
+                Expr::EVar(v) => terms.push(OwnedTerm::ExprVar((**v).clone())),
+                Expr::EMethod(_) => terms.push(OwnedTerm::ExprMethod(e.clone())),
+                _ => {}
             }
         }
         if terms.len() > i16::MAX as usize {
@@ -1272,248 +1564,43 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 i16::MAX
             )));
         }
-        for (i, term) in terms.iter().enumerate() {
-            let r = if terms.len() == 1 {
-                rand.clone()
-            } else if terms.len() > 256 {
-                rand.split_short(u16::try_from(i).map_err(|e| RholangError::ReduceError(e.to_string()))?)
-            } else {
-                rand.split_byte(u8::try_from(i).map_err(|e| RholangError::ReduceError(e.to_string()))?)
-            };
-            Box::pin(self.eval_term(term, env, &r, cost)).await?;
-        }
-        Ok(())
-    }
-
-    async fn eval_term<'a>(
-        &self,
-        term: &Term<'a>,
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        match term {
-            Term::Send(s) => self.eval_send(s, env, rand, cost).await,
-            Term::Receive(r) => self.eval_receive(r, env, rand, cost).await,
-            Term::New(n) => self.eval_new(n, env, rand, cost).await,
-            Term::Match(m) => self.eval_match(m, env, rand, cost).await,
-            Term::Bundle(b) => self.eval_bundle(b, env, rand, cost).await,
-            Term::Expr(e) => match e {
-                Expr::EVar(v) => {
-                    let p = eval_var(v, env, cost)?;
-                    self.eval(&p, env, rand, cost).await
-                }
-                Expr::EMethod(_) => {
-                    let p = eval_expr_to_par(e, env, cost)?;
-                    self.eval(&p, env, rand, cost).await
-                }
-                _ => Err(RholangError::BugFoundError(format!(
-                    "Undefined term: {e:?}"
-                ))),
-            },
-        }
-    }
-
-    async fn eval_send(
-        &self,
-        send: &Send,
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        cost.charge(Costs::send_eval_cost())?;
-        let eval_chan = eval_expr(send.chan.as_ref(), env, cost)?;
-        let sub_chan = substitute_par_and_charge(&eval_chan, 0, env, cost)?;
-        let unbundled = match single_bundle(&sub_chan) {
-            Some(value) => {
-                if !value.write_flag {
-                    return Err(RholangError::ReduceError(
-                        "Trying to send on non-writeable channel.".to_string(),
-                    ));
-                }
-                (*value.body).clone()
+        let n = terms.len();
+        let mut jobs: Vec<Work> = Vec::with_capacity(n);
+        if self.concurrent {
+            // Resolve each term's pure part concurrently. The tokio multi-thread runtime bounds
+            // actual CPU parallelism to its worker count; the effect/child application below stays
+            // in DFS order, so the final state is schedule-independent.
+            let mut handles = Vec::with_capacity(n);
+            for (i, term) in terms.into_iter().enumerate() {
+                let r = split_rand(rand, i, n)?;
+                let e = (*env).clone();
+                let urn_map = self.urn_map.clone();
+                let c = cost.clone();
+                handles.push(tokio::spawn(async move { resolve_term(term, e, r, urn_map, c) }));
             }
-            None => sub_chan.eval(),
-        };
-        let data: Vec<Name> = send
-            .data
-            .iter()
-            .map(|d| eval_expr(d, env, cost))
-            .collect::<Result<_, _>>()?;
-        let subst_data: Vec<Name> = data
-            .iter()
-            .map(|d| substitute_par_and_charge(d, 0, env, cost))
-            .collect::<Result<_, _>>()?;
-        self.produce(
-            &SortedProc::new(unbundled),
-            ListParWithRandom {
-                pars: subst_data.into_iter().map(|d| SortedProc::new(d.eval())).collect(),
-                random_state: rand.clone(),
-            },
-            send.persistent,
-            cost,
-        )
-        .await
-    }
-
-    async fn eval_receive(
-        &self,
-        receive: &Receive,
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        cost.charge(Costs::receive_eval_cost())?;
-        let mut binds: Vec<(BindPattern, SortedProc)> = Vec::new();
-        for rb in &receive.binds {
-            let q = self.unbundle_receive(rb, env, cost)?;
-            let subst_patterns: Vec<Name> = rb
-                .patterns
-                .iter()
-                .map(|p| substitute_par_and_charge(p, 1, env, cost))
-                .collect::<Result<_, _>>()?;
-            binds.push((
-                BindPattern {
-                    patterns: subst_patterns.into_iter().map(|p| SortedProc::new(p.eval())).collect(),
-                    remainder: rb.remainder.as_deref().cloned(),
-                    free_count: i32::from(rb.free_count),
-                },
-                SortedProc::new(q),
-            ));
-        }
-        let subst_body =
-            substitute_par_and_charge(&receive.body, 0, &env.shift(receive.bind_count), cost)?;
-        self.consume(
-            &binds,
-            ParWithRandom {
-                body: SortedProc::new(subst_body),
-                random_state: rand.clone(),
-            },
-            receive.persistent,
-            receive.peek,
-            cost,
-        )
-        .await
-    }
-
-    fn unbundle_receive(
-        &self,
-        rb: &ReceiveBind,
-        env: &Env<Par>,
-        cost: &CostAccounting,
-    ) -> Result<Par, RholangError> {
-        let eval_src = eval_expr(rb.source.as_ref(), env, cost)?;
-        let subst = substitute_par_and_charge(&eval_src, 0, env, cost)?;
-        match single_bundle(&subst) {
-            Some(value) => {
-                if !value.read_flag {
-                    Err(RholangError::ReduceError(
-                        "Trying to read from non-readable channel.".to_string(),
-                    ))
-                } else {
-                    Ok((*value.body).clone())
+            for h in handles {
+                let resolved = h
+                    .await
+                    .map_err(|e| RholangError::ReduceError(format!("reducer task panicked: {e}")))??;
+                if let Some(w) = resolved {
+                    jobs.push(w);
                 }
             }
-            None => Ok(subst.eval()),
-        }
-    }
-
-    async fn eval_new(
-        &self,
-        new: &New,
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        cost.charge(Costs::new_bindings_cost(new.bind_count as i64))?;
-        let mut r = rand.clone();
-        let new_env = self.alloc(new.bind_count, &new.uri, &new.injections, env, &mut r)?;
-        self.eval(&new.p, &new_env, rand, cost).await
-    }
-
-    fn alloc(
-        &self,
-        count: i32,
-        urns: &[String],
-        injections: &BTreeMap<String, Par>,
-        env: &Env<Par>,
-        rand: &mut Blake2b512Random,
-    ) -> Result<Env<Par>, RholangError> {
-        let mut new_env = env.clone();
-        for _ in 0..(count - urns.len() as i32) {
-            let bytes = rand.next();
-            let addr = Par {
-                unforgeables: vec![GUnforgeable::GPrivate(GPrivate { id: bytes })],
-                ..Default::default()
-            };
-            new_env = new_env.put(addr);
-        }
-        for urn in urns {
-            new_env = self.add_urn(new_env, urn, injections)?;
-        }
-        Ok(new_env)
-    }
-
-    fn add_urn(
-        &self,
-        env: Env<Par>,
-        urn: &str,
-        injections: &BTreeMap<String, Par>,
-    ) -> Result<Env<Par>, RholangError> {
-        if let Some(p) = self.urn_map.get(urn) {
-            Ok(env.put(p.clone()))
-        } else if let Some(p) = injections.get(urn) {
-            Ok(env.put(p.clone()))
         } else {
-            Err(RholangError::BugFoundError(format!(
-                "No value set for `{urn}`. This is a bug in the normalizer or on the path from it."
-            )))
-        }
-    }
-
-    async fn eval_match(
-        &self,
-        m: &Match,
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        cost.charge(Costs::match_eval_cost())?;
-        let evaled_target = eval_expr(m.target.as_ref(), env, cost)?;
-        let subst_target = substitute_par_and_charge(&evaled_target, 0, env, cost)?;
-        self.first_match(&subst_target.eval(), &m.cases, env, rand, cost)
-            .await
-    }
-
-    async fn first_match(
-        &self,
-        target: &Par,
-        cases: &[MatchCase],
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        for case in cases {
-            let pattern = substitute_par_and_charge(&case.pattern, 1, env, cost)?;
-            if let Some(free_map) = spatial_match_result(target, &pattern.eval())? {
-                let mut new_env = env.clone();
-                for e in 0..i32::from(case.free_count) {
-                    new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
+            // Sequential reference (concurrency off): resolve each term in order, no fork-join.
+            for (i, term) in terms.into_iter().enumerate() {
+                let r = split_rand(rand, i, n)?;
+                let e = (*env).clone();
+                let resolved = resolve_term(term, e, r, self.urn_map.clone(), cost.clone())?;
+                if let Some(w) = resolved {
+                    jobs.push(w);
                 }
-                return self.eval(&case.source, &new_env, rand, cost).await;
             }
         }
+        for job in jobs.into_iter().rev() {
+            self.enqueue(job);
+        }
         Ok(())
-    }
-
-    async fn eval_bundle(
-        &self,
-        bundle: &Bundle,
-        env: &Env<Par>,
-        rand: &Blake2b512Random,
-        cost: &CostAccounting,
-    ) -> Result<(), RholangError> {
-        self.eval(&bundle.body, env, rand, cost).await
     }
 
     async fn produce(
@@ -1521,18 +1608,20 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         chan: &SortedProc,
         data: ListParWithRandom,
         persistent: bool,
-        cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         self.update_mergeable_channels(chan);
         let result = self.space.produce(chan, data.clone(), persistent).await?;
         match result {
             Some((continuation, data_list, peek)) => {
-                self.dispatch(&continuation, &data_list).await?;
+                // Enqueue the re-produce *below* the dispatched continuation so the continuation
+                // fully reduces before the persistent/peek re-produce (LIFO pops the continuation
+                // first), preserving the sequential reducer's ordering.
                 if persistent {
-                    Box::pin(self.produce(chan, data, persistent, cost)).await?;
+                    self.enqueue(Work::Produce(chan.clone(), data.clone(), true));
                 } else if peek {
-                    self.produce_peeks(&data_list, cost).await?;
+                    self.enqueue(Work::ProducePeeks(data_list.clone()));
                 }
+                self.dispatch(&continuation, &data_list).await?;
             }
             None => {}
         }
@@ -1545,7 +1634,6 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
         body: ParWithRandom,
         persistent: bool,
         peek: bool,
-        cost: &CostAccounting,
     ) -> Result<(), RholangError> {
         let patterns: Vec<BindPattern> = binds.iter().map(|(p, _)| p.clone()).collect();
         let sources: Vec<SortedProc> = binds.iter().map(|(_, s)| s.clone()).collect();
@@ -1569,12 +1657,12 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             .await?;
         match result {
             Some((continuation, data_list, p)) => {
-                self.dispatch(&continuation, &data_list).await?;
                 if persistent {
-                    Box::pin(self.consume(binds, body, persistent, peek, cost)).await?;
+                    self.enqueue(Work::Consume(binds.to_vec(), body.clone(), true, peek));
                 } else if p {
-                    self.produce_peeks(&data_list, cost).await?;
+                    self.enqueue(Work::ProducePeeks(data_list.clone()));
                 }
+                self.dispatch(&continuation, &data_list).await?;
             }
             None => {}
         }
@@ -1584,12 +1672,16 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
     async fn produce_peeks(
         &self,
         data_list: &[(SortedProc, ListParWithRandom, ListParWithRandom, bool)],
-        cost: &CostAccounting,
     ) -> Result<(), RholangError> {
-        for (chan, _, removed_data, persist) in data_list {
-            if !persist {
-                Box::pin(self.produce(chan, removed_data.clone(), false, cost)).await?;
-            }
+        // Re-produce the peeked (non-persistent) data, in order. Enqueue in reverse so the LIFO
+        // scheduler pops them back in the original order.
+        let jobs: Vec<Work> = data_list
+            .iter()
+            .filter(|(_, _, _, persist)| !persist)
+            .map(|(chan, _, removed_data, _)| Work::Produce(chan.clone(), removed_data.clone(), false))
+            .collect();
+        for job in jobs.into_iter().rev() {
+            self.enqueue(job);
         }
         Ok(())
     }
@@ -1766,7 +1858,7 @@ mod tests {
             BTreeMap::new(),
             SortedProc::default(),
         );
-        let cost = CostAccounting::from_initial(Costs::unsafe_max());
+        let cost = Arc::new(CostAccounting::from_initial(Costs::unsafe_max()));
         let env = Env::new();
         let rand = Blake2b512Random::new_random(128);
 
@@ -1788,6 +1880,36 @@ mod tests {
         assert_eq!(produced[0].0.as_par().exprs, vec![Expr::GInt(1)]);
         assert_eq!(produced[0].1.pars, vec![SortedProc::new(from_expr(Expr::GInt(2)))]);
         assert!(!produced[0].2);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn concurrent_term_resolution_matches_sequential_count() {
+        // Many independent sends resolve concurrently (fork-join in `expand_par`); the produce
+        // effects are applied in DFS order, so none are lost or duplicated.
+        let space = MockSpace {
+            produced: Mutex::new(Vec::new()),
+        };
+        let interp = DebruijnInterpreter::new(space, MockDispatch, BTreeMap::new(), SortedProc::default());
+        let cost = Arc::new(CostAccounting::from_initial(Costs::unsafe_max()));
+        let env = Env::new();
+        let rand = Blake2b512Random::new_random(128);
+        let sends: Vec<Send> = (0..64)
+            .map(|i| Send {
+                chan: Box::new(from_expr(Expr::GInt(i)).quote()),
+                data: vec![from_expr(Expr::GInt(i + 1000)).quote()],
+                persistent: false,
+                locally_free: AlwaysEqual(vec![]),
+                connective_used: false,
+            })
+            .collect();
+        let par = Par {
+            sends,
+            ..Default::default()
+        };
+        interp.eval(&par, &env, &rand, &cost).await.unwrap();
+
+        let produced = interp.space.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 64);
     }
 
     #[test]

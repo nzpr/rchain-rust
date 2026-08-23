@@ -370,22 +370,32 @@ impl CostAccounting {
 
     /// Charge `amount` phlogistons, raising `OutOfPhlogistonsError` if the balance goes negative
     /// (port of `charge`).
+    ///
+    /// The decrement is a single atomic read-modify-write (`fetch_update`), not a load-then-store,
+    /// so concurrent charges cannot lose an update (two racing `charge`s each observe the other's
+    /// effect on the balance).
     pub fn charge(&self, amount: Cost) -> Result<(), RholangError> {
-        let current = self.value.load(Ordering::SeqCst);
-        if current < 0 {
-            return Err(RholangError::OutOfPhlogistonsError);
-        }
         let amount_value = amount.value;
-        self.log.lock().unwrap_or_else(|p| p.into_inner()).push(amount);
-        let new_balance = current - amount_value;
-        if new_balance < 0 {
-            // Clamp the stored balance at 0 rather than leaving the cost cell negative on
-            // exhaustion (the error is still raised).
-            self.value.store(0, Ordering::SeqCst);
-            return Err(RholangError::OutOfPhlogistonsError);
+        match self.value.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            if current < 0 {
+                // Already exhausted: abort without changing the balance or logging.
+                None
+            } else {
+                // Clamp at 0 rather than leaving the cost cell negative on exhaustion (the error is
+                // still raised by the caller below).
+                Some((current - amount_value).max(0))
+            }
+        }) {
+            Ok(prev) => {
+                self.log.lock().unwrap_or_else(|p| p.into_inner()).push(amount);
+                if prev - amount_value < 0 {
+                    Err(RholangError::OutOfPhlogistonsError)
+                } else {
+                    Ok(())
+                }
+            }
+            Err(_) => Err(RholangError::OutOfPhlogistonsError),
         }
-        self.value.store(new_balance, Ordering::SeqCst);
-        Ok(())
     }
 }
 
@@ -410,6 +420,29 @@ mod tests {
         assert!(acc.charge(Cost::new(4, "x")).is_ok());
         assert_eq!(acc.get().value, 6);
         assert!(acc.charge(Cost::new(7, "y")).is_err());
+    }
+
+    #[test]
+    fn charge_is_atomic_under_concurrency() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let acc = Arc::new(CostAccounting::from_initial(Cost::new(1_000_000, "init")));
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let acc = Arc::clone(&acc);
+            handles.push(thread::spawn(move || {
+                for _ in 0..10_000 {
+                    let _ = acc.charge(Cost::new(1, "x"));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        // 8 threads * 10_000 charges of 1 each = 80_000 consumed; no charge may be lost to a race.
+        assert_eq!(acc.total_charged(), 80_000);
+        assert_eq!(acc.get().value, 1_000_000 - 80_000);
     }
 
     #[test]

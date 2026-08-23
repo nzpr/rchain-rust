@@ -33,6 +33,25 @@ pub async fn build_runtime_pair() -> (RhoRuntime, ReplayRhoRuntime) {
     (rho, replay)
 }
 
+/// Assemble a play runtime over a fresh in-memory store, with per-term concurrency toggled (used by
+/// the concurrent-vs-sequential differential test).
+pub async fn build_runtime(concurrent: bool) -> RhoRuntime {
+    let manager = InMemoryStoreManager::default();
+    let history =
+        create_history_repository::<SortedProc, BindPattern, ListParWithRandom, TaggedContinuation>(
+            &manager,
+            "rspace",
+        )
+        .await
+        .expect("history repository");
+    let reader = history.get_history_reader(history.root()).await;
+    let hot = Arc::new(InMemHotStore::new(reader.base()));
+    let (play, _replay) = RSpace::create_with_replay(history.clone(), hot, Arc::new(RhoMatch));
+    RhoRuntime::create_with_concurrency(play, history, SortedProc::default(), concurrent)
+        .await
+        .expect("rho runtime")
+}
+
 /// Look up a committed golden hex vector for `case` in `testdata/differential/<target>.tsv`.
 pub fn load_golden(case: &str, target: &str) -> Option<String> {
     let path = format!(

@@ -65,7 +65,7 @@ impl ReportingRuntime {
     ) -> std::io::Result<ReportingRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
         let native_store = space.native_store();
-        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store).await?;
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store, true).await?;
         Ok(ReportingRuntime {
             reducer: core.reducer,
             space,
@@ -100,7 +100,7 @@ impl ReportingRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
-            .eval(&Par::from(par.clone()), env, rand, self.cost.as_ref())
+            .eval(&Par::from(par.clone()), env, rand, &self.cost)
             .await
     }
 

@@ -70,4 +70,4 @@ Because `⟶` is deterministic up to `≡`, and `≡` is decidable, two implemen
 produce the same canonical result. That determinism is the property a blockchain's consensus depends
 on: every node computes the same state transition from the same deploy.
 
-> Next: how the *data* moves in a comm — [Substitution and matching](substitution-matching.md).
+> Next: reducing independent sub-processes simultaneously — [Concurrent reduction](concurrent-reduction.md).

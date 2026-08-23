@@ -46,7 +46,7 @@ pub type RhoReducer =
 /// reducer.
 pub fn setup_reducer(
     charging_space: ChargingRSpace,
-    cost: Arc<CostAccounting>,
+    _cost: Arc<CostAccounting>,
     mergeable_tag_name: SortedProc,
 ) -> Arc<RhoReducer> {
     let dispatcher = Arc::new(RholangAndScalaDispatcher::new(BTreeMap::new()));
@@ -57,12 +57,11 @@ pub fn setup_reducer(
         mergeable_tag_name,
     ));
     let reducer_for_eval = reducer.clone();
-    let cost_for_eval = cost.clone();
     dispatcher.set_eval(Box::new(move |par, env, rand| {
         let reducer = reducer_for_eval.clone();
-        let cost = cost_for_eval.clone();
         Box::pin(async move {
-            reducer.eval(&par, &env, &rand, cost.as_ref()).await
+            reducer.enqueue_par(par, env, rand);
+            Ok(())
         })
     }));
     reducer
@@ -129,6 +128,7 @@ pub(crate) async fn build_runtime_core(
     space: &RhoTuplespace,
     mergeable_tag_name: SortedProc,
     native_store: Arc<InMemNativeStore>,
+    concurrent: bool,
 ) -> std::io::Result<RuntimeCore> {
     let cost = Arc::new(CostAccounting::from_initial(crate::accounting::Costs::unsafe_max()));
     let charging_space = ChargingRSpace::new(space.clone(), cost.clone());
@@ -158,19 +158,20 @@ pub(crate) async fn build_runtime_core(
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-    let reducer = Arc::new(DebruijnInterpreter::new(
+    let mut reducer = DebruijnInterpreter::new(
         charging_space,
         dispatcher.clone(),
         urn_map,
         mergeable_tag_name,
-    ));
+    );
+    reducer.set_concurrent(concurrent);
+    let reducer = Arc::new(reducer);
     let reducer_for_eval = reducer.clone();
-    let cost_for_eval = cost.clone();
     dispatcher.set_eval(Box::new(move |par, env, rand| {
         let reducer = reducer_for_eval.clone();
-        let cost = cost_for_eval.clone();
         Box::pin(async move {
-            reducer.eval(&par, &env, &rand, cost.as_ref()).await
+            reducer.enqueue_par(par, env, rand);
+            Ok(())
         })
     }));
 
@@ -188,9 +189,18 @@ impl RhoRuntime {
         history: RhoHistoryRepository,
         mergeable_tag_name: SortedProc,
     ) -> std::io::Result<RhoRuntime> {
+        Self::create_with_concurrency(space, history, mergeable_tag_name, true).await
+    }
+
+    pub async fn create_with_concurrency(
+        space: RhoSpace,
+        history: RhoHistoryRepository,
+        mergeable_tag_name: SortedProc,
+        concurrent: bool,
+    ) -> std::io::Result<RhoRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
         let native_store = space.native_store();
-        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store).await?;
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store, concurrent).await?;
         Ok(RhoRuntime {
             reducer: core.reducer,
             space,
@@ -215,7 +225,7 @@ impl RhoRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
-            .eval(&Par::from(par.clone()), env, rand, self.cost.as_ref())
+            .eval(&Par::from(par.clone()), env, rand, &self.cost)
             .await
     }
 
@@ -387,7 +397,7 @@ impl ReplayRhoRuntime {
     ) -> std::io::Result<ReplayRhoRuntime> {
         let tuplespace: RhoTuplespace = space.clone();
         let native_store = space.native_store();
-        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store).await?;
+        let core = build_runtime_core(&tuplespace, mergeable_tag_name, native_store, true).await?;
         Ok(ReplayRhoRuntime {
             reducer: core.reducer,
             space,
@@ -411,7 +421,7 @@ impl ReplayRhoRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
-            .eval(&Par::from(par.clone()), env, rand, self.cost.as_ref())
+            .eval(&Par::from(par.clone()), env, rand, &self.cost)
             .await
     }
 
@@ -601,7 +611,7 @@ mod tests {
         };
         let rand = Blake2b512Random::new_random(128);
         reducer
-            .eval(&par, &Env::new(), &rand, cost.as_ref())
+            .eval(&par, &Env::new(), &rand, &cost)
             .await
             .unwrap();
 
