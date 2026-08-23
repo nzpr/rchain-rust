@@ -66,8 +66,9 @@ struct CensusJson {
 #[derive(serde::Deserialize)]
 struct ClosureJson {
     preparation: String,
-    #[allow(dead_code)]
-    branches: Vec<String>,
+    // NB: the census also carries a top-level `branches` list, but it is redundant with
+    // the keys of `event_classes` (each branch is already a key below), so it is not
+    // deserialized. serde ignores the unknown field.
     #[serde(rename = "event_classes")]
     event_classes: BTreeMap<String, BTreeMap<String, ClassJson>>,
 }
@@ -364,12 +365,18 @@ pub struct Synthesis {
 /// Blanket Fusion of the Aristotle syllogism: Subject (S), Middle term (M = `+`/`-`),
 /// Predicate (P). The two premises are `S+` and `-P`; fusing them and annihilating the
 /// middle gauge pair yields the synthesis, verified ZFA-closed.
+///
+/// The middle-term gauge pair sits exactly at the premise seam (the injected `[+, -]`
+/// between `subject` and `predicate`), so the residue is simply `subject ++ predicate`.
+/// We deliberately do *not* run [`annihilate_gauge`] over the whole concatenation: that
+/// helper cancels the first adjacent `+-`/`-+` anywhere, which would wrongly eat an
+/// incidental gauge pair inside `subject`/`predicate` (or a subject ending in `-`).
 pub fn dialectical_synthesis(subject: &[u8], predicate: &[u8]) -> Synthesis {
     let premise1 = [subject, &[PLUS]].concat(); // S + middle_pos
     let premise2 = [&[MINUS], predicate].concat(); // middle_neg + P
     let mut intersection = premise1;
     intersection.extend_from_slice(&premise2);
-    let geometry = annihilate_gauge(&intersection);
+    let geometry = [subject, predicate].concat();
     let zfa = achieves_zfa(&geometry);
     let phase = pauli_phase(&geometry);
     Synthesis {
@@ -406,6 +413,24 @@ mod synthesis_tests {
     #[test]
     fn parse_and_render_round_trip() {
         assert_eq!(to_symbols(&from_symbols("^<>v").unwrap()), "^<>v");
+    }
+
+    #[test]
+    fn premise_internal_gauge_pair_is_preserved() {
+        // The subject `+-` contains its own adjacent gauge pair. Blanket fusion must
+        // annihilate only the injected middle term, leaving the subject's own twists
+        // intact: `+-` ⊕ `>v` -> `+->v`, not `>v`.
+        let s = dialectical_synthesis(&[PLUS, MINUS], &[RIGHT, DOWN]);
+        assert_eq!(to_symbols(&s.intersection), "+-+->v");
+        assert_eq!(to_symbols(&s.geometry), "+->v");
+    }
+
+    #[test]
+    fn subject_ending_in_minus_keeps_its_tail() {
+        // A subject ending in `-` must not pair its tail with the injected `+`: the
+        // residue is the untouched subject followed by the predicate.
+        let s = dialectical_synthesis(&[UP, MINUS], &[RIGHT, DOWN]);
+        assert_eq!(to_symbols(&s.geometry), "^->v");
     }
 }
 
@@ -475,7 +500,9 @@ pub mod gov {
 
         let mut weight: BTreeMap<String, i64> = BTreeMap::new();
         for m in universe {
-            let base = 1 + trust.get(&m).copied().unwrap_or(0);
+            // Clamp: a caller-supplied negative trust level must not produce a
+            // negative (or zero) base weight.
+            let base = (1 + trust.get(&m).copied().unwrap_or(0)).max(0);
             if dv.contains(&m) {
                 *weight.entry(m).or_insert(0) += base;
                 continue;

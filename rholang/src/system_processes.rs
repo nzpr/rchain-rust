@@ -229,6 +229,11 @@ fn parse_twists(p: &Par) -> Result<Vec<u8>, RholangError> {
 // cannot spoof another member's id.
 
 /// Canonical member id: a string, or a deployer-id unforgeable (hex of its public key).
+///
+/// NB: the two namespaces share one string domain — a plain string member id equal to
+/// the base16 hex of someone's public key would collide with that unforgeable id. In
+/// practice the envelope layer binds the signer to `*deployerId`, so a member cannot
+/// *impersonate* another; this is only a shared-namespace caveat, not a spoofing vector.
 fn member_id(p: &Par) -> Option<String> {
     RhoString::unapply(p)
         .map(|s| s.to_string())

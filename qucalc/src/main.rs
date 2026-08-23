@@ -2,17 +2,22 @@
 //! "ways as a coefficient" invariant.
 //!
 //! Usage: `cargo run -- [path/to/census_inventory.json]`
-//! (defaults to the locally checked-out quantum-logical-framework data file)
+//!
+//! The census path is resolved as: an explicit CLI argument, then the `QUCALC_CENSUS`
+//! environment variable, then `quantum-logical-framework/data/census_inventory.json`
+//! relative to the working directory.
 
 use qucalc::{fold, Census};
 use std::path::PathBuf;
 
 fn main() {
-    let path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from("/home/jimscarver/quantum-logical-framework/data/census_inventory.json")
-    });
+    let path = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("QUCALC_CENSUS").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("quantum-logical-framework/data/census_inventory.json"));
 
-    let census = Census::load(&path).expect("failed to load census_inventory.json");
+    let census = Census::load(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
 
     // 1. The distribution of `ways` across every class in the inventory.
     let mut all_ways: Vec<u64> = census
@@ -22,6 +27,11 @@ fn main() {
         .collect();
     all_ways.sort_unstable();
     let n = all_ways.len();
+    if n == 0 {
+        println!("== census `ways` distribution (0 classes) ==");
+        println!("   (empty census — nothing to report)");
+        return;
+    }
     let mean = all_ways.iter().sum::<u64>() as f64 / n as f64;
     println!("== census `ways` distribution ({n} classes) ==");
     println!(
