@@ -28,6 +28,9 @@ jobs:
       - name: Type-system audit gate
         run: tools/audit-type-system.sh
 
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
       - name: Test
         run: cargo test --workspace --exclude rchain-crypto
 

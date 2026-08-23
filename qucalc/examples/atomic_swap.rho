@@ -1,0 +1,20 @@
+// Atomic Swap — all-or-nothing two-party exchange
+// ===============================================
+// Mirror of quantum-os `AtomicSwapDemo.md` (`/rdv swap`): neither party fronts
+// value, no escrow, no third party. The rholang `for`-join is the atomicity:
+// the swap consumes both deposits *together* and only then delivers each to the
+// other — it commits as one composite event, or not at all.
+//
+//   AtomicSwap!(aliceDeposit, bobDeposit, toAlice, toBob)
+//
+//   Alice deposits on `aliceDeposit`, Bob on `bobDeposit`; when both are
+//   present, Alice receives Bob's token and Bob receives Alice's — atomically.
+
+new AtomicSwap in {
+  contract AtomicSwap(depositA, depositB, toA, toB) = {
+    for (@a <- depositA; @b <- depositB) {
+      toA!(b) |
+      toB!(a)
+    }
+  }
+}

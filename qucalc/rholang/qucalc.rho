@@ -1,0 +1,80 @@
+// QuCalc rholang library
+// =====================
+//
+// A capability-based ZFA proof system on top of the `rho:qucalc:*` system processes,
+// plus a signed "decision of record" for group ratification.
+//
+// Surface (each returns on `ret`):
+//   QuCalc!("zfa",    twists, ret)             -> (zfa: Bool, phase: Int)
+//   QuCalc!("grant",  twists, ret)             -> capUri          (or Nil if not ZFA)
+//   QuCalc!("verify", cap, ret)                -> Bool            (proof persists across deploys)
+//   QuCalc!("fuse",   subject, predicate, ret) -> (geometry, capUri)  (or Nil)
+//   QuCalc!("ratify", proposal, twists, nonce, ret) -> (capUri, decisionUri)  (or Nil)
+//
+// `ratify` is the group-ratification entry point: it mints the proof as a capability
+// (`rho:qucalc:grant`) and records it as a *signed, nonce-guarded* decision of record
+// via `rho:registry:insertSigned:secp256k1`, attributed to the deployer's identity.
+//
+// For full multi-party quorum ratification (N-of-M signed confirmations before a
+// decision executes), the reference is the existing `MultiSigRevVault.rho`
+// (confirm-quorum over `deployerAuthKey` + a nonce-keyed confirmation set). A qucalc
+// poll is the same pattern with the ZFA capability in place of the transfer payload.
+
+new
+  QuCalc,
+  zfa(`rho:qucalc:zfa`),
+  grant(`rho:qucalc:grant`),
+  verify(`rho:qucalc:verify`),
+  fuse(`rho:qucalc:fuse`),
+  insertSigned(`rho:registry:insertSigned:secp256k1`),
+  deployerId(`rho:rchain:deployerId`)
+in {
+
+  // Verify a twist list is ZFA-balanced. Replies (zfa: Bool, phase: Int).
+  contract QuCalc(@"zfa", @twists, ret) = {
+    zfa!(twists, *ret)
+  } |
+
+  // Mint a ZFA-balanced proof as a capability (content-addressed registry URI).
+  contract QuCalc(@"grant", @twists, ret) = {
+    grant!(twists, *ret)
+  } |
+
+  // Re-verify a capability. The proof persists in the registry across deploys.
+  contract QuCalc(@"verify", @cap, ret) = {
+    verify!(cap, *ret)
+  } |
+
+  // Dialectical synthesis (Blanket Fusion): thesis ⊕ antithesis via the shared
+  // middle term -> stable fluxoid, minted as a capability.
+  contract QuCalc(@"fuse", @subject, @predicate, ret) = {
+    fuse!(subject, predicate, *ret)
+  } |
+
+  // Ratify a proof as a signed decision of record.
+  //
+  //   proposal : what is being decided (e.g. a semantic name or twist list)
+  //   twists   : the ZFA twist sequence to prove
+  //   nonce    : monotonically increasing (anti-replay, like MultiSigRevVault)
+  //
+  // Steps: grant the proof -> insertSigned((nonce, (proposal, cap))) -> (cap, decisionUri).
+  contract QuCalc(@"ratify", @proposal, @twists, @nonce, ret) = {
+    new capCh, uriCh in {
+      grant!(twists, *capCh) |
+      for (@cap <- capCh) {
+        match cap {
+          Nil => ret!(Nil)                          // proof is not ZFA: nothing to ratify
+          _ => {
+            insertSigned!((nonce, (proposal, cap)), *deployerId, *uriCh) |
+            for (@uri <- uriCh) {
+              match uri {
+                Nil => ret!(Nil)                    // stale nonce: retry with a fresh nonce
+                _ => ret!((cap, uri))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

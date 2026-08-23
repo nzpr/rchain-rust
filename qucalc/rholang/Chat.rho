@@ -1,0 +1,44 @@
+// Chat — a publish/subscribe mailbox
+// ==================================
+// Port of rgov `rholang/core/Chat.rho`. A chat exposes three facets:
+//   pub : append a message for every subscriber
+//   sub : register a listener (each message is delivered in order)
+//   isend: check whether a channel is the current tail (end-of-stream)
+
+new Chat in {
+  contract Chat(ret) = {
+    new head, tail, pub, sub, isend in {
+      tail!(*head) |
+      ret!(*pub, *sub, *isend) |
+
+      // Deliver the stream to a listener, one message at a time.
+      contract sub(listener) = {
+        new loop, ack in {
+          loop!(*head) |
+          contract loop(curr) = {
+            for (value, next <- curr) {
+              listener!(*value, *ack) |
+              for (_ <- ack) { loop!(*next) }
+            }
+          }
+        }
+      } |
+
+      // Append a message.
+      contract pub(msg, ret) = {
+        new newTail in {
+          for (end <- tail) {
+            end!(*msg, *newTail) |
+            tail!(*newTail) |
+            for (_ <<- tail) { ret!(Nil) }
+          }
+        }
+      } |
+
+      // Is `next` the current tail?
+      contract isend(next, ret) = {
+        for (end <<- tail) { ret!(*end == *next) }
+      }
+    }
+  }
+}

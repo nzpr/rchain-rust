@@ -1,0 +1,54 @@
+// Promissory Note — declare / grant / redeem a bearer capability
+// ==============================================================
+// Mirror of quantum-os `PromissoryNoteDemo.md` (the DarkWow promissory-note
+// lifecycle: TokenMint → Mint → Transfer → Redeem). The authority and each note
+// are unforgeable, content-addressed registry capabilities — possession of the
+// URI is the bearer authority.
+//
+//   /note declare USD      -> Note!("declare", "USD", ret)            -> authority
+//   /note grant USD 100    -> Note!("grant", authority, 100, ret)     -> note
+//   /note redeem USD 10    -> Note!("redeem", authority, 10, ret)     -> receipt
+//
+// Conservation (split/merge of a note into parts that sum to the whole) is the
+// RChain purse machinery: `rho:rchain:revVault` and the genesis `MakeMint`
+// (`makePurse` / `split` / `deposit` / `getBalance`) enforce non-negative,
+// sum-preserving transfer — the intent port of the demo's twist-length
+// conservation.
+
+new Note,
+  insertArbitrary(`rho:registry:insertArbitrary`),
+  lookup(`rho:registry:lookup`)
+in {
+  // Mint issuer authority for a currency (the unforgeable proof of issuance).
+  contract Note(@"declare", @currency, ret) = {
+    new ch in {
+      insertArbitrary!({"kind": "issuer", "currency": currency}, *ch) |
+      for (@authority <- ch) { ret!(authority) }
+    }
+  } |
+
+  // Mint a bearer note of a given denomination.
+  contract Note(@"grant", @authority, @amount, ret) = {
+    new ch in {
+      insertArbitrary!({"kind": "note", "authority": authority, "amount": amount}, *ch) |
+      for (@note <- ch) { ret!(note) }
+    }
+  } |
+
+  // Redeem a note: mint a permanent, non-transferable receipt (by convention
+  // the dispatcher refuses to transfer anything labeled "receipt").
+  contract Note(@"redeem", @authority, @amount, ret) = {
+    new ch in {
+      insertArbitrary!({"kind": "receipt", "authority": authority, "amount": amount}, *ch) |
+      for (@receipt <- ch) { ret!(receipt) }
+    }
+  } |
+
+  // Inspect a note / authority / receipt's data (persists in the registry).
+  contract Note(@"lookup", @uri, ret) = {
+    new ch in {
+      lookup!(uri, *ch) |
+      for (@found <- ch) { ret!(found) }
+    }
+  }
+}

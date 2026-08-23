@@ -1,0 +1,41 @@
+// Multisig — N-of-M quorum co-signature
+// =====================================
+// Mirror of quantum-os `MultisigDemo.md`: a nonce-keyed confirmation set where
+// each signer self-signs (keyed by their unforgeable `*deployerId`), and the
+// decision fires only when the set reaches the quorum. Possessing one token is
+// not enough; the quorum must be met.
+//
+//   Multisig!("confirm", nonce, proposal, ret)        -> count    (self-signed)
+//   Multisig!("ratify",  nonce, proposal, quorum, ret) -> Bool | Nil
+//
+// For a signed, nonce-guarded decision-of-record attributed to the deployer,
+// compose with `rho:registry:insertSigned:secp256k1` — see gov.rho's `ratify`.
+
+new Multisig, deployerId(`rho:rchain:deployerId`) in {
+  new confirmationsCh in {
+    confirmationsCh!({}) |
+
+    // Add the deployer to the confirmation set for (nonce, proposal).
+    contract Multisig(@"confirm", @nonce, @proposal, ret) = {
+      for (@confirmations <- confirmationsCh) {
+        let @joined <- confirmations.getOrElse((nonce, proposal), Set()).union(Set(*deployerId)) in {
+          confirmationsCh!(confirmations.set((nonce, proposal), joined)) |
+          ret!(joined.size())
+        }
+      }
+    } |
+
+    // Ratify once the confirmation set reaches the quorum (min 2, like censure).
+    contract Multisig(@"ratify", @nonce, @proposal, @quorum, ret) = {
+      for (@confirmations <- confirmationsCh) {
+        if (confirmations.getOrElse((nonce, proposal), Set()).size() >= quorum) {
+          confirmationsCh!(confirmations.delete((nonce, proposal))) |
+          ret!(true)
+        } else {
+          confirmationsCh!(confirmations) |
+          ret!(Nil)
+        }
+      }
+    }
+  }
+}

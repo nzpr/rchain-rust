@@ -1,0 +1,238 @@
+// QuCalc governance rholang library
+// =================================
+//
+// Liquid democracy + liquid trust on the QuCalc substrate (see quantum-os
+// `Governance.md`). The deterministic decision core lives in the `rho:gov:*`
+// system processes; this library holds the *signed envelopes* and composes the
+// natives into a `/gov` surface. This is the intent port of rgov's `rholang/core`
+// (Group / Issue / Ballot / delegateVote / castVote / tallyVotes).
+//
+// Identity is capability-backed, not a spoofable string: a member's id is the
+// deployer's unforgeable `*deployerId`, and group membership is a *minted
+// capability URI* in the registry (`insertArbitrary` / `lookup`). The envelope
+// contracts below are therefore genuinely self-signed — you can only set YOUR
+// OWN delegate / trust ratings / censures / ballots, keyed by your own
+// unforgeable identity. The natives re-apply every conferral/quorum cap on
+// recompute, so a forged high rating from a low-level peer is capped.
+//
+// The governing rule (recomputed by every peer, no central counter):
+//   * a member who casts a ballot votes directly (overrides delegation);
+//   * otherwise their vote flows transitively to their delegate's first voter;
+//   * cycles / dead-ends abstain;
+//   * base weight = 1 + trust level, where trust descends from admins (level 5)
+//     strictly decreasing, so two level-0 members cannot bootstrap each other.
+//
+// Surface (each returns on `ret` unless noted):
+//   Gov!("new", name, ret)                        -> (groupCapUri, groupRecord)
+//   Gov!("member", "add"|"remove", name, peer, ret) -> capUri | Nil  (admin-gated)
+//   Gov!("isMember", name, peer, ret)             -> Bool (registry-verified)
+//
+//   // self-signed envelopes (signer = *deployerId):
+//   Gov!("delegate", delegate, ret)               -> Bool   (Nil clears)
+//   Gov!("trust", ratee, level, ret)              -> Bool   (0 clears)
+//   Gov!("censure", target, ret)                  -> Bool
+//   Gov!("cast", issue, ballot, ret)              -> Bool
+//
+//   // pure recomputations (inputs assembled from the envelopes above):
+//   Gov!("weights", voters, delegations, levels, ret) -> Map<voter, weight>
+//   Gov!("levels", ratings, admins, ret)              -> Map<member, level>
+//   Gov!("censureResult", censures, levels, vouchers, ret) -> (discredited, levels)
+//   Gov!("tally", ballots, weights, mode, ret)        -> winner | Nil
+//   Gov!("ratify", decision, nonce, ret)              -> decisionUri | Nil
+
+new
+  Gov,
+  resolveWeights(`rho:gov:resolveWeights`),
+  trustLevels(`rho:gov:trustLevels`),
+  censure(`rho:gov:censure`),
+  tally(`rho:gov:tally`),
+  insertArbitrary(`rho:registry:insertArbitrary`),
+  insertSigned(`rho:registry:insertSigned:secp256k1`),
+  lookup(`rho:registry:lookup`),
+  deployerId(`rho:rchain:deployerId`)
+in {
+
+  // --- state -------------------------------------------------------------
+  // groups      : Map<name, {admin, members}>       members: Map<deployerId, capUri>
+  // delegations : Map<deployerId, delegateId>       (self-signed)
+  // ratings     : Map<raterId, Map<rateeId, level>> (outgoing, self-signed)
+  // censures    : Map<censorId, Set<targetId>>      (self-signed)
+  // ballots     : Map<issue, Map<memberId, List<option>>>
+  new groupsCh, delegationsCh, ratingsCh, censuresCh, ballotsCh in {
+    groupsCh!({}) | delegationsCh!({}) | ratingsCh!({}) | censuresCh!({}) | ballotsCh!({}) |
+
+    // --- groups & membership (capability-backed) -------------------------
+
+    // Create a group; the deployer becomes admin. Mints a group capability.
+    contract Gov(@"new", @name, ret) = {
+      for (@groups <- groupsCh) {
+        if (groups.get(name) == Nil) {
+          new capCh in {
+            insertArbitrary!({"group": name, "admin": *deployerId}, *capCh) |
+            for (@capUri <- capCh) {
+              groupsCh!(groups.set(name, {"admin": *deployerId, "members": {}})) |
+              ret!((capUri, {"admin": *deployerId, "members": {}}))
+            }
+          }
+        } else {
+          groupsCh!(groups) | ret!(Nil)            // name taken
+        }
+      }
+    } |
+
+    // Admin-gated roster change: mint (or revoke) a membership capability for `peer`.
+    contract Gov(@"member", @"add", @name, @peer, ret) = {
+      for (@groups <- groupsCh) {
+        if (groups.get(name) == Nil) {
+          groupsCh!(groups) | ret!(Nil)            // no such group
+        } else {
+          if (groups.get(name).get("admin") == *deployerId) {
+            new capCh in {
+              insertArbitrary!({"group": name, "member": peer}, *capCh) |
+              for (@capUri <- capCh) {
+                let @members <- groups.get(name).get("members") in {
+                  groupsCh!(groups.set(name,
+                    groups.get(name).set("members", members.set(peer, capUri)))) |
+                  ret!(capUri)
+                }
+              }
+            }
+          } else {
+            groupsCh!(groups) | ret!(Nil)          // not the admin
+          }
+        }
+      }
+    } |
+
+    contract Gov(@"member", @"remove", @name, @peer, ret) = {
+      for (@groups <- groupsCh) {
+        if (groups.get(name) == Nil) {
+          groupsCh!(groups) | ret!(Nil)            // no such group
+        } else {
+          if (groups.get(name).get("admin") == *deployerId) {
+            let @members <- groups.get(name).get("members") in {
+              groupsCh!(groups.set(name,
+                groups.get(name).set("members", members.delete(peer)))) |
+              ret!(true)
+            }
+          } else {
+            groupsCh!(groups) | ret!(Nil)          // not the admin
+          }
+        }
+      }
+    } |
+
+    // Is `peer` a member? True iff the minted capability persists in the registry.
+    contract Gov(@"isMember", @name, @peer, ret) = {
+      for (@groups <- groupsCh) {
+        if (groups.get(name) == Nil) {
+          ret!(false)
+        } else {
+          match groups.get(name).get("members").get(peer) {
+            Nil => ret!(false)
+            capUri => {
+              new lch in {
+                lookup!(capUri, *lch) |
+                for (@found <- lch) {
+                  match found {
+                    Nil => ret!(false)
+                    _   => ret!(true)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    // --- self-signed envelopes (signer = *deployerId) ----------------------
+
+    // Standing, revocable, transitive delegation. Nil clears.
+    contract Gov(@"delegate", @delegate, ret) = {
+      for (@delegations <- delegationsCh) {
+        match delegate {
+          Nil => { delegationsCh!(delegations.delete(*deployerId)) | ret!(true) }
+          _   => { delegationsCh!(delegations.set(*deployerId, delegate)) | ret!(true) }
+        }
+      }
+    } |
+
+    // Affirmative trust rating. 0 clears. The native `trustLevels` re-applies the
+    // "strictly below your own level" cap on every recompute.
+    contract Gov(@"trust", @ratee, @level, ret) = {
+      for (@ratings <- ratingsCh) {
+        match level {
+          0 => { ratingsCh!(ratings.set(*deployerId, ratings.getOrElse(*deployerId, {}).delete(ratee))) | ret!(true) }
+          _ => { ratingsCh!(ratings.set(*deployerId, ratings.getOrElse(*deployerId, {}).set(ratee, level))) | ret!(true) }
+        }
+      }
+    } |
+
+    // Censure flag. Only counted when the censurer's standing is >= the target's.
+    contract Gov(@"censure", @target, ret) = {
+      for (@censures <- censuresCh) {
+        censuresCh!(censures.set(*deployerId, censures.getOrElse(*deployerId, Set()).union(Set(target)))) |
+        ret!(true)
+      }
+    } |
+
+    // Cast a ballot: issue -> member -> ranked list of options.
+    contract Gov(@"cast", @issue, @ballot, ret) = {
+      for (@ballots <- ballotsCh) {
+        ballotsCh!(ballots.set(issue, ballots.getOrElse(issue, {}).set(*deployerId, ballot))) |
+        ret!(true)
+      }
+    } |
+
+    // --- pure recomputations (thin wrappers over the natives) -------------
+
+    contract Gov(@"weights", @voters, @delegations, @levels, ret) = {
+      resolveWeights!(voters, delegations, levels, *ret)
+    } |
+
+    contract Gov(@"levels", @ratings, @admins, ret) = {
+      trustLevels!(ratings, admins, *ret)
+    } |
+
+    contract Gov(@"censureResult", @censures, @levels, @vouchers, ret) = {
+      censure!(censures, levels, vouchers, *ret)
+    } |
+
+    contract Gov(@"tally", @ballots, @weights, @mode, ret) = {
+      tally!(ballots, weights, mode, *ret)
+    } |
+
+    // End-to-end tally over the envelopes: levels -> weights -> winner.
+    contract Gov(@"tallyEnvelopes", @issue, @ratings, @admins, ret) = {
+      new lvlCh, weightsCh in {
+        trustLevels!(ratings, admins, *lvlCh) |
+        for (@levels <- lvlCh; @delegations <- delegationsCh; @ballots <- ballotsCh) {
+          match ballots.get(issue) {
+            Nil => ret!(Nil)
+            _ => {
+              resolveWeights!(ballots.get(issue).keys(), delegations, levels, *weightsCh) |
+              for (@weights <- weightsCh) {
+                tally!(ballots.get(issue), weights, "ranked", *ret)
+              }
+            }
+          }
+        }
+      }
+    } |
+
+    // Ratify a decision as a signed, nonce-guarded decision of record, attributed
+    // to the deployer (mirrors qucalc.rho's `ratify`).
+    contract Gov(@"ratify", @decision, @nonce, ret) = {
+      new uriCh in {
+        insertSigned!((nonce, decision), *deployerId, *uriCh) |
+        for (@uri <- uriCh) {
+          match uri {
+            Nil => ret!(Nil)                        // stale nonce: retry with a fresh nonce
+            _   => ret!(uri)
+          }
+        }
+      }
+    }
+  }
+}

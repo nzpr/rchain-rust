@@ -1,0 +1,38 @@
+// Inbox — a capability-facet message store
+// ========================================
+// Port (simplified) of rgov `rholang/core/Inbox.rho`. An inbox exposes three
+// facets: `read` (take), `peek` (look without taking), and `write` (add).
+//
+// The rgov original matches messages by type/subtype with a parallel-pattern
+// (`{[=type ...item] | rest}`); this Rust rholang dialect does not support that
+// pattern, so the store is a plain list and matching is left to the caller.
+
+new Inbox in {
+  contract Inbox(capabilities) = {
+    new read, write, peek, box in {
+      capabilities!(bundle+{*read}, bundle+{*write}, bundle+{*peek}) |
+      box!([]) |
+
+      // Take all messages (returns the list, clears the box).
+      contract read(ret) = {
+        for (items <- box) {
+          ret!(*items) |
+          box!([])
+        }
+      } |
+
+      // Peek at all messages without removing.
+      contract peek(ret) = {
+        for (items <<- box) { ret!(*items) }
+      } |
+
+      // Add a message.
+      contract write(@message, ret) = {
+        for (items <- box) {
+          box!(*items ++ [message]) |
+          ret!(true)
+        }
+      }
+    }
+  }
+}

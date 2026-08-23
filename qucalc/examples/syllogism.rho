@@ -1,0 +1,35 @@
+// Syllogism — collaborative dialectical synthesis
+// ==============================================
+// Mirror of quantum-os `SyllogismDemo.md`: two peers prove "All Men are Mortal,
+// Socrates is a Man, therefore Socrates is Mortal" by naming ZFA-balanced twist
+// premises, fusing them through the shared middle term, and sealing the
+// conclusion as an unforgeable capability.
+//
+//   Demo step                            | This contract
+//   /lemma mortality ^v                  | Syllogism!("premise", [0,1], ret)        -> (zfa, phase)
+//   /lemma socrates +-                   | Syllogism!("premise", [6,7], ret)
+//   /qucalc @mortality @socrates         | Syllogism!("deduce", [0,1], [6,7], ret)  -> (geometry, cap) | Nil
+//   /lemma mortal @mortality @socrates   | Syllogism!("seal", geometry, ret)        -> capUri | Nil
+//   /zfa cap:mortal:...                  | Syllogism!("verify", cap, ret)           -> Bool
+//
+// The middle term (+/-) is the shared gauge that annihilates in Blanket Fusion;
+// the residue ^v+- is the stable R=4 fluxoid — "Socrates is Mortal".
+
+new Syllogism,
+  zfa(`rho:qucalc:zfa`),
+  grant(`rho:qucalc:grant`),
+  verify(`rho:qucalc:verify`),
+  fuse(`rho:qucalc:fuse`)
+in {
+  // Verify a twist sequence is ZFA-balanced (replies (zfa: Bool, phase: Int)).
+  contract Syllogism(@"premise", @twists, ret) = { zfa!(twists, *ret) } |
+
+  // Dialectical synthesis: thesis ⊕ antithesis via the shared middle term.
+  contract Syllogism(@"deduce", @subject, @predicate, ret) = { fuse!(subject, predicate, *ret) } |
+
+  // Seal a ZFA-balanced conclusion as an unforgeable capability.
+  contract Syllogism(@"seal", @twists, ret) = { grant!(twists, *ret) } |
+
+  // Re-verify a sealed proof (persists in the registry across deploys).
+  contract Syllogism(@"verify", @cap, ret) = { verify!(cap, *ret) }
+}
