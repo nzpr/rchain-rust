@@ -178,7 +178,8 @@ approval), and the *signed decision of record* is the audit trail (`rho:registry
 ## Implementation tactics
 
 - Manually simulate the process off-chain.
-- Capitalize on the liquid-democracy and trust-networking rholang prototype and other EIES3 work.
+- Capitalize on the liquid-democracy and trust-networking rholang prototype and other
+  [EIES3 (RhoGOV)](https://opencollective.com/eies3) work.
 - Rnode backend for *ConsiderIt*.
 - Add stakeholder-group membership to group members — see `Gov!("member", …)` in
   [`gov.rho`](../../../qucalc/rholang/gov.rho).
@@ -198,6 +199,16 @@ approval), and the *signed decision of record* is the audit trail (`rho:registry
   design and the self-signed envelope model.
 - [`references.md`](references.md) — upstream `Group_Decisions.md`, `Governance.md`, and
   `Consensus.md` in the forked quantum-os repo.
+
+## Funding
+
+This work is funded through the [Rho Vision (formerly RChain Community)](https://opencollective.com/rho-vision-community)
+collective on OpenCollective:
+
+- [Rholang – Rust Implementation](https://opencollective.com/rholang-rust) — the Rust rewrite
+  (`rchain-rust`).
+- [RhoGOV: EIES3](https://opencollective.com/eies3) — electronic information exchange /
+  governance (the project behind the tactics above).
 
 ## Footnotes
 

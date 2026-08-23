@@ -58,6 +58,15 @@ and the machine-checked formalizations in [`spec/`](spec/) (the 19-law invariant
 **faithful implementation of the ρ-calculus**: the 19 laws are the oracle; the Scala node was the
 port reference.
 
+## Funding
+
+Development is funded via [OpenCollective](https://opencollective.com/rho-vision-community), under
+the **Rho Vision (formerly RChain Community)** collective:
+
+- [Rholang – Rust Implementation](https://opencollective.com/rholang-rust) — this rewrite.
+- [RhoGOV: EIES3](https://opencollective.com/eies3) — electronic information exchange / governance.
+- [RHO Tools in Rust](https://opencollective.com/rho-tools-in-rust).
+
 ## Layout
 
 Twelve crates mirror the original sbt modules, ported in dependency order. The per-crate status, the
