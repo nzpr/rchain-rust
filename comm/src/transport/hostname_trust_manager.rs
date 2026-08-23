@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, Error, SignatureScheme};
@@ -191,17 +192,13 @@ impl ClientCertVerifier for NodeIdClientVerifier {
 }
 
 fn load_certs(pem: &str) -> Result<Vec<CertificateDer<'static>>, String> {
-    let mut reader = std::io::BufReader::new(pem.as_bytes());
-    rustls_pemfile::certs(&mut reader)
+    CertificateDer::pem_reader_iter(pem.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
 }
 
 fn load_key(pem: &str) -> Result<PrivateKeyDer<'static>, String> {
-    let mut reader = std::io::BufReader::new(pem.as_bytes());
-    rustls_pemfile::private_key(&mut reader)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "no private key found".to_string())
+    PrivateKeyDer::from_pem_reader(pem.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Build a mutual-TLS server config from the node's cert/key (server requires a client cert whose

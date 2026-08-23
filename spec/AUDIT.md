@@ -545,8 +545,19 @@ stack; fixed by dependency changes in `node/Cargo.toml`:
 - **hocon 0.9 `default-features = false`** — dropped `url-support` (the node parses HOCON text only,
   never URLs), eliminating hocon's `reqwest 0.11` dependency.
 
-Remaining `cargo audit` output is 2 **unmaintained-crate warnings** (`encoding 0.2.33`,
-`rustls-pemfile 2.2.0`) — benign, left as-is. Note `Cargo.lock` is gitignored in this repo, so the
-audited dependency set is not pinned in git; a fresh build re-resolves within the `node/Cargo.toml`
-constraints (which already force the patched versions).
+**Unmaintained-crate warnings** (informational, no known vulns):
+
+- **rustls-pemfile 2.2.0 — fixed.** Migrated `comm` to the maintained `rustls-pki-types` API
+  (`rustls::pki_types::pem::PemObject`: `CertificateDer::pem_reader_iter` /
+  `PrivateKeyDer::from_pem_reader`), removing the `rustls-pemfile` dependency. `comm/Cargo.toml` +
+  `hostname_trust_manager.rs`.
+- **encoding 0.2.33 — accepted residual.** Pulled transitively via `hocon 0.9 → java-properties 1.4`
+  (legacy charset handling for `.properties` files; the node parses UTF-8 HOCON text only). The only
+  removal path is swapping `hocon` for the third-party `hocon_` fork (0.10.17, 4 minor versions
+  diverged, uses `reqwest 0.13`/`java-properties 2.0`) — a disproportionate risk to the node's
+  critical config-parsing startup path for a non-vulnerability. Documented rather than swapped.
+
+Note `Cargo.lock` is gitignored in this repo, so the audited dependency set is not pinned in git; a
+fresh build re-resolves within the `node/Cargo.toml` constraints (which already force the patched
+versions).
 
