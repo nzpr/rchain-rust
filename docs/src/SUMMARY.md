@@ -44,6 +44,7 @@
 - [Overview](qucalc/README.md)
 - [Architecture](qucalc/architecture.md)
 - [Examples](qucalc/examples.md)
+- [Upstream references](qucalc/references.md)
 
 ---
 

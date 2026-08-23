@@ -51,9 +51,24 @@ unforgeable-identity machinery is model-agnostic — it does not care *which* AI
 produced the proof, only that the proof is ZFA-closed and the envelope is
 self-signed. That is the seam along which additional AI systems integrate.
 
-In exchange, quantum-os (the QuCalc/QLF project) gains what RChain already
-provides: unforgeable names, a persistent content-addressed registry, consensus
-and replay-determinism, and a gas market for computation.
+In exchange, [quantum-os](https://github.com/rchain-community/quantum-os) and the
+[Quantum Logical Framework](https://github.com/rchain-community/quantum-logical-framework)
+(both forked into the RChain community org) gain what RChain already provides:
+unforgeable names, a persistent content-addressed registry, consensus and
+replay-determinism, and a gas market for computation.
+
+The concrete **AI / agent / decision-support** documents this integration is built
+on are indexed in [`references.md`](references.md): native AI
+([`AI.md`](https://github.com/rchain-community/quantum-logical-framework/blob/main/AI.md),
+[`TheQuantumBrain.md`](https://github.com/rchain-community/quantum-logical-framework/blob/main/TheQuantumBrain.md),
+[`DAICE_QLF_Framing.md`](https://github.com/rchain-community/quantum-logical-framework/blob/main/DAICE_QLF_Framing.md)),
+agent support
+([`Developer_Guide.md`](https://github.com/rchain-community/quantum-os/blob/main/Developer_Guide.md),
+[`MyRoom.md`](https://github.com/rchain-community/quantum-os/blob/main/MyRoom.md)), and
+decision support
+([`Governance.md`](https://github.com/rchain-community/quantum-os/blob/main/Governance.md),
+[`Group_Decisions.md`](https://github.com/rchain-community/quantum-os/blob/main/Group_Decisions.md),
+[`Consensus.md`](https://github.com/rchain-community/quantum-os/blob/main/Consensus.md)).
 
 ## Documentation map
 
@@ -61,6 +76,7 @@ and replay-determinism, and a gas market for computation.
 |---|---|
 | [`architecture.md`](architecture.md) | The technical architecture: crate layout, ZFA predicate, dialectical synthesis, governance core, system processes, determinism guarantees. |
 | [`examples.md`](examples.md) | Catalog of the runnable rholang examples and the Rust coprocessor. |
+| [`references.md`](references.md) | Upstream AI / agent / decision-support documents in the forked quantum-os and quantum-logical-framework repos. |
 | [`Governance.md`](../../../qucalc/rholang/Governance.md) | The governance design: liquid democracy + liquid trust, the governing rule, and the self-signed envelope model. |
 
 ## Where things live
