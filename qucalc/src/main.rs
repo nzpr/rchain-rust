@@ -4,8 +4,7 @@
 //! Usage: `cargo run -- [path/to/census_inventory.json]`
 //!
 //! The census path is resolved as: an explicit CLI argument, then the `QUCALC_CENSUS`
-//! environment variable, then `quantum-logical-framework/data/census_inventory.json`
-//! relative to the working directory.
+//! environment variable, then `census_inventory.json` in the current directory.
 
 use qucalc::{fold, Census};
 use std::path::PathBuf;
@@ -15,7 +14,7 @@ fn main() {
         .nth(1)
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("QUCALC_CENSUS").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("quantum-logical-framework/data/census_inventory.json"));
+        .unwrap_or_else(|| PathBuf::from("census_inventory.json"));
 
     let census = Census::load(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
 
