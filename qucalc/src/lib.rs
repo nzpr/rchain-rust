@@ -439,3 +439,355 @@ mod neuro_tests {
         assert_eq!(a.len(), 6 * 2, "one pos + one neg twist per character");
     }
 }
+
+// --- Governance: deterministic liquid-democracy decision machinery --------------
+//
+// The pure functions backing the `rho:gov:*` system processes (see
+// quantum-os `Governance.md` and `gov.ts`). Every function here is a **total,
+// deterministic, order-insensitive** fold over canonical (sorted) maps so that
+// every peer reproduces the identical result from the same signed envelopes —
+// the "no central counter" guarantee. Base voting weight is `1 + trust level`.
+//
+// Members are identified by a string (their public key / handle). All iteration
+// is over `BTreeMap`/`BTreeSet` (sorted) so results never depend on input order.
+
+pub mod gov {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Resolve liquid-democracy weights.
+    ///
+    /// `direct_voters` are the members who cast a ballot; each member's vote walks
+    /// its delegation chain to the first direct voter reached (cycles / dead-ends
+    /// abstain), and `weight(d) = Σ (1 + level(m))` over members whose chain ends
+    /// at `d`. A direct voter's own vote always counts for itself (direct voting
+    /// overrides delegation).
+    pub fn resolve_weights(
+        direct_voters: &[String],
+        delegations: &BTreeMap<String, String>,
+        trust: &BTreeMap<String, i64>,
+    ) -> BTreeMap<String, i64> {
+        let dv: BTreeSet<&String> = direct_voters.iter().collect();
+        let mut universe: BTreeSet<String> = BTreeSet::new();
+        universe.extend(direct_voters.iter().cloned());
+        universe.extend(delegations.keys().cloned());
+        universe.extend(delegations.values().cloned());
+        universe.extend(trust.keys().cloned());
+
+        let mut weight: BTreeMap<String, i64> = BTreeMap::new();
+        for m in universe {
+            let base = 1 + trust.get(&m).copied().unwrap_or(0);
+            if dv.contains(&m) {
+                *weight.entry(m).or_insert(0) += base;
+                continue;
+            }
+            let mut seen = BTreeSet::from([m.clone()]);
+            let mut cur = m.clone();
+            loop {
+                let Some(next) = delegations.get(&cur) else {
+                    break; // dead-end -> abstain
+                };
+                if dv.contains(next) {
+                    *weight.entry(next.clone()).or_insert(0) += base;
+                    break;
+                }
+                if !seen.insert(next.clone()) {
+                    break; // cycle -> abstain
+                }
+                cur = next.clone();
+            }
+        }
+        weight
+    }
+
+    /// Compute the admin-rooted web of trust as a least fixed point.
+    ///
+    /// `ratings` are `(rater, ratee, v)`; self-ratings are ignored and each
+    /// conferral is capped at `min(v, level(rater) − 1)` (strictly below the
+    /// rater's own level), so two level-0 members cannot bootstrap each other.
+    /// Admins are the trust root (level 5). Returns `member -> level` (unrated
+    /// members are level 0).
+    pub fn trust_levels(ratings: &[(String, String, i64)], admins: &[String]) -> BTreeMap<String, i64> {
+        let mut universe: BTreeSet<String> = BTreeSet::new();
+        for (r, e, _) in ratings {
+            universe.insert(r.clone());
+            universe.insert(e.clone());
+        }
+        universe.extend(admins.iter().cloned());
+
+        let mut level: BTreeMap<String, i64> = universe.iter().map(|m| (m.clone(), 0)).collect();
+        for a in admins {
+            level.insert(a.clone(), 5);
+        }
+        // Monotone relaxation to the (unique) least fixed point; strictly-decreasing
+        // conferrals bound the number of iterations by the size of the universe.
+        for _ in 0..=universe.len() {
+            let mut next = level.clone();
+            for (r, e, v) in ratings {
+                if r == e {
+                    continue;
+                }
+                let lr = next.get(r).copied().unwrap_or(0);
+                if lr >= 1 {
+                    let cand = (*v).min(lr - 1).max(0);
+                    let entry = next.entry(e.clone()).or_insert(0);
+                    if cand > *entry {
+                        *entry = cand;
+                    }
+                }
+            }
+            if next == level {
+                break;
+            }
+            level = next;
+        }
+        level
+    }
+
+    /// Determine discredited members and the resulting (slashed) trust levels.
+    ///
+    /// A member `m` is discredited when at least `max(2, ⌈⅔·|eligible(m)|⌉)` members
+    /// whose level is `≥ level(m)` have censured them. On discredit their level → 0
+    /// and every voucher of `m` is slashed by the level they staked. The slash is a
+    /// decreasing fixed point (slashing a voucher can cascade), so the whole step is
+    /// iterated to convergence.
+    pub fn censure(
+        censures: &[(String, String)],
+        levels: &BTreeMap<String, i64>,
+        vouchers: &[(String, String, i64)],
+    ) -> (BTreeSet<String>, BTreeMap<String, i64>) {
+        let mut universe: BTreeSet<String> = BTreeSet::new();
+        universe.extend(levels.keys().cloned());
+        for (c, m) in censures {
+            universe.insert(c.clone());
+            universe.insert(m.clone());
+        }
+        for (v, e, _) in vouchers {
+            universe.insert(v.clone());
+            universe.insert(e.clone());
+        }
+
+        let mut level: BTreeMap<String, i64> = levels.clone();
+        let mut discredited: BTreeSet<String> = BTreeSet::new();
+
+        for _ in 0..=universe.len() {
+            let mut newly: BTreeSet<String> = BTreeSet::new();
+            for m in &universe {
+                if discredited.contains(m) {
+                    continue;
+                }
+                let lm = level.get(m).copied().unwrap_or(0);
+                let eligible: Vec<&String> = universe
+                    .iter()
+                    .filter(|x| *x != m && level.get(*x).copied().unwrap_or(0) >= lm)
+                    .collect();
+                let quorum = ((2 * eligible.len() as i64 + 2) / 3).max(2);
+                let n_censure = censures
+                    .iter()
+                    .filter(|(c, t)| t == m && level.get(c).copied().unwrap_or(0) >= lm)
+                    .count() as i64;
+                if n_censure >= quorum {
+                    newly.insert(m.clone());
+                }
+            }
+            if newly.is_empty() {
+                break;
+            }
+            // Apply discredit + slash their vouchers (decreasing fixed point).
+            for m in &newly {
+                discredited.insert(m.clone());
+                level.insert(m.clone(), 0);
+                for (v, e, s) in vouchers {
+                    if e == m {
+                        let cur = level.get(v).copied().unwrap_or(0);
+                        level.insert(v.clone(), (cur - *s).max(0));
+                    }
+                }
+            }
+        }
+
+        (discredited, level)
+    }
+
+    /// Ranked-choice (instant-runoff) tally, weighted. Returns the winner or `None`.
+    ///
+    /// Each ballot is a member -> ranking (most-preferred first). Strict majority is
+    /// `> total/2`; the lowest-count candidate(s) are eliminated each round, and an
+    /// all-tied round breaks deterministically to the lexicographically smallest.
+    pub fn tally_ranked(
+        ballots: &BTreeMap<String, Vec<String>>,
+        weights: &BTreeMap<String, i64>,
+    ) -> Option<String> {
+        let total: i64 = ballots
+            .keys()
+            .map(|m| weights.get(m).copied().unwrap_or(0))
+            .filter(|w| *w > 0)
+            .sum();
+        if total <= 0 {
+            return None;
+        }
+        let rankings: BTreeMap<String, Vec<String>> = ballots
+            .iter()
+            .filter(|(_, r)| !r.is_empty())
+            .map(|(m, r)| (m.clone(), r.clone()))
+            .collect();
+        let mut eliminated: BTreeSet<String> = BTreeSet::new();
+
+        loop {
+            let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+            for (m, r) in &rankings {
+                if let Some(first) = r.iter().find(|o| !eliminated.contains(*o)) {
+                    *counts.entry(first.clone()).or_insert(0) +=
+                        weights.get(m).copied().unwrap_or(0);
+                }
+            }
+            if counts.is_empty() {
+                return None;
+            }
+            let max = *counts.values().max().unwrap();
+            if max * 2 > total {
+                return counts
+                    .iter()
+                    .filter(|(_, c)| **c == max)
+                    .min_by_key(|(k, _)| *k)
+                    .map(|(k, _)| k.clone());
+            }
+            let min = *counts.values().min().unwrap();
+            if min == max {
+                // all remaining candidates tied; deterministic lexicographic tie-break
+                return counts.keys().min().cloned();
+            }
+            for (k, _) in counts.iter().filter(|(_, c)| **c == min) {
+                eliminated.insert(k.clone());
+            }
+        }
+    }
+
+    /// Approval tally, weighted. Each ballot is a member -> set of approved options.
+    pub fn tally_approval(
+        ballots: &BTreeMap<String, Vec<String>>,
+        weights: &BTreeMap<String, i64>,
+    ) -> Option<String> {
+        let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+        for (m, approved) in ballots {
+            let w = weights.get(m).copied().unwrap_or(0);
+            for opt in approved {
+                *counts.entry(opt.clone()).or_insert(0) += w;
+            }
+        }
+        counts
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(k, _)| k)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn m(s: &str) -> String {
+            s.to_string()
+        }
+
+        #[test]
+        fn resolve_weights_transitive_delegation() {
+            // A, B, C; B delegates A; C delegates B. Only A votes -> A carries 3.
+            let direct = vec![m("A")];
+            let delegations = BTreeMap::from([(m("B"), m("A")), (m("C"), m("B"))]);
+            let trust = BTreeMap::new();
+            let w = resolve_weights(&direct, &delegations, &trust);
+            assert_eq!(w.get("A"), Some(&3));
+
+            // C votes directly -> C reclaims 1, A drops to 2 (self + B).
+            let direct = vec![m("A"), m("C")];
+            let w = resolve_weights(&direct, &delegations, &trust);
+            assert_eq!(w.get("A"), Some(&2));
+            assert_eq!(w.get("C"), Some(&1));
+        }
+
+        #[test]
+        fn resolve_weights_cycle_abstains() {
+            // B -> C -> B, neither votes: the cycle abstains, A's own vote counts once.
+            let direct = vec![m("A")];
+            let delegations = BTreeMap::from([(m("B"), m("C")), (m("C"), m("B"))]);
+            let w = resolve_weights(&direct, &delegations, &BTreeMap::new());
+            assert_eq!(w.get("A"), Some(&1));
+            assert_eq!(w.len(), 1);
+        }
+
+        #[test]
+        fn trust_levels_admin_rooted_strictly_decreasing() {
+            // Alice (admin) rates Bob 3; Bob rates Carol 2 -> Alice 5, Bob 3, Carol 2.
+            let ratings = vec![
+                (m("Alice"), m("Bob"), 3),
+                (m("Bob"), m("Carol"), 2),
+                (m("Carol"), m("Dave"), 5), // capped at Carol's own level - 1 = 1
+            ];
+            let admins = vec![m("Alice")];
+            let lv = trust_levels(&ratings, &admins);
+            assert_eq!(lv.get("Alice"), Some(&5));
+            assert_eq!(lv.get("Bob"), Some(&3));
+            assert_eq!(lv.get("Carol"), Some(&2));
+            assert_eq!(lv.get("Dave"), Some(&1), "capped below the rater's own level");
+        }
+
+        #[test]
+        fn trust_levels_zero_members_cannot_bootstrap() {
+            // Bob and Dave rate each other highly, but neither is an admin -> both 0.
+            let ratings = vec![(m("Bob"), m("Dave"), 5), (m("Dave"), m("Bob"), 5)];
+            let lv = trust_levels(&ratings, &[]);
+            assert_eq!(lv.get("Bob"), Some(&0));
+            assert_eq!(lv.get("Dave"), Some(&0));
+        }
+
+        #[test]
+        fn censure_quorum_and_slashing() {
+            // Three admins (A, B, C at level 5), D at level 0. A and B censure D.
+            let levels = BTreeMap::from([
+                (m("A"), 5),
+                (m("B"), 5),
+                (m("C"), 5),
+                (m("D"), 0),
+            ]);
+            let censures = vec![(m("A"), m("D")), (m("B"), m("D"))];
+            let vouchers = vec![(m("A"), m("D"), 2), (m("B"), m("D"), 1)];
+            let (disc, lv) = censure(&censures, &levels, &vouchers);
+            assert!(disc.contains("D"));
+            assert_eq!(lv.get("D"), Some(&0));
+            assert_eq!(lv.get("A"), Some(&3), "A slashed by the 2 levels they staked");
+            assert_eq!(lv.get("B"), Some(&4), "B slashed by the 1 level they staked");
+            assert_eq!(lv.get("C"), Some(&5));
+        }
+
+        #[test]
+        fn censure_floor_of_two_blocks_lone_censure() {
+            // A single censure never discredits, even from an admin over a level-0 target.
+            let levels = BTreeMap::from([(m("A"), 5), (m("D"), 0)]);
+            let censures = vec![(m("A"), m("D"))];
+            let (disc, lv) = censure(&censures, &levels, &[]);
+            assert!(disc.is_empty(), "one vote is short of the floor of 2");
+            assert_eq!(lv.get("D"), Some(&0));
+        }
+
+        #[test]
+        fn tally_ranked_instant_runoff() {
+            // 3 candidates; C's voter is eliminated and flows to X.
+            let ballots = BTreeMap::from([
+                (m("A"), vec![m("X"), m("Y")]),
+                (m("B"), vec![m("Y"), m("X")]),
+                (m("C"), vec![m("Z"), m("X")]),
+            ]);
+            let weights = BTreeMap::from([(m("A"), 2), (m("B"), 2), (m("C"), 1)]);
+            assert_eq!(tally_ranked(&ballots, &weights).as_deref(), Some("X"));
+        }
+
+        #[test]
+        fn tally_approval_weighted() {
+            let ballots = BTreeMap::from([
+                (m("A"), vec![m("X")]),
+                (m("B"), vec![m("X"), m("Y")]),
+            ]);
+            let weights = BTreeMap::from([(m("A"), 2), (m("B"), 3)]);
+            assert_eq!(tally_approval(&ballots, &weights).as_deref(), Some("X"));
+        }
+    }
+}

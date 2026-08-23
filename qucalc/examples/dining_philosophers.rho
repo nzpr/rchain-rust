@@ -1,0 +1,30 @@
+// Dining Philosophers — five peers, five forks, no deadlock
+// =========================================================
+// Mirror of quantum-os `DiningPhilosophersDemo.md`. Forks are capability
+// channels: a fork holds one token when free, and consuming the token IS the
+// authorization to use the fork. A philosopher acquires both adjacent forks
+// with a rholang `for`-join (both-or-neither), so no philosopher can hold one
+// fork while waiting for another — deadlock is impossible by construction.
+//
+//   Philosopher!(name, leftFork, rightFork, done)
+//
+//   done!(name) fires once the philosopher has eaten (acquired both forks).
+
+new Philosopher, forkA, forkB, forkC, forkD, forkE, done in {
+  contract Philosopher(@name, left, right, done) = {
+    for (_ <- left; _ <- right) {   // acquire both adjacent forks atomically
+      done!(name) |                 // eat
+      left!(Nil) | right!(Nil)      // release both forks
+    }
+  } |
+
+  // Seed the five forks (one token each).
+  forkA!(Nil) | forkB!(Nil) | forkC!(Nil) | forkD!(Nil) | forkE!(Nil) |
+
+  // Seat the five philosophers around the table (Aristotle needs A+B, etc.).
+  Philosopher!("Aristotle", forkA, forkB, done) |
+  Philosopher!("Plato",     forkB, forkC, done) |
+  Philosopher!("Descartes", forkC, forkD, done) |
+  Philosopher!("Kant",      forkD, forkE, done) |
+  Philosopher!("Nietzsche", forkE, forkA, done)
+}

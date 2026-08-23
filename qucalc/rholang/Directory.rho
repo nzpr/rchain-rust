@@ -1,0 +1,73 @@
+// Directory — a capability-facet key/value store
+// ==============================================
+// Port of rgov `rholang/core/Directory.rho`. A directory exposes three facets:
+//   read  : look up the whole map or a single key (falls through to a parent)
+//   write : set a key (Nil deletes it)
+//   grant : mint a write-only capability for a single key (scoped update)
+//
+// Publish with:
+//   new uriCh, insertArbitrary(`rho:registry:insertArbitrary`) in {
+//     insertArbitrary!(bundle+{*Directory}, *uriCh) | for (@uri <- uriCh) { /* keep uri */ }
+//   }
+
+new Directory in {
+  // Root directory: no parent to fall through to.
+  contract Directory(capabilities) = {
+    Directory!(Nil, *capabilities)
+  } |
+
+  // A directory with an optional parent-read capability.
+  contract Directory(@parentReadCap, capabilities) = {
+    new mapCh, read, write, grant in {
+      mapCh!({}) |
+      capabilities!({
+        "read": bundle+{*read},
+        "write": bundle+{*write},
+        "grant": bundle+{*grant}
+      }) |
+
+      // Mint a write-only capability scoped to one key.
+      contract grant(@key, ret) = {
+        new writekey in {
+          contract writekey(@value, result) = { write!(key, value, *result) } |
+          ret!(*writekey)
+        }
+      } |
+
+      // Read the whole map (falls through to the parent when empty).
+      contract read(return) = {
+        for (map <<- mapCh) {
+          if (map == {}) {
+            if (parentReadCap != Nil) { parentReadCap!(*return) } else { return!({}) }
+          } else {
+            return!(map)
+          }
+        }
+      } |
+
+      // Read one key (falls through to the parent when absent).
+      contract read(@key, return) = {
+        for (map <<- mapCh) {
+          if (map == {}) {
+            if (parentReadCap != Nil) { parentReadCap!(key, *return) } else { return!(Nil) }
+          } else {
+            return!(map.get(key))
+          }
+        }
+      } |
+
+      // Write a key (Nil deletes).
+      contract write(@key, @value, ret) = {
+        for (map <- mapCh) {
+          if (value == Nil) {
+            mapCh!(map.delete(key)) |
+            ret!([key, "deleted"])
+          } else {
+            mapCh!(map.set(key, value)) |
+            ret!([key, value, "added"])
+          }
+        }
+      }
+    }
+  }
+}

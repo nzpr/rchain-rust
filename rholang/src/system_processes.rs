@@ -4,6 +4,7 @@
 //! builds the `ScalaBodyFn` handlers (stdout/stderr, crypto verify/hash, block data, REV address,
 //! deployer-id ops, registry ops, sys-auth-token ops) that the runtime installs and dispatches to.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use rchain_crypto::hash::{blake2b256, keccak256, sha256};
@@ -113,6 +114,18 @@ impl FixedChannels {
     pub fn qucalc_fuse() -> Par {
         byte_name(25)
     }
+    pub fn gov_resolve_weights() -> Par {
+        byte_name(26)
+    }
+    pub fn gov_trust_levels() -> Par {
+        byte_name(27)
+    }
+    pub fn gov_censure() -> Par {
+        byte_name(28)
+    }
+    pub fn gov_tally() -> Par {
+        byte_name(29)
+    }
 }
 
 /// The dispatch-table ids (port of `SystemProcesses.BodyRefs`).
@@ -143,6 +156,10 @@ impl BodyRefs {
     pub const QUCALC_GRANT: i64 = 24;
     pub const QUCALC_VERIFY: i64 = 25;
     pub const QUCALC_FUSE: i64 = 26;
+    pub const GOV_RESOLVE_WEIGHTS: i64 = 27;
+    pub const GOV_TRUST_LEVELS: i64 = 28;
+    pub const GOV_CENSURE: i64 = 29;
+    pub const GOV_TALLY: i64 = 30;
 }
 
 /// Per-block data exposed to the `rho:block:data` contract (port of `SystemProcesses.BlockData`).
@@ -200,6 +217,117 @@ fn parse_twists(p: &Par) -> Result<Vec<u8>, RholangError> {
                 .collect::<Option<Vec<u8>>>()
         })
         .ok_or_else(|| illegal_arg("expected a list of twist values 0..7"))
+}
+
+// --- Governance parsing helpers -------------------------------------------
+// These decode the rholang wire forms accepted by the `rho:gov:*` processes.
+//
+// A *member id* is either a plain string or a deployer-id unforgeable; the
+// latter is canonicalized to the base16 encoding of its public key, so the same
+// deployer always maps to the same id (unforgeable identity, deterministic
+// ordering). The envelope layer binds the signer to `*deployerId`, so a member
+// cannot spoof another member's id.
+
+/// Canonical member id: a string, or a deployer-id unforgeable (hex of its public key).
+fn member_id(p: &Par) -> Option<String> {
+    RhoString::unapply(p)
+        .map(|s| s.to_string())
+        .or_else(|| RhoDeployerId::unapply(p).map(rchain_shared::base16::encode))
+}
+
+fn parse_string_list(p: &Par) -> Result<Vec<String>, RholangError> {
+    RhoList::unapply(p)
+        .and_then(|ps| {
+            ps.iter()
+                .map(|q| RhoString::unapply(q).map(|s| s.to_string()))
+                .collect()
+        })
+        .ok_or_else(|| illegal_arg("expected a list of strings"))
+}
+
+fn parse_member_list(p: &Par) -> Result<Vec<String>, RholangError> {
+    RhoList::unapply(p)
+        .and_then(|ps| ps.iter().map(member_id).collect())
+        .ok_or_else(|| illegal_arg("expected a list of member ids (string or deployerId)"))
+}
+
+fn parse_member_map(p: &Par) -> Result<BTreeMap<String, String>, RholangError> {
+    RhoMap::unapply(p)
+        .and_then(|kvs| kvs.iter().map(|(k, v)| Some((member_id(k)?, member_id(v)?))).collect())
+        .ok_or_else(|| illegal_arg("expected a map of member id -> member id"))
+}
+
+fn parse_member_int_map(p: &Par) -> Result<BTreeMap<String, i64>, RholangError> {
+    RhoMap::unapply(p)
+        .and_then(|kvs| {
+            kvs.iter()
+                .map(|(k, v)| Some((member_id(k)?, RhoNumber::unapply(v)?)))
+                .collect()
+        })
+        .ok_or_else(|| illegal_arg("expected a map of member id -> int"))
+}
+
+fn parse_rating_list(p: &Par) -> Result<Vec<(String, String, i64)>, RholangError> {
+    RhoList::unapply(p)
+        .and_then(|ps| {
+            ps.iter()
+                .map(|q| {
+                    let t = RhoTupleN::unapply(q)?;
+                    if t.len() != 3 {
+                        return None;
+                    }
+                    Some((member_id(&t[0])?, member_id(&t[1])?, RhoNumber::unapply(&t[2])?))
+                })
+                .collect()
+        })
+        .ok_or_else(|| illegal_arg("expected a list of (rater, ratee, level) tuples"))
+}
+
+fn parse_censure_list(p: &Par) -> Result<Vec<(String, String)>, RholangError> {
+    RhoList::unapply(p)
+        .and_then(|ps| {
+            ps.iter()
+                .map(|q| {
+                    let t = RhoTupleN::unapply(q)?;
+                    if t.len() != 2 {
+                        return None;
+                    }
+                    Some((member_id(&t[0])?, member_id(&t[1])?))
+                })
+                .collect()
+        })
+        .ok_or_else(|| illegal_arg("expected a list of (censor, target) tuples"))
+}
+
+fn parse_voucher_list(p: &Par) -> Result<Vec<(String, String, i64)>, RholangError> {
+    // Same shape as ratings: (voucher, vouchee, staked level).
+    parse_rating_list(p)
+}
+
+fn parse_ranked_ballots(p: &Par) -> Result<BTreeMap<String, Vec<String>>, RholangError> {
+    RhoMap::unapply(p)
+        .and_then(|kvs| {
+            kvs.iter()
+                .map(|(k, v)| {
+                    let member = member_id(k)?;
+                    let ranking = parse_string_list(v).ok()?;
+                    Some((member, ranking))
+                })
+                .collect()
+        })
+        .ok_or_else(|| illegal_arg("expected a map of member -> ranked options"))
+}
+
+fn member_int_map(m: &BTreeMap<String, i64>) -> Par {
+    RhoMap::apply(
+        m.iter()
+            .map(|(k, v)| (RhoString::apply(k.clone()), RhoNumber::apply(*v)))
+            .collect(),
+    )
+}
+
+fn string_list(ss: &[String]) -> Par {
+    RhoList::apply(ss.iter().map(|s| RhoString::apply(s.clone())).collect())
 }
 
 /// The system-process context (port of `SystemProcesses[F]`).
@@ -420,6 +548,38 @@ impl SystemProcesses {
                 remainder: false,
                 body_ref: BodyRefs::QUCALC_FUSE,
                 handler: self.qucalc_fuse(),
+            },
+            Definition {
+                urn: "rho:gov:resolveWeights".to_string(),
+                fixed_channel: FixedChannels::gov_resolve_weights(),
+                arity: 4,
+                remainder: false,
+                body_ref: BodyRefs::GOV_RESOLVE_WEIGHTS,
+                handler: self.gov_resolve_weights(),
+            },
+            Definition {
+                urn: "rho:gov:trustLevels".to_string(),
+                fixed_channel: FixedChannels::gov_trust_levels(),
+                arity: 3,
+                remainder: false,
+                body_ref: BodyRefs::GOV_TRUST_LEVELS,
+                handler: self.gov_trust_levels(),
+            },
+            Definition {
+                urn: "rho:gov:censure".to_string(),
+                fixed_channel: FixedChannels::gov_censure(),
+                arity: 4,
+                remainder: false,
+                body_ref: BodyRefs::GOV_CENSURE,
+                handler: self.gov_censure(),
+            },
+            Definition {
+                urn: "rho:gov:tally".to_string(),
+                fixed_channel: FixedChannels::gov_tally(),
+                arity: 4,
+                remainder: false,
+                body_ref: BodyRefs::GOV_TALLY,
+                handler: self.gov_tally(),
             },
         ]
     }
@@ -718,6 +878,109 @@ impl SystemProcesses {
                         }
                     }
                     _ => Err(illegal_arg("qucalc:fuse expects subject, predicate and return channel")),
+                }
+            })
+        })
+    }
+
+    // --- governance (rho:gov:*) ------------------------------------------
+
+    /// `rho:gov:resolveWeights(directVoters, delegations, trust, ret)` — resolve liquid-democracy
+    /// weights: `Map<directVoter, weight>`. Pure and deterministic (see `qucalc::gov`).
+    fn gov_resolve_weights(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc.unapply(&args).ok_or_else(|| {
+                    illegal_arg("gov:resolveWeights expects directVoters, delegations, trust and a return channel")
+                })?;
+                let [voters, delegations, trust, ret] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "gov:resolveWeights expects directVoters, delegations, trust and a return channel",
+                    ));
+                };
+                let dv = parse_member_list(voters)?;
+                let del = parse_member_map(delegations)?;
+                let tr = parse_member_int_map(trust)?;
+                let out = qucalc::gov::resolve_weights(&dv, &del, &tr);
+                cc.produce(&rand, &[member_int_map(&out)], ret).await
+            })
+        })
+    }
+
+    /// `rho:gov:trustLevels(ratings, admins, ret)` — the admin-rooted web of trust as a least
+    /// fixed point: `Map<member, level>`.
+    fn gov_trust_levels(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("gov:trustLevels expects ratings, admins and a return channel"))?;
+                let [ratings, admins, ret] = pars.as_slice() else {
+                    return Err(illegal_arg("gov:trustLevels expects ratings, admins and a return channel"));
+                };
+                let r = parse_rating_list(ratings)?;
+                let a = parse_member_list(admins)?;
+                let out = qucalc::gov::trust_levels(&r, &a);
+                cc.produce(&rand, &[member_int_map(&out)], ret).await
+            })
+        })
+    }
+
+    /// `rho:gov:censure(censures, levels, vouchers, ret)` — accountability: `(discredited,
+    /// newLevels)` via a ⅔ quorum (floored at 2) with voucher slashing.
+    fn gov_censure(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc.unapply(&args).ok_or_else(|| {
+                    illegal_arg("gov:censure expects censures, levels, vouchers and a return channel")
+                })?;
+                let [censures, levels, vouchers, ret] = pars.as_slice() else {
+                    return Err(illegal_arg(
+                        "gov:censure expects censures, levels, vouchers and a return channel",
+                    ));
+                };
+                let c = parse_censure_list(censures)?;
+                let lv = parse_member_int_map(levels)?;
+                let v = parse_voucher_list(vouchers)?;
+                let (disc, new_levels) = qucalc::gov::censure(&c, &lv, &v);
+                let disc_list: Vec<String> = disc.into_iter().collect();
+                let out = RhoTupleN::apply(vec![string_list(&disc_list), member_int_map(&new_levels)]);
+                cc.produce(&rand, &[out], ret).await
+            })
+        })
+    }
+
+    /// `rho:gov:tally(ballots, weights, mode, ret)` — weighted ranked-choice (IRV) or approval
+    /// tally. Returns the winning option string, or `Nil` when empty.
+    fn gov_tally(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("gov:tally expects ballots, weights, mode and a return channel"))?;
+                let [ballots, weights, mode, ret] = pars.as_slice() else {
+                    return Err(illegal_arg("gov:tally expects ballots, weights, mode and a return channel"));
+                };
+                let b = parse_ranked_ballots(ballots)?;
+                let w = parse_member_int_map(weights)?;
+                let mode = RhoString::unapply(mode)
+                    .ok_or_else(|| illegal_arg("gov:tally expects a mode string"))?;
+                let winner = match mode {
+                    "ranked" => qucalc::gov::tally_ranked(&b, &w),
+                    "approval" => qucalc::gov::tally_approval(&b, &w),
+                    _ => return Err(illegal_arg("gov:tally mode must be \"ranked\" or \"approval\"")),
+                };
+                match winner {
+                    Some(name) => cc.produce(&rand, &[RhoString::apply(name)], ret).await,
+                    None => cc.produce(&rand, &[RhoNil::apply()], ret).await,
                 }
             })
         })
@@ -1544,5 +1807,220 @@ mod tests {
         let geometry = parse_twists(&tuple[0]).expect("geometry is a twist list");
         assert_eq!(geometry, vec![0u8, 3, 2, 1]); // ^<>v
         assert!(RhoUri::unapply(&tuple[1]).is_some(), "returns a capability uri");
+    }
+
+    #[tokio::test]
+    async fn gov_resolve_weights_reports_weight_map() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let resolve = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_RESOLVE_WEIGHTS)
+            .expect("gov:resolveWeights definition");
+
+        // A, B, C; B delegates A, C delegates B. A and C vote directly -> A=2 (self+B), C=1.
+        let voters = RhoList::apply(vec![
+            RhoString::apply("A".to_string()),
+            RhoString::apply("C".to_string()),
+        ]);
+        let delegations = RhoMap::apply(vec![
+            (RhoString::apply("B".to_string()), RhoString::apply("A".to_string())),
+            (RhoString::apply("C".to_string()), RhoString::apply("B".to_string())),
+        ]);
+        let trust = RhoMap::apply(vec![]);
+        let ret = FixedChannels::stdout();
+        (resolve.handler)(vec![lpw(vec![voters, delegations, trust, ret.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ret);
+        let w = parse_member_int_map(produced[0].1.pars[0].as_par()).expect("weights map");
+        assert_eq!(w.get("A"), Some(&2));
+        assert_eq!(w.get("C"), Some(&1));
+    }
+
+    #[tokio::test]
+    async fn gov_resolve_weights_accepts_deployer_ids() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let resolve = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_RESOLVE_WEIGHTS)
+            .expect("gov:resolveWeights definition");
+
+        // Members identified by deployer-id unforgeables: B delegates A, only A votes.
+        let a = RhoDeployerId::apply(vec![0x01]);
+        let b = RhoDeployerId::apply(vec![0x02]);
+        let a_id = rchain_shared::base16::encode(&[0x01]);
+        let voters = RhoList::apply(vec![a.clone()]);
+        let delegations = RhoMap::apply(vec![(b, a)]);
+        let trust = RhoMap::apply(vec![]);
+        let ret = FixedChannels::stdout();
+        (resolve.handler)(vec![lpw(vec![voters, delegations, trust, ret.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ret);
+        let w = parse_member_int_map(produced[0].1.pars[0].as_par()).expect("weights map");
+        assert_eq!(w.get(&a_id), Some(&2), "A carries its own + B's delegated weight");
+    }
+
+    #[tokio::test]
+    async fn gov_trust_levels_reports_admin_rooted_levels() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let trust = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_TRUST_LEVELS)
+            .expect("gov:trustLevels definition");
+
+        let ratings = RhoList::apply(vec![
+            RhoTupleN::apply(vec![
+                RhoString::apply("Alice".to_string()),
+                RhoString::apply("Bob".to_string()),
+                RhoNumber::apply(3),
+            ]),
+            RhoTupleN::apply(vec![
+                RhoString::apply("Bob".to_string()),
+                RhoString::apply("Carol".to_string()),
+                RhoNumber::apply(2),
+            ]),
+        ]);
+        let admins = RhoList::apply(vec![RhoString::apply("Alice".to_string())]);
+        let ret = FixedChannels::stdout();
+        (trust.handler)(vec![lpw(vec![ratings, admins, ret.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ret);
+        let lv = parse_member_int_map(produced[0].1.pars[0].as_par()).expect("levels map");
+        assert_eq!(lv.get("Alice"), Some(&5));
+        assert_eq!(lv.get("Bob"), Some(&3));
+        assert_eq!(lv.get("Carol"), Some(&2));
+    }
+
+    #[tokio::test]
+    async fn gov_censure_discredits_and_slashes() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let censure = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_CENSURE)
+            .expect("gov:censure definition");
+
+        let censures = RhoList::apply(vec![
+            RhoTupleN::apply(vec![
+                RhoString::apply("A".to_string()),
+                RhoString::apply("D".to_string()),
+            ]),
+            RhoTupleN::apply(vec![
+                RhoString::apply("B".to_string()),
+                RhoString::apply("D".to_string()),
+            ]),
+        ]);
+        let levels = RhoMap::apply(vec![
+            (RhoString::apply("A".to_string()), RhoNumber::apply(5)),
+            (RhoString::apply("B".to_string()), RhoNumber::apply(5)),
+            (RhoString::apply("C".to_string()), RhoNumber::apply(5)),
+            (RhoString::apply("D".to_string()), RhoNumber::apply(0)),
+        ]);
+        let vouchers = RhoList::apply(vec![
+            RhoTupleN::apply(vec![
+                RhoString::apply("A".to_string()),
+                RhoString::apply("D".to_string()),
+                RhoNumber::apply(2),
+            ]),
+            RhoTupleN::apply(vec![
+                RhoString::apply("B".to_string()),
+                RhoString::apply("D".to_string()),
+                RhoNumber::apply(1),
+            ]),
+        ]);
+        let ret = FixedChannels::stdout();
+        (censure.handler)(vec![lpw(vec![censures, levels, vouchers, ret.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ret);
+        let tuple = RhoTupleN::unapply(produced[0].1.pars[0].as_par()).expect("(discredited, levels)");
+        assert_eq!(tuple.len(), 2);
+        let disc = parse_member_list(&tuple[0]).expect("discredited list");
+        assert_eq!(disc, vec!["D".to_string()]);
+        let lv = parse_member_int_map(&tuple[1]).expect("levels map");
+        assert_eq!(lv.get("A"), Some(&3), "A slashed by 2");
+        assert_eq!(lv.get("B"), Some(&4), "B slashed by 1");
+        assert_eq!(lv.get("C"), Some(&5));
+    }
+
+    #[tokio::test]
+    async fn gov_tally_ranked_returns_winner() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let tally = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::GOV_TALLY)
+            .expect("gov:tally definition");
+
+        let ballots = RhoMap::apply(vec![
+            (
+                RhoString::apply("A".to_string()),
+                RhoList::apply(vec![
+                    RhoString::apply("X".to_string()),
+                    RhoString::apply("Y".to_string()),
+                ]),
+            ),
+            (
+                RhoString::apply("B".to_string()),
+                RhoList::apply(vec![
+                    RhoString::apply("Y".to_string()),
+                    RhoString::apply("X".to_string()),
+                ]),
+            ),
+            (
+                RhoString::apply("C".to_string()),
+                RhoList::apply(vec![
+                    RhoString::apply("Z".to_string()),
+                    RhoString::apply("X".to_string()),
+                ]),
+            ),
+        ]);
+        let weights = RhoMap::apply(vec![
+            (RhoString::apply("A".to_string()), RhoNumber::apply(2)),
+            (RhoString::apply("B".to_string()), RhoNumber::apply(2)),
+            (RhoString::apply("C".to_string()), RhoNumber::apply(1)),
+        ]);
+        let mode = RhoString::apply("ranked".to_string());
+        let ret = FixedChannels::stdout();
+        (tally.handler)(vec![lpw(vec![ballots, weights, mode, ret.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ret);
+        assert_eq!(RhoString::unapply(produced[0].1.pars[0].as_par()), Some("X"));
     }
 }

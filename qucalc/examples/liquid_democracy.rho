@@ -1,0 +1,43 @@
+// Liquid Democracy — the worked exemplar
+// ======================================
+// Mirror of the worked example in quantum-os `Governance.md` (and the tally in
+// `Group_Decisions.md`), composed directly over the `rho:gov:*` system
+// processes. The library form is `gov.rho`; this example shows the concrete
+// numbers.
+//
+//   A admin, B, C, D members. B delegates A, C delegates B. A votes "keep",
+//   D votes "replace". The resolver walks delegation chains transitively:
+//   A carries 3 (self + B + C), D carries 1 -> "keep" wins.
+//
+//   LiquidDemocracy!("exemplar", ret) -> "keep"
+
+new LiquidDemocracy,
+  resolveWeights(`rho:gov:resolveWeights`),
+  trustLevels(`rho:gov:trustLevels`),
+  tally(`rho:gov:tally`)
+in {
+  // Admin-rooted web of trust (least fixed point, strictly-decreasing conferral).
+  contract LiquidDemocracy(@"trust", @ratings, @admins, ret) = {
+    trustLevels!(ratings, admins, *ret)
+  } |
+
+  // Liquid-democracy weights: voter -> weight (cycles/dead-ends abstain).
+  contract LiquidDemocracy(@"weights", @voters, @delegations, @levels, ret) = {
+    resolveWeights!(voters, delegations, levels, *ret)
+  } |
+
+  // Weighted ranked-choice (IRV) / approval tally.
+  contract LiquidDemocracy(@"tally", @ballots, @weights, @mode, ret) = {
+    tally!(ballots, weights, mode, *ret)
+  } |
+
+  // The worked exemplar end-to-end: resolve then tally.
+  contract LiquidDemocracy(@"exemplar", ret) = {
+    new weightsCh in {
+      resolveWeights!(["A", "D"], {"B": "A", "C": "B"}, {}, *weightsCh) |
+      for (@weights <- weightsCh) {
+        tally!({"A": ["keep"], "D": ["replace"]}, weights, "ranked", *ret)
+      }
+    }
+  }
+}
