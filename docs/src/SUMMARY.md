@@ -42,6 +42,7 @@
 # Part V — QuCalc: native AI & governance
 
 - [Overview](qucalc/README.md)
+- [Quantum operators → the ρ-calculus](qucalc/quantum-to-rho.md)
 - [Architecture](qucalc/architecture.md)
 - [Examples](qucalc/examples.md)
 - [Upstream references](qucalc/references.md)
