@@ -22,9 +22,9 @@ new Philosopher, forkA, forkB, forkC, forkD, forkE, done in {
   forkA!(Nil) | forkB!(Nil) | forkC!(Nil) | forkD!(Nil) | forkE!(Nil) |
 
   // Seat the five philosophers around the table (Aristotle needs A+B, etc.).
-  Philosopher!("Aristotle", forkA, forkB, done) |
-  Philosopher!("Plato",     forkB, forkC, done) |
-  Philosopher!("Descartes", forkC, forkD, done) |
-  Philosopher!("Kant",      forkD, forkE, done) |
-  Philosopher!("Nietzsche", forkE, forkA, done)
+  Philosopher!("Aristotle", *forkA, *forkB, *done) |
+  Philosopher!("Plato",     *forkB, *forkC, *done) |
+  Philosopher!("Descartes", *forkC, *forkD, *done) |
+  Philosopher!("Kant",      *forkD, *forkE, *done) |
+  Philosopher!("Nietzsche", *forkE, *forkA, *done)
 }

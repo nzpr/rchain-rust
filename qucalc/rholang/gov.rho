@@ -59,7 +59,7 @@ in {
   // censures    : Map<censorId, Set<targetId>>      (self-signed)
   // ballots     : Map<issue, Map<memberId, List<option>>>
   new groupsCh, delegationsCh, ratingsCh, censuresCh, ballotsCh in {
-    groupsCh!({}) | delegationsCh!({}) | ratingsCh!({}) | censuresCh!({}) | ballotsCh!({})
+    groupsCh!({}) | delegationsCh!({}) | ratingsCh!({}) | censuresCh!({}) | ballotsCh!({}) |
 
     // --- groups & membership (capability-backed) -------------------------
 
@@ -81,33 +81,39 @@ in {
     } |
 
     // Admin-gated roster change: mint (or revoke) a membership capability for `peer`.
-    contract Gov(@"member", @op, @name, @peer, ret) = {
+    contract Gov(@"member", @"add", @name, @peer, ret) = {
       for (@groups <- groupsCh) {
         if (groups.get(name) == Nil) {
           groupsCh!(groups) | ret!(Nil)            // no such group
         } else {
           if (groups.get(name).get("admin") == *deployerId) {
-            match op {
-              @"add" => {
-                new capCh in {
-                  insertArbitrary!({"group": name, "member": *peer}, *capCh) |
-                  for (@capUri <- capCh) {
-                    let @members <- groups.get(name).get("members") in {
-                      groupsCh!(groups.set(name,
-                        groups.get(name).set("members", members.set(*peer, capUri)))) |
-                      ret!(capUri)
-                    }
-                  }
-                }
-              }
-              @"remove" => {
+            new capCh in {
+              insertArbitrary!({"group": name, "member": peer}, *capCh) |
+              for (@capUri <- capCh) {
                 let @members <- groups.get(name).get("members") in {
                   groupsCh!(groups.set(name,
-                    groups.get(name).set("members", members.delete(*peer)))) |
-                  ret!(true)
+                    groups.get(name).set("members", members.set(peer, capUri)))) |
+                  ret!(capUri)
                 }
               }
-              _ => { groupsCh!(groups) | ret!(Nil) }
+            }
+          } else {
+            groupsCh!(groups) | ret!(Nil)          // not the admin
+          }
+        }
+      }
+    } |
+
+    contract Gov(@"member", @"remove", @name, @peer, ret) = {
+      for (@groups <- groupsCh) {
+        if (groups.get(name) == Nil) {
+          groupsCh!(groups) | ret!(Nil)            // no such group
+        } else {
+          if (groups.get(name).get("admin") == *deployerId) {
+            let @members <- groups.get(name).get("members") in {
+              groupsCh!(groups.set(name,
+                groups.get(name).set("members", members.delete(peer)))) |
+              ret!(true)
             }
           } else {
             groupsCh!(groups) | ret!(Nil)          // not the admin
@@ -123,13 +129,13 @@ in {
           ret!(false)
         } else {
           match groups.get(name).get("members").get(peer) {
-            Nil => ret!(false),
+            Nil => ret!(false)
             capUri => {
               new lch in {
                 lookup!(capUri, *lch) |
                 for (@found <- lch) {
                   match found {
-                    Nil => ret!(false),
+                    Nil => ret!(false)
                     _   => ret!(true)
                   }
                 }
@@ -203,7 +209,7 @@ in {
         trustLevels!(ratings, admins, *lvlCh) |
         for (@levels <- lvlCh; @delegations <- delegationsCh; @ballots <- ballotsCh) {
           match ballots.get(issue) {
-            Nil => ret!(Nil),
+            Nil => ret!(Nil)
             _ => {
               resolveWeights!(ballots.get(issue).keys(), delegations, levels, *weightsCh) |
               for (@weights <- weightsCh) {
@@ -222,7 +228,7 @@ in {
         insertSigned!((nonce, decision), *deployerId, *uriCh) |
         for (@uri <- uriCh) {
           match uri {
-            Nil => ret!(Nil),                       // stale nonce: retry with a fresh nonce
+            Nil => ret!(Nil)                        // stale nonce: retry with a fresh nonce
             _   => ret!(uri)
           }
         }

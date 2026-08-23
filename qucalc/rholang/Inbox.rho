@@ -1,85 +1,36 @@
 // Inbox — a capability-facet message store
 // ========================================
-// Port of rgov `rholang/core/Inbox.rho`. An inbox exposes three facets:
-//   read : take (and remove) messages, by type and optional subtype
-//   peek : look without removing
-//   write: add a message; a map body with a matching type/subtype is merged
+// Port (simplified) of rgov `rholang/core/Inbox.rho`. An inbox exposes three
+// facets: `read` (take), `peek` (look without taking), and `write` (add).
 //
-// A message is conventionally `[type, subtype, ...]`; the type/subtype clarify
-// the structure of the rest of the list (e.g. `["chat", "joe", body]`).
+// The rgov original matches messages by type/subtype with a parallel-pattern
+// (`{[=type ...item] | rest}`); this Rust rholang dialect does not support that
+// pattern, so the store is a plain list and matching is left to the caller.
 
 new Inbox in {
   contract Inbox(capabilities) = {
     new read, write, peek, box in {
       capabilities!(bundle+{*read}, bundle+{*write}, bundle+{*peek}) |
-      box!(Nil) |
+      box!([]) |
 
-      // Take all messages.
+      // Take all messages (returns the list, clears the box).
       contract read(ret) = {
-        for (items <- box) { ret!(*items) }
-      } |
-
-      // Take one message by type.
-      contract read(@type, ret) = {
         for (items <- box) {
-          match *items {
-            {[=type, ...item] | rest} => { ret!(item) | box!(rest) }
-            _ => { box!(*items) | ret!(Nil) }
-          }
+          ret!(*items) |
+          box!([])
         }
       } |
 
-      // Take one message by type and subtype.
-      contract read(@type, @subtype, ret) = {
-        for (items <- box) {
-          match *items {
-            {[=type, =subtype, ...item] | rest} => { ret!(item) | box!(rest) }
-            _ => { box!(*items) | ret!(Nil) }
-          }
-        }
-      } |
-
-      // Peek all messages.
+      // Peek at all messages without removing.
       contract peek(ret) = {
         for (items <<- box) { ret!(*items) }
       } |
 
-      // Peek one message by type.
-      contract peek(@type, ret) = {
-        for (items <<- box) {
-          match *items {
-            {[=type, ...rest] | _} => { ret!(rest) }
-            _ => { ret!(Nil) }
-          }
-        }
-      } |
-
-      // Peek one message by type and subtype.
-      contract peek(@type, @subtype, ret) = {
-        for (items <<- box) {
-          match *items {
-            {[=type, =subtype, ...item] | _} => { ret!(item) }
-            _ => { ret!(Nil) }
-          }
-        }
-      } |
-
-      // Write (add) a message. A map body matching an existing message by
-      // type/subtype is merged into it; otherwise the message is added.
+      // Add a message.
       contract write(@message, ret) = {
         for (items <- box) {
-          match message {
-            [type, subtype, map /\ {a: b, ..._}] => {
-              match *items {
-                {[=type, =subtype, oldmap] | more} => {
-                  box!([type, subtype, map.union(oldmap)] | more) |
-                  ret!("added.")
-                }
-                _ => { box!(*items | message) | ret!("sent...") }
-              }
-            }
-            _ => { box!(*items | message) | ret!("sent.") }
-          }
+          box!(*items ++ [message]) |
+          ret!(true)
         }
       }
     }

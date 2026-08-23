@@ -48,7 +48,7 @@ in {
   contract Note(@"lookup", @uri, ret) = {
     new ch in {
       lookup!(uri, *ch) |
-      for (@found <- ch) { ret!(*found) }
+      for (@found <- ch) { ret!(found) }
     }
   }
 }
