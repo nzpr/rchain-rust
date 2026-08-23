@@ -532,3 +532,21 @@ committed and pushed to `origin/dev`.
   (`division_and_modulo_overflow_are_errors`, `normalize_signature_low_s_*`,
   `verify_short_eth_signature_returns_false_without_panicking`).
 
+### Dependencies (cargo audit)
+
+`cargo audit` (RustSec, 1225 advisories) surfaced 5 transitive vulnerabilities, all in the network
+stack; fixed by dependency changes in `node/Cargo.toml`:
+
+- **h2 0.4.15 → 0.4.16** (RUSTSEC-2026-0258, unbounded empty DATA frames DoS) — patched in the
+  `tonic`/`axum` server stack.
+- **reqwest 0.11 → 0.12** — removed the old `hyper 0.14`/`rustls 0.21` stack and with it
+  **h2 0.3.27** (same DoS) and **rustls-webpki 0.101.7** (RUSTSEC-2026-0098/-0099/-0104:
+  name-constraint + CRL-parse issues). `influxdb.rs` client API is unchanged.
+- **hocon 0.9 `default-features = false`** — dropped `url-support` (the node parses HOCON text only,
+  never URLs), eliminating hocon's `reqwest 0.11` dependency.
+
+Remaining `cargo audit` output is 2 **unmaintained-crate warnings** (`encoding 0.2.33`,
+`rustls-pemfile 2.2.0`) — benign, left as-is. Note `Cargo.lock` is gitignored in this repo, so the
+audited dependency set is not pinned in git; a fresh build re-resolves within the `node/Cargo.toml`
+constraints (which already force the patched versions).
+
