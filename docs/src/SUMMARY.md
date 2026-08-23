@@ -43,6 +43,7 @@
 
 - [Overview](qucalc/README.md)
 - [Quantum operators → the ρ-calculus](qucalc/quantum-to-rho.md)
+- [Multi-stakeholder governance](qucalc/multi-stakeholder-governance.md)
 - [Architecture](qucalc/architecture.md)
 - [Examples](qucalc/examples.md)
 - [Upstream references](qucalc/references.md)
