@@ -19,6 +19,7 @@ use rchain_models::rholang::RhoType::{
 };
 use rchain_models::runtime::ListParWithRandom;
 use rchain_models::validator::Validator;
+use qucalc::{achieves_zfa, dialectical_synthesis, pauli_phase};
 
 use crate::contract_call::ContractCall;
 use crate::dispatch::{RholangAndScalaDispatcher, ScalaBodyFn};
@@ -100,6 +101,18 @@ impl FixedChannels {
     pub fn multi_sig_rev_vault() -> Par {
         byte_name(21)
     }
+    pub fn qucalc_zfa() -> Par {
+        byte_name(22)
+    }
+    pub fn qucalc_grant() -> Par {
+        byte_name(23)
+    }
+    pub fn qucalc_verify() -> Par {
+        byte_name(24)
+    }
+    pub fn qucalc_fuse() -> Par {
+        byte_name(25)
+    }
 }
 
 /// The dispatch-table ids (port of `SystemProcesses.BodyRefs`).
@@ -126,6 +139,10 @@ impl BodyRefs {
     pub const POS: i64 = 20;
     pub const REV_VAULT: i64 = 21;
     pub const MULTI_SIG_REV_VAULT: i64 = 22;
+    pub const QUCALC_ZFA: i64 = 23;
+    pub const QUCALC_GRANT: i64 = 24;
+    pub const QUCALC_VERIFY: i64 = 25;
+    pub const QUCALC_FUSE: i64 = 26;
 }
 
 /// Per-block data exposed to the `rho:block:data` contract (port of `SystemProcesses.BlockData`).
@@ -168,6 +185,21 @@ pub struct Definition {
 
 fn illegal_arg(msg: &str) -> RholangError {
     RholangError::ReduceError(msg.to_string())
+}
+
+/// Parse a rholang list of integers 0..7 into a twist sequence.
+fn parse_twists(p: &Par) -> Result<Vec<u8>, RholangError> {
+    RhoList::unapply(p)
+        .and_then(|ps| {
+            ps.iter()
+                .map(|q| {
+                    RhoNumber::unapply(q)
+                        .and_then(|n| u8::try_from(n).ok())
+                        .filter(|v| *v <= 7)
+                })
+                .collect::<Option<Vec<u8>>>()
+        })
+        .ok_or_else(|| illegal_arg("expected a list of twist values 0..7"))
 }
 
 /// The system-process context (port of `SystemProcesses[F]`).
@@ -357,6 +389,38 @@ impl SystemProcesses {
                 body_ref: BodyRefs::ED25519_VERIFY,
                 handler: self.ed25519_verify(),
             },
+            Definition {
+                urn: "rho:qucalc:zfa".to_string(),
+                fixed_channel: FixedChannels::qucalc_zfa(),
+                arity: 2,
+                remainder: false,
+                body_ref: BodyRefs::QUCALC_ZFA,
+                handler: self.qucalc_zfa(),
+            },
+            Definition {
+                urn: "rho:qucalc:grant".to_string(),
+                fixed_channel: FixedChannels::qucalc_grant(),
+                arity: 2,
+                remainder: false,
+                body_ref: BodyRefs::QUCALC_GRANT,
+                handler: self.qucalc_grant(),
+            },
+            Definition {
+                urn: "rho:qucalc:verify".to_string(),
+                fixed_channel: FixedChannels::qucalc_verify(),
+                arity: 2,
+                remainder: false,
+                body_ref: BodyRefs::QUCALC_VERIFY,
+                handler: self.qucalc_verify(),
+            },
+            Definition {
+                urn: "rho:qucalc:fuse".to_string(),
+                fixed_channel: FixedChannels::qucalc_fuse(),
+                arity: 3,
+                remainder: false,
+                body_ref: BodyRefs::QUCALC_FUSE,
+                handler: self.qucalc_fuse(),
+            },
         ]
     }
 
@@ -524,6 +588,139 @@ impl SystemProcesses {
 
     fn blake2b256_hash(&self) -> ScalaBodyFn {
         self.hash_contract("blake2b256Hash", blake2b256::hash)
+    }
+
+    fn qucalc_zfa(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("qucalc:zfa expects two arguments"))?;
+                match pars.as_slice() {
+                    [twists, ack] => {
+                        let values = RhoList::unapply(twists)
+                            .and_then(|ps| {
+                                ps.iter()
+                                    .map(|p| {
+                                        RhoNumber::unapply(p)
+                                            .and_then(|n| u8::try_from(n).ok())
+                                            .filter(|v| *v <= 7)
+                                    })
+                                    .collect::<Option<Vec<u8>>>()
+                            })
+                            .ok_or_else(|| {
+                                illegal_arg("qucalc:zfa expects a list of twist values 0..7")
+                            })?;
+                        let zfa = achieves_zfa(&values);
+                        let phase = pauli_phase(&values).map(|p| p.code()).unwrap_or(0);
+                        let result = RhoTupleN::apply(vec![
+                            RhoBoolean::apply(zfa),
+                            RhoNumber::apply(phase),
+                        ]);
+                        cc.produce(&rand, &[result], ack).await
+                    }
+                    _ => Err(illegal_arg("qucalc:zfa expects two arguments")),
+                }
+            })
+        })
+    }
+
+    fn qucalc_grant(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("qucalc:grant expects a twist list and return channel"))?;
+                match pars.as_slice() {
+                    [twists, ret] => {
+                        let values = parse_twists(twists)?;
+                        if achieves_zfa(&values) {
+                            // Mint a capability: a content-addressed registry URI whose value
+                            // is the ZFA-balanced twist sequence. Persisted across deploys.
+                            let uri = registry::build_uri(&blake2b256::hash(&values));
+                            let stored = RhoList::apply(
+                                values.iter().map(|&v| RhoNumber::apply(i64::from(v))).collect(),
+                            );
+                            native.registry_insert(&uri, &stored);
+                            cc.produce(&rand, &[RhoUri::apply(uri)], ret).await
+                        } else {
+                            cc.produce(&rand, &[RhoNil::apply()], ret).await
+                        }
+                    }
+                    _ => Err(illegal_arg("qucalc:grant expects a twist list and return channel")),
+                }
+            })
+        })
+    }
+
+    fn qucalc_verify(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("qucalc:verify expects a capability uri and return channel"))?;
+                match pars.as_slice() {
+                    [cap, ret] => {
+                        let uri = RhoUri::unapply(cap)
+                            .or_else(|| RhoString::unapply(cap))
+                            .ok_or_else(|| illegal_arg("qucalc:verify expects a uri string"))?
+                            .to_string();
+                        let ok = match native.registry_lookup(&uri).await.map_err(|e| illegal_arg(&e))? {
+                            Some(stored) => parse_twists(&stored)
+                                .map(|v| achieves_zfa(&v))
+                                .unwrap_or(false),
+                            None => false,
+                        };
+                        cc.produce(&rand, &[RhoBoolean::apply(ok)], ret).await
+                    }
+                    _ => Err(illegal_arg("qucalc:verify expects a capability uri and return channel")),
+                }
+            })
+        })
+    }
+
+    fn qucalc_fuse(&self) -> ScalaBodyFn {
+        let cc = self.contract_call.clone();
+        let native = self.native_state.clone();
+        Box::new(move |args: Vec<ListParWithRandom>| {
+            let cc = cc.clone();
+            let native = native.clone();
+            Box::pin(async move {
+                let (pars, rand) = cc
+                    .unapply(&args)
+                    .ok_or_else(|| illegal_arg("qucalc:fuse expects subject, predicate and return channel"))?;
+                match pars.as_slice() {
+                    [subject, predicate, ret] => {
+                        let s = parse_twists(subject)?;
+                        let p = parse_twists(predicate)?;
+                        let synth = dialectical_synthesis(&s, &p);
+                        if synth.zfa {
+                            // Blanket fusion resolved to a stable fluxoid: mint it as a capability.
+                            let uri = registry::build_uri(&blake2b256::hash(&synth.geometry));
+                            let geometry = RhoList::apply(
+                                synth.geometry.iter().map(|&v| RhoNumber::apply(i64::from(v))).collect(),
+                            );
+                            native.registry_insert(&uri, &geometry);
+                            let out = RhoTupleN::apply(vec![geometry, RhoUri::apply(uri)]);
+                            cc.produce(&rand, &[out], ret).await
+                        } else {
+                            cc.produce(&rand, &[RhoNil::apply()], ret).await
+                        }
+                    }
+                    _ => Err(illegal_arg("qucalc:fuse expects subject, predicate and return channel")),
+                }
+            })
+        })
     }
 
     // --- block / rev / ops ---------------------------------------------
@@ -1246,5 +1443,106 @@ mod tests {
             RhoNumber::unapply(produced[4].1.pars[0].as_par()).expect("bob balance"),
             80
         );
+    }
+
+    #[tokio::test]
+    async fn qucalc_zfa_reports_balance_and_phase() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let zfa = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::QUCALC_ZFA)
+            .expect("qucalc:zfa definition");
+        let ack = FixedChannels::stdout();
+
+        // ^v = [0, 1] = σ_y · −σ_y = −I: Pauli-closed AND count-balanced -> ZFA, phase −1.
+        let twists = RhoList::apply(vec![RhoNumber::apply(0), RhoNumber::apply(1)]);
+        (zfa.handler)(vec![lpw(vec![twists, ack.clone()])]).await.unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ack);
+        let parts = RhoTupleN::unapply(produced[0].1.pars[0].as_par()).expect("(zfa, phase) tuple");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(RhoBoolean::unapply(&parts[0]), Some(true));
+        assert_eq!(RhoNumber::unapply(&parts[1]), Some(-1));
+    }
+
+    #[tokio::test]
+    async fn qucalc_grant_then_verify_across_deploys() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let grant = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::QUCALC_GRANT)
+            .expect("grant definition");
+        let verify = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::QUCALC_VERIFY)
+            .expect("verify definition");
+
+        // Deploy 1: mint a ZFA-balanced proof (^v) as a capability.
+        let ret = FixedChannels::stdout();
+        let twists = RhoList::apply(vec![RhoNumber::apply(0), RhoNumber::apply(1)]);
+        (grant.handler)(vec![lpw(vec![twists, ret.clone()])]).await.unwrap();
+
+        let cap = {
+            let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+            assert_eq!(produced.len(), 1);
+            assert_eq!(produced[0].0.as_par(), &ret);
+            assert!(
+                RhoUri::unapply(produced[0].1.pars[0].as_par()).is_some(),
+                "grant returns a capability uri"
+            );
+            produced[0].1.pars[0].clone()
+        };
+
+        // Deploy 2: the capability persists in the native registry across deploys.
+        let ret2 = FixedChannels::stdout_ack();
+        (verify.handler)(vec![lpw(vec![cap.as_par().clone(), ret2.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 2);
+        assert_eq!(produced[1].0.as_par(), &ret2);
+        assert_eq!(RhoBoolean::unapply(produced[1].1.pars[0].as_par()), Some(true));
+    }
+
+    #[tokio::test]
+    async fn qucalc_fuse_mints_syllogism_as_capability() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let (_sp, defs) = mock_system_processes(&mock);
+
+        let fuse = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::QUCALC_FUSE)
+            .expect("fuse definition");
+
+        // Thesis ^< (Socrates) ⊕ Antithesis >v (Mortal) via middle term +- -> ^<>v (ZFA).
+        let subject = RhoList::apply(vec![RhoNumber::apply(0), RhoNumber::apply(3)]); // ^<
+        let predicate = RhoList::apply(vec![RhoNumber::apply(2), RhoNumber::apply(1)]); // >v
+        let ret = FixedChannels::stdout();
+        (fuse.handler)(vec![lpw(vec![subject, predicate, ret.clone()])])
+            .await
+            .unwrap();
+
+        let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0].0.as_par(), &ret);
+        let tuple =
+            RhoTupleN::unapply(produced[0].1.pars[0].as_par()).expect("(geometry, cap) tuple");
+        assert_eq!(tuple.len(), 2);
+        let geometry = parse_twists(&tuple[0]).expect("geometry is a twist list");
+        assert_eq!(geometry, vec![0u8, 3, 2, 1]); // ^<>v
+        assert!(RhoUri::unapply(&tuple[1]).is_some(), "returns a capability uri");
     }
 }
