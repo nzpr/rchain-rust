@@ -36,14 +36,14 @@ cross-cutting "no silent partiality / no `unsafe`" discipline; it fails the buil
 | **1** | A `Par` (and `ESet`/`EMap`) is an *unordered* collection: the order of `\|`-joined processes, list fields, and map entries must not matter. "Sorting" a `Par` is canonicalization — sort twice, get the same thing; sort `p\|q` and `q\|p` the same. | `models/src/sorter.rs` — `sort_par` (`:704`) and `sort_par_term` (`:760`); the canonical form is carried structurally by `Sorted<Par<S>>` (`models/src/sorted.rs:26`, canonical `Eq`/`Ord`/`Hash`/`Serialize`) | `cargo test -p rchain-models sorter` (property test `sort_par_merge_commutes`) |
 | **2** | Two processes are α/name-equivalent when their *sorted* canonical forms are structurally equal; `@` (quote) and `*` (eval) round-trip. There is **no runtime α-equivalence function** — it *is* equality on the sorted `Par`. | `models/src/ast.rs` — `Eq`/`Ord` derives (`:130`) + the phantom-sort aliases `Name = Par<NameSort>` / `Proc = Par<ProcSort>` and `quote`/`eval` (`:148`); sort classification in `models/src/types.rs` | same as Law 1 (equality on sorted form is the test) |
 | **3** | Substitution is capture-avoiding (de Bruijn indices) and commutes with sorting: `sort(subst t) = subst(sort t)`. | `rholang/src/substitute.rs` — `substitute_par` (`:165`), `substitute_par_no_sort` (`:117`), `substitute_par_and_charge` (`:171`) | `cargo test -p rchain-rholang` + differential vs Scala golden vectors |
-| **4** | Reduction is the COMM rule (`x!(…) \| for(… ← x){…} ⟶ …`), deterministic (first match wins), and `new` yields genuinely fresh unforgeable names. | `rholang/src/reduce.rs` — `DebruijnInterpreter` (`:1196`), `eval`/`eval_send`/`eval_receive`/`eval_new`; the actual tuple-space hand-off is `rspace/src/rspace.rs` produce/consume | `rholang/tests/execution.rs` (in-process runtime) |
+| **4** | Reduction is the COMM rule (`x!(…) \| for(… ← x){…} ⟶ …`), deterministic (first match wins), and `new` yields genuinely fresh unforgeable names. | `rholang/src/reduce.rs` — `DebruijnInterpreter` is a work-queue scheduler: `expand_par` fork-joins per-term resolution (pure parts concurrent), then `produce`/`consume` apply effects in DFS order; the tuple-space hand-off is `rspace/src/rspace.rs` produce/consume | `rholang/tests/execution.rs` (in-process runtime) + `concurrent_and_sequential_state_hashes_match` |
 | **5** | Spatial matching is decidable, and a receive/match pattern binds each free variable **at most once**. | `rholang/src/matcher/spatial_matcher.rs` — `spatial_match` (`:167`); the "bind at most once" invariant is carried by the `free_count: FreeCount` fields on `ReceiveBind`/`MatchCase` (`models/src/ast.rs:217,247`) | `cargo test -p rchain-rholang matcher` |
 | **6** | A program (a deploy) has no globally free variables. | `models/src/types.rs` — the `Closed` newtype (`:340`, `Closed::new` `:345`) | `cargo test -p rchain-models` (type-level: you can't build a deploy from an unclosed term) |
 | **7** | Joining channels commutes — the join key is the channels hashed in **sorted** order, so `x\|y` and `y\|x` hash the same. | `rspace/src/hashing/stable_hash_provider.rs` — `hash_seq` (`:23`), `hash_channels` (`:33`) | `cargo test -p rchain-rspace` (`hash_seq_sorts_channel_hashes`) |
-| **8** | A COMM event is deterministic and content-addressed: produce refs are sorted and the event is a fixed structure. | `rspace/src/rspace.rs` — `produce` (`:454`), `consume` (`:432`); the `Comm`/`Produce`/`Consume` event structs in `rspace/src/trace/event.rs` | `cargo test -p rchain-rspace` (event round-trip) |
+| **8** | A COMM event is deterministic and content-addressed: candidate selection is **sorted-first by content hash**, and the event's produce refs are sorted. | `rspace/src/space_matcher.rs` — `extract_first_match`/`find_matching_data_candidate` (sorted candidates); `rspace/src/rspace.rs` — `produce` (`:454`), `consume` (`:432`); the `Comm`/`Produce`/`Consume` structs in `rspace/src/trace/event.rs` | `cargo test -p rchain-rspace` (event round-trip + `law8_comm_sorts_produces`) |
 | **9** | Merging state-channel changes is a monoid: associative, and two *non-conflicting* change logs commute. | `rspace/src/merger/state_change_merger.rs` — `compute_trie_actions` (`:66`); supporting logic in `rspace/src/merger/{state_change,event_log_merging_logic,channel_change,event_log_index}.rs` | `cargo test -p rchain-rspace merger` |
 | **10** | The state is a content-addressed Merkle radix trie: collision-free, with a well-defined empty root. | `rspace/src/history/radix_tree.rs` — `type Node = [Item; 256]` (`:35`), `RadixTreeImpl` (`:145`), `empty_root_hash` (`:43`) | `cargo test -p rchain-rspace history` |
-| **11** | Replaying a block recomputes the same COMM events; the recomputed set is a subset of the recorded trace. | `rspace/src/replay_rspace.rs` — `ReplayRSpace` (`:83`), `impl IReplaySpace` (`:516`) | `cargo test -p rchain-rspace replay` |
+| **11** | Replaying a block recomputes the same COMM events; the recomputed set is a subset of the recorded trace. Replay is **verify-only**, so dependency-free blocks re-validate concurrently. | `rspace/src/replay_rspace.rs` — `ReplayRSpace` (`:83`); the per-block fork in `casper/src/runtime_manager.rs` (`fork_replay_runtime`) and the batch processor in `casper/src/blocks/block_processor.rs` | `cargo test -p rchain-rspace replay` + `cargo test -p rchain-casper` (consensus/finalization) |
 | **12** | Actor atomicity (single-threaded `mbox.nextMsg`). | **Orphaned** — the Rosette VM (`rosette/`/`roscala/`) is out of scope; the Rust reducer (`rholang::reduce`) *replaces* the VM, so this law is not formalized in Rust. | — |
 | **13** | Reflection: everything is an `Ob`, with meta/parent chains and a fork-join barrier. | **Orphaned** (same as Law 12). | — |
 | **14** | Finality requires **strictly > 2/3** of bonded stake; the fringe is one message per bonded validator (an antichain). | `sdk/src/consensus.rs` — `is_super_majority` (`:15`, exact `3·stake > 2·total` in `i128`); the fringe/estimator in `block-storage/src/dag/finalizer.rs` (`calculate_finalization`); bonds as `BTreeMap<S, NonNegI64>` | `cargo test -p rchain-sdk consensus` + `casper/tests/finalization.rs` |
@@ -84,6 +84,24 @@ recomputation — that's the "content addressing" that makes any mutation detect
 rather than a `Vec<u8>`.
 
 ---
+
+## The concurrency model
+
+Several laws combine into a single cross-cutting property — **the concurrency model**. The node realizes
+the ρ-calculus's concurrency at three levels, each grounded in the laws:
+
+- **Reducer** (within a deploy): a `Par`'s terms are concurrent (`|`, Law 2), so `expand_par` fork-joins
+  their *pure* resolution (substitution / spatial matching / `new`-allocation, Law 19) while applying the
+  *effects* in DFS order (Law 4). — [`Concurrent reduction`](../formal/concurrent-reduction.md).
+- **Effect** (matching + scheduling): candidate selection is sorted-first (Law 8), and disjoint-channel
+  effects commute (Law 9) while same-channel effects keep DFS order (Law 4/8/11). —
+  [`Effect scheduling`](../formal/effect-scheduling.md).
+- **Block** (validation): replay is verify-only (Law 11), so dependency-free blocks re-validate
+  concurrently and insert serially. — the fork + batch processor above.
+
+The whole model — and the soundness theorems it must satisfy — is specified in
+[`The concurrency model`](../formal/concurrency-model.md), which is the target of the Lean formalization
+(`spec/Rchain/`).
 
 ## Verifying a law yourself
 

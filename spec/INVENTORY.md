@@ -10,6 +10,12 @@ Calculus of Constructions, with no silent partiality — is specified in [`TYPE-
 guided by `Rchain/Rho.lean` and `Rchain/Ty.lean`. It is **not** a new law and does not pre-empt Laws
 1–19 below.
 
+**Concurrency model.** How Laws 1, 2, 4, 7, 8, 9, 10, 11, 19 combine to allow concurrent reduction — and
+what must serialize, and why — is specified in
+[`../docs/src/formal/concurrency-model.md`](../docs/src/formal/concurrency-model.md). Its soundness
+theorems (diamond/linearization, disjoint-commute, sharded-scheduler, replay determinism) are the target
+of `Rchain/Concurrent.lean`.
+
 **Status legend**
 
 - **stated** — theorem statement exists in Lean (Phase 0), proof is a later obligation
