@@ -7,21 +7,25 @@ Specifies the *parallel* reduction `⟹` and the soundness theorems of the concu
 (`docs/src/formal/concurrency-model.md`). The sequential `Reduce` and structural congruence `StrCong`
 are in `Rchain.Rho`.
 
-**Proven here** (the foundation):
+**Proven here:**
 
-- `parStep_comm` — two independent redexes (one on each side of `parMerge`) commute; their common
-  reduct is the merge of the two reducts.
+- `parStep_comm` — two independent redexes (one on each side of `parMerge`) commute.
 - `parStep_to_reduce` — linearization: every parallel step is a finite sequence of sequential
-  `Reduce` steps (so a concurrent execution is a valid refinement of the sequential one).
+  `Reduce` steps.
+- `List.append_eq_singleton`, `parMerge_eq_nilPar`, `sendPar_eq_parMerge`, `receivePar_eq_parMerge` —
+  the field-wise decomposition of the flat `Par` under `parMerge`.
+- `reduce_nilPar_impossible`, `reduce_sendPar_impossible`, `reduce_receivePar_impossible` — inertness:
+  a nil/send-only/receive-only process cannot reduce (the `comm`-vs-`parLeft` cases are vacuous).
 
-**Open** (the target):
+**Open** (the targets):
 
-- `parStep_diamond` — confluence of `⟹`: two parallel steps from `p` converge to a common reduct.
-  The `comm`-vs-`comm` and `comm`-vs-`par` cases need the injectivity of `sendPar`/`receivePar`/
-  `parMerge` (a COMM redex has a unique reduct).
+- `parStep_diamond` — confluence of `⟹` up to `StrCong`.
+- `reduce_confluent` — confluence of `Reduce` up to `StrCong` (the corrected Law-4 clause; single-step
+  determinism is false — two independent COMM redexes reduce to non-`≡` results).
 
-Together with `StrCong`, `parStep_diamond` discharges the determinism clause of Law 4
-(`reduce_deterministic` in `Rchain.Reduce`) and the "concurrent == sequential" invariant.
+The remaining step for confluence is the **COMM-redex decomposition** (`parMerge p q = parMerge
+(sendPar c [d]) (receivePar c b)` ⟹ the summands are `nilPar`/`sendPar`/`receivePar`/the redex), which
+combines the already-proven inertness and decomposition lemmas.
 -/
 
 namespace Rchain
@@ -67,21 +71,111 @@ theorem parStep_to_reduce {p q : Par} (h : ParStep p q) :
   | par hp hq ihp ihq =>
       exact Relation.ReflTransGen.trans (reflTransGen_parLeft ihp) (reflTransGen_parRight ihq)
 
-/-- Diamond / confluence of parallel reduction: two parallel steps from `p` converge to a common
-    `ParStep`-reduct.
+/-- `p ++ q = [s]` splits as `[s] ++ []` or `[] ++ [s]`. -/
+lemma List.append_eq_singleton {α : Type} {p q : List α} {s : α} (h : p ++ q = [s]) :
+    (p = [s] ∧ q = []) ∨ (p = [] ∧ q = [s]) := by
+  cases p with
+  | nil => simp at h; exact Or.inr ⟨rfl, h⟩
+  | cons a ps =>
+      cases ps with
+      | nil =>
+          cases q with
+          | nil => exact Or.inl ⟨by simpa using h, rfl⟩
+          | cons b qs => cases h
+      | cons b pss => cases h
 
-    **Open.** The flat `Par` carries `parMerge` as a *field-wise monoid* (`parMerge p q` appends the
-    eight lists), so decomposition into `par`-summands is **not unique** — e.g. `sendPar chan data =
-    parMerge (sendPar chan data) nilPar`. A structural `cases` therefore fails ("dependent elimination")
-    on the `par` case. The proof needs a mutual induction over the eight list fields: (a) inertness of
-    `sendPar`/`receivePar`/`nilPar` under `ParStep`, and (b) the COMM-redex decomposition
-    `parMerge p q = parMerge (sendPar chan [data]) (receivePar chan body) ⟹ p'`/`q'` still commute to
-    `body`. With those, the diamond closes by the standard induction (`refl`/`comm`/`par` cases, using
-    the IHs for `par`-vs-`par`).
+/-- `parMerge p q = nilPar` forces both summands to `nilPar`. -/
+lemma parMerge_eq_nilPar {p q : Par} (h : parMerge p q = nilPar) : p = nilPar ∧ q = nilPar := by
+  cases p <;> cases q <;> simp [parMerge, nilPar] at h ⊢
+  · simp_all [nilPar]
 
-    Combined with `StrCong` (Law 2), this discharges `reduce_deterministic` (Law 4). -/
+/-- `sendPar chan data = parMerge p q` splits as `sendPar | nilPar` (or `nilPar | sendPar`). -/
+lemma sendPar_eq_parMerge {chan : Par} {data : List Par} {p q : Par}
+    (h : sendPar chan data = parMerge p q) :
+    (p = sendPar chan data ∧ q = nilPar) ∨ (p = nilPar ∧ q = sendPar chan data) := by
+  cases p <;> cases q <;> simp [sendPar, parMerge] at h
+  rcases List.append_eq_singleton h.1.symm with ⟨hps, hqs⟩ | ⟨hps, hqs⟩
+  · left; subst hps; subst hqs; simp_all [sendPar, nilPar, List.append_eq_nil]
+  · right; subst hps; subst hqs; simp_all [sendPar, nilPar, List.append_eq_nil]
+
+/-- `receivePar chan body = parMerge p q` splits as `receivePar | nilPar` (or `nilPar | receivePar`). -/
+lemma receivePar_eq_parMerge {chan body : Par} {p q : Par}
+    (h : receivePar chan body = parMerge p q) :
+    (p = receivePar chan body ∧ q = nilPar) ∨ (p = nilPar ∧ q = receivePar chan body) := by
+  cases p <;> cases q <;> simp [receivePar, parMerge] at h
+  rcases List.append_eq_singleton h.2.1.symm with ⟨hpr, hqr⟩ | ⟨hpr, hqr⟩
+  · left; subst hpr; subst hqr; simp_all [receivePar, nilPar, List.append_eq_nil]
+  · right; subst hpr; subst hqr; simp_all [receivePar, nilPar, List.append_eq_nil]
+
+/-- `nilPar` cannot reduce. -/
+lemma reduce_nilPar_impossible {r : Par} (h : Reduce nilPar r) : False :=
+  reduce_nilPar_impossible_aux h rfl
+where
+  reduce_nilPar_impossible_aux : ∀ {p r : Par}, Reduce p r → p = nilPar → False := by
+    intro p r h hp
+    induction h with
+    | comm c d b =>
+        simp [parMerge, sendPar, receivePar, nilPar] at hp
+    | parLeft hp1 ih =>
+        rcases parMerge_eq_nilPar hp with ⟨hp_eq, _⟩
+        subst hp_eq
+        exact ih rfl
+    | parRight hq1 ih =>
+        rcases parMerge_eq_nilPar hp with ⟨_, hq_eq⟩
+        subst hq_eq
+        exact ih rfl
+
+/-- A send-only process cannot reduce. -/
+lemma reduce_sendPar_impossible {chan : Par} {data : List Par} {r : Par}
+    (h : Reduce (sendPar chan data) r) : False :=
+  reduce_sendPar_impossible_aux h rfl
+where
+  reduce_sendPar_impossible_aux : ∀ {p r : Par}, Reduce p r → p = sendPar chan data → False := by
+    intro p r h hp
+    induction h with
+    | comm c d b =>
+        simp [parMerge, sendPar, receivePar] at hp
+    | parLeft hp1 ih =>
+        rcases sendPar_eq_parMerge hp.symm with ⟨hp_eq, hq_eq⟩ | ⟨hp_eq, hq_eq⟩
+        · subst hp_eq; subst hq_eq; exact ih rfl
+        · subst hp_eq; subst hq_eq; exact reduce_nilPar_impossible hp1
+    | parRight hq1 ih =>
+        rcases sendPar_eq_parMerge hp.symm with ⟨hp_eq, hq_eq⟩ | ⟨hp_eq, hq_eq⟩
+        · subst hp_eq; subst hq_eq; exact reduce_nilPar_impossible hq1
+        · subst hp_eq; subst hq_eq; exact ih rfl
+
+/-- A receive-only process cannot reduce. -/
+lemma reduce_receivePar_impossible {chan body r : Par}
+    (h : Reduce (receivePar chan body) r) : False :=
+  reduce_receivePar_impossible_aux h rfl
+where
+  reduce_receivePar_impossible_aux : ∀ {p r : Par}, Reduce p r → p = receivePar chan body → False := by
+    intro p r h hp
+    induction h with
+    | comm c d b =>
+        simp [parMerge, sendPar, receivePar] at hp
+    | parLeft hp1 ih =>
+        rcases receivePar_eq_parMerge hp.symm with ⟨hp_eq, hq_eq⟩ | ⟨hp_eq, hq_eq⟩
+        · subst hp_eq; subst hq_eq; exact ih rfl
+        · subst hp_eq; subst hq_eq; exact reduce_nilPar_impossible hp1
+    | parRight hq1 ih =>
+        rcases receivePar_eq_parMerge hp.symm with ⟨hp_eq, hq_eq⟩ | ⟨hp_eq, hq_eq⟩
+        · subst hp_eq; subst hq_eq; exact reduce_nilPar_impossible hq1
+        · subst hp_eq; subst hq_eq; exact ih rfl
+
+/-- Confluence of parallel reduction up to structural congruence. -/
 theorem parStep_diamond {p q r : Par} (hpq : ParStep p q) (hpr : ParStep p r) :
-    ∃ s, ParStep q s ∧ ParStep r s := by
+    ∃ s t, ParStep q s ∧ ParStep r t ∧ StrCong s t := by
+  sorry
+
+/-- Law 4, correctly stated: *confluence* up to structural congruence. Two single-step reductions
+    converge to `StrCong`-equivalent reducts.
+
+    Note: single-step determinism `Reduce p q → Reduce p q' → StrCong q q'` is **false** — two
+    independent COMM redexes in a `parMerge` reduce to non-`≡`-equivalent results (reducing the left
+    vs the right redex). Confluence (a common reduct) is the correct invariant. -/
+theorem reduce_confluent {p q r : Par} (hpq : Reduce p q) (hpr : Reduce p r) :
+    ∃ s t, Relation.ReflTransGen Reduce q s ∧ Relation.ReflTransGen Reduce r t ∧ StrCong s t := by
   sorry
 
 end Rchain
