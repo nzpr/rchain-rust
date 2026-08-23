@@ -2,7 +2,7 @@
 
 This document describes the technical architecture of the `qucalc` crate and the
 system contracts it backs. For the *governance* semantics specifically, see
-[`Governance.md`](../rholang/Governance.md); for runnable demos, see
+[`Governance.md`](../../../qucalc/rholang/Governance.md); for runnable demos, see
 [`examples.md`](examples.md).
 
 ## Layering
@@ -93,7 +93,7 @@ counter" guarantee.
 ## Native system processes
 
 Added to the fixed-channel table (bytes 22–29) and dispatch table (`BodyRefs`
-23–30) in [`system_processes.rs`](../../rholang/src/system_processes.rs):
+23–30) in [`system_processes.rs`](../../../rholang/src/system_processes.rs):
 
 | URN | Arity | Semantics |
 |---|---|---|

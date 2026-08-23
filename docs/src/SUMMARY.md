@@ -39,6 +39,12 @@
 - [The 19 laws → Rust code](contributor/laws-to-rust.md)
 - [Formal specification & audit](contributor/spec.md)
 
+# Part V — QuCalc: native AI & governance
+
+- [Overview](qucalc/README.md)
+- [Architecture](qucalc/architecture.md)
+- [Examples](qucalc/examples.md)
+
 ---
 
 - [Navigation for AI agents](ai-entrypoint.md)
