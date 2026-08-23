@@ -30,6 +30,7 @@
 
 - [Consensus (Casper)](node/consensus.md)
 - [The tuple space (RSpace)](node/rspace.md)
+- [Sorted matching (proposal)](node/sorted-matching.md)
 - [Storage](node/storage.md)
 - [Operating the node](node/operating.md)
 

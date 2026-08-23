@@ -145,8 +145,11 @@ where
         let mut map = BTreeMap::new();
         for c in channels {
             let data = store.get_data(c).await?;
-            let indexed: Vec<(Datum<A>, i64)> =
+            let mut indexed: Vec<(Datum<A>, i64)> =
                 data.into_iter().enumerate().map(|(i, d)| (d, i as i64)).collect();
+            // Content-addressed selection: sort candidates by their produce hash so the sorted-first
+            // matching datum is chosen regardless of insertion order (Law 4/8).
+            indexed.sort_by(|a, b| a.0.source.cmp(&b.0.source));
             map.insert(c.clone(), indexed);
         }
         Ok(map)
@@ -264,6 +267,9 @@ where
                 let data_list = store.get_data(c).await?;
                 let mut indexed: Vec<(Datum<A>, i64)> =
                     data_list.into_iter().enumerate().map(|(i, d)| (d, i as i64)).collect();
+                // Sort the stored data by content hash, then prepend the in-flight datum so it stays
+                // the first candidate on its producing channel (the produce's own data).
+                indexed.sort_by(|a, b| a.0.source.cmp(&b.0.source));
                 if c == bat_channel {
                     indexed.insert(0, (data.clone(), -1));
                 }

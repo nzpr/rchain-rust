@@ -97,7 +97,11 @@ where
     P: Clone,
     K: Clone,
 {
-    for (wc, index) in match_candidates {
+    // Content-addressed selection: sort the waiting continuations by their consume hash so the
+    // sorted-first matching continuation is chosen regardless of insertion order (Law 4/8).
+    let mut sorted: Vec<(WaitingContinuation<P, K>, usize)> = match_candidates.to_vec();
+    sorted.sort_by(|a, b| a.0.source.cmp(&b.0.source));
+    for (wc, index) in &sorted {
         let data_candidates = extract_data_candidates(
             &channels.iter().cloned().zip(wc.patterns.iter().cloned()).collect::<Vec<_>>(),
             channel_to_indexed_data,

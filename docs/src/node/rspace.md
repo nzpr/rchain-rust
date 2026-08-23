@@ -28,8 +28,12 @@ order-independence is Law 7.
 
 The space is deterministic (Laws 8, 11):
 
-- When a produce has several possible matches, the space selects by a **sorted** ordering of the
-  candidates — the produce refs are sorted, so the selection is reproducible.
+- When a produce has several possible matches, the space selects the **sorted-first** candidate by
+  content hash (Law 8): the data and continuation candidates are ordered by their produce/consume hash,
+  so the selection is reproducible regardless of insertion order. A comm event's *produce refs* are
+  also **sorted**, so the event itself is content-addressed. (See
+  [Sorted matching](sorted-matching.md) for the rationale and the deviation from live Scala's random
+  shuffle.)
 - A comm event is **content-addressed**: the same produce/consume pair yields the same event id on
   every node.
 - **Replay** recomputes comm events from a recorded trace, and the recomputed events must be a subset

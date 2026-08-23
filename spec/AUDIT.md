@@ -201,6 +201,7 @@ Every place the Rust port deliberately departs from the Scala oracle, with the r
 | rholang parser depth guard (`MAX_PARSE_DEPTH = 512`) | Scala BNFC parser has no depth guard | a deeply-nested term must not overflow the stack (R9) |
 | HTTP `/api/deploy` + explore routes rate-limited (100 req/s) | Scala HTTP deploy routes are unlimited | match the gRPC deploy rate limit (R10) |
 | PBKDF2 iterations raised `1024 → 310_000` | Scala uses BouncyCastle default `1024` | slow offline brute-force of encrypted keys at rest (R11) |
+| RSpace candidate selection is **sorted-first** by content hash (not newest-first insertion order) | `RSpace.scala`/`RSpaceOps.scala` shuffle candidates via `Random.shuffle` before matching | live Scala is non-deterministic across runs; the port selects the sorted-first candidate for consensus. Implemented per `docs/src/node/sorted-matching.md` (changes post-state hashes only for multi-candidate deploys) |
 
 ---
 

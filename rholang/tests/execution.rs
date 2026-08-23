@@ -148,6 +148,9 @@ async fn concurrent_and_sequential_state_hashes_match() {
         r#"new c in { c!(42) | for (@x <<- c) { @"peek"!(x) } }"#,
         r#"new storeToken, Make in { contract Make(@initVal, @node) = { @[node, *storeToken]!(initVal) } | Make!(7, "key") | for (@x <- @["key", *storeToken]) { @"listch"!(x) } }"#,
         r#"@"a"!(1) | @"b"!(2) | @"c"!(3) | @"d"!(4) | @"e"!(5) | @"f"!(6) | @"g"!(7) | @"h"!(8) | @"i"!(9) | @"j"!(10)"#,
+        // Same-channel race: several produces compete for one receive. Sorted (content-addressed)
+        // selection must pick the same sorted-first datum under both schedulers.
+        r#"new c in { c!(1) | c!(2) | c!(3) | for (@x <- c) { @"race"!(x) } }"#,
     ];
     for term in terms {
         let rt_c = build_runtime(true).await;
