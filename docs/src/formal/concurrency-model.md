@@ -23,7 +23,7 @@ Concurrency appears at three levels, each with its own enabling and constraining
 | Level | What runs concurrently | What serializes | Enabling laws | Constraining laws |
 |-------|------------------------|-----------------|---------------|-------------------|
 | **Reducer** (within a deploy) | the *pure* resolution of a `Par`'s terms — substitution, spatial matching, name allocation | the tuple-space effects, in DFS order | 1, 2, 19 | 4, 8 |
-| **Effect** (matching + scheduling) | *disjoint-channel* `produce`/`consume` | *same-channel* effects, in DFS order | 9, 7 | 4, 8, 11 |
+| **Effect** (matching + scheduling) | *(unsound — see the limits below)* | *all* effects, in DFS order | — | 4, 8, 11 |
 | **Block** (validation) | replay of dependency-free blocks | DAG insertion, in topological order | 11 | 14, 15, 16, 18 |
 
 ## Level 1 — the reducer (fork-join over `|`)
@@ -74,6 +74,58 @@ concurrently, each on a freshly-forked `ReplayRhoRuntime` (`casper/src/runtime_m
 This is the node's block-throughput scaling: it uses the *same* Laws 4/8/11 determinism as the other two
 levels, but at the granularity of whole blocks.
 
+## The limits of concurrency
+
+Only two levels of concurrency are sound and implemented:
+
+1. **Level 1 — pure resolution.** A `Par`'s sub-terms (substitution, spatial matching, `new`-allocation)
+   resolve concurrently; only the tuple-space effects serialize in DFS order. Sound because pure
+   resolution is side-effect-free w.r.t. the tuple space and the RNG is pre-split (Law 19).
+2. **Level 4 — cross-block replay.** Dependency-free blocks replay concurrently; insertion is serial.
+
+**Effect-level sharding is unsound** (`Rchain.Effect.effect_reorder_diverges`). Two distinct obstacles
+stand in the way, and they are different in kind:
+
+- **Obstacle A — the flat `Par` is not confluent.** The node's process is the flat field-wise `Par`;
+  `parMerge` erases the tree structure that records *which* send pairs with *which* receive, so reduction
+  is not even single-step deterministic up to `≡` (`Concurrent.lean`, `reduce_not_deterministic`).
+  Confluence is recovered only in the **tree model** (`Tree.lean`, `reduceT_confluent`), where `par` is an
+  injective constructor.
+- **Obstacle B — a continuation's closure is dynamic.** The sound independence criterion is disjoint
+  *closure*, not disjoint *footprint* (`Rchain.Effect.effect_commute_of_disjoint_closure`). But a
+  continuation's closure depends on the datum the trigger matches: a receive `for (@x ← c) { @[x, *y]!(…) }`
+  only reveals its output channel at match time. So closure is not statically decidable, and no *static*
+  partition (by footprint, or even by closure) is sound.
+
+## The path to pure ρ-calculus thread-level concurrency
+
+The ρ-calculus *theoretically* permits `P | Q` to reduce `P` and `Q` on independent threads, confluently.
+Realizing that in the node requires discharging **three** things — each a research project, not an
+incremental scheduler tweak:
+
+1. **Represent processes as trees, not the flat `Par`.** Adopt the tree model's `Proc` (explicit,
+   injective `par` nodes) as the *execution* representation, so reduction is confluent
+   (`reduceT_confluent`). The flat `Par` is the field-wise quotient that *causes* the non-confluence; a
+   concurrent reducer must operate on the tree and flatten only at the canonicalization boundary
+   (Obstacle A).
+
+2. **Make closures static, or track them at runtime.** Effect-level independence is disjoint closure
+   (Obstacle B). Either **restrict the calculus** so channel positions are statically decidable — i.e.
+   forbid higher-order channel construction from bound data (a receive body's channels must be computable
+   without the matched datum), which makes a closure-aware sharded scheduler sound; or **track closures
+   dynamically**, computing an effect's closure incrementally and serializing on overlap. The dynamic
+   option is expensive and, because a closure is only fully known after its trigger runs, its parallelism
+   collapses to the DFS order in the general case — so the calculus restriction is the one that actually
+   unlocks thread-level concurrency, at the cost of the reflection that makes the ρ-calculus higher-order.
+
+3. **Canonicalize after concurrent reduction.** Confluence yields "the same result up to `≡`"; consensus
+   (Law 10) needs *one* canonical state. A concurrent reducer must end with a canonicalization step
+   (Law 1 sort) that flattens the tree and orders its fields, turning the `≡`-class into a single
+   content-addressed state.
+
+Until these three are discharged formally (in `spec/Rchain/`), the reducer's concurrency is bounded to
+Level 1 and Level 4, and the channel-sharded effect scheduler is out of scope.
+
 ## Soundness theorems (the Lean targets)
 
 The model is sound if these hold. Each is the statement that a concurrent execution matches the
@@ -87,8 +139,12 @@ sequential one.
    model (explicit `par` nodes); the flat `Par` is its field-wise quotient.
 2. **Linearization** — the sequential reducer (DFS, canonical order) is a valid refinement of the
    concurrent one; both reach the same `≡`-canonical state.
-3. **Disjoint commute** — `chans(e₁) ∩ chans(e₂) = ∅ ⇒ apply(e₁; e₂) ≡ apply(e₂; e₁)` (Law 9).
-4. **Sharded-scheduler soundness** — parallel-disjoint + serial-same-channel (DFS) == sequential.
+3. **Disjoint commute (footprint)** — `chans(e₁) ∩ chans(e₂) = ∅ ⇒ apply(e₁; e₂) ≡ apply(e₂; e₁)`.
+   **False at the effect level** (`Rchain.Effect.effect_reorder_diverges`): the footprint reading of Law 9
+   ignores the continuation closure.
+4. **Closure commute (the sound condition)** — `closure(e₁) ∩ closure(e₂) = ∅ ⇒ apply(e₁; e₂) ≡
+   apply(e₂; e₁)` (`Rchain.Effect.effect_commute_of_disjoint_closure`). Not statically decidable, so no
+   static sharded scheduler is sound.
 5. **Replay determinism** — recomputed COMM ⊆ recorded trace (Law 11), so concurrent re-validation
    reaches the recorded root.
 
@@ -105,7 +161,11 @@ sequential one.
   `StrCongT`, and `reduceT_confluent` (the diamond holds up to `StrCongT`). `flatten : Proc → Par`
   bridges the two (`flatten_reduce`/`flatten_strCong`): tree confluence is a sound refinement of the
   flat `Reduce`, whose non-confluence is precisely the loss of tree structure under `parMerge`.
-  The effect-level theorems (3, 4) lift the same argument to the tuple-space state monoid (Law 9/10).
+- **Done** (`Effect.lean`): the **effect-level model** — `Effect` (produce/consume with continuation),
+  `State`, `apply`, `footprint`, `closure`. Proves the naive "disjoint footprint" lift to the tuple
+  space is **unsound** (`effect_reorder_diverges`) and states the sound condition
+  (`effect_commute_of_disjoint_closure`: disjoint *closure* ⇒ commute). This is what rules out the
+  channel-sharded effect scheduler.
 
 > **Formal.** The full per-law catalog is [The 19 laws](the-19-laws.md) /
 > [`spec/INVENTORY.md`](../../../spec/INVENTORY.md). The machine realization of each law is
