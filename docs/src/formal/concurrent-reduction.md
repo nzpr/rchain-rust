@@ -103,19 +103,22 @@ not a semantics change. Statements marked **proven** are already discharged in
 [`spec/Rchain/Rho.lean`](../../../spec/Rchain/Rho.lean); **stated** are the obligations this document
 adds (to be formalized as `Rchain/Concurrent.lean`).
 
-### C.1 Diamond / confluence (**stated**)
+### C.1 Independent-redex commute (**proven** — `parStep_comm`)
 
 ```
-P ⟹ Q₁  ∧  P ⟹ Q₂   ⇒   Q₁ ≡ Q₂
+Reduce p p'  ∧  Reduce q q'   ⇒   Reduce (p'|q) (p'|q')  ∧  Reduce (p|q') (p'|q')
 ```
 
-*Proof sketch.* Two parallel steps differ by which independent redexes each fires. Because the redex
-sets are pairwise independent (disjoint channel footprints), the contractions neither read nor write a
-channel the other touches, so they commute; `≡` (Law 2) reassociates the resulting `Par`s. Induction on
-the step structure then closes the diamond.
+*Proof sketch.* A redex on the left and a redex on the right of `|` have disjoint channel footprints,
+so the two contractions neither read nor write a channel the other touches; they commute. `≡` (Law 2)
+reassociates the resulting `Par`s.
 
-**Corollary.** Every schedule from `P` reaches a `≡`-unique canonical normal form — the *same* normal
-form the sequential reducer reaches. Concurrent execution cannot produce a different canonical state.
+**The diamond does *not* hold on the flat `Par`.** The general statement `P ⟹ Q₁ ∧ P ⟹ Q₂ ⇒ Q₁ ≡ Q₂` is
+**false**: a term with one receive and two sends on the same channel is a redex in two ways, reducing to
+two inert, non-`≡` send-only terms (see `spec/Rchain/Concurrent.lean`, `reduce_not_deterministic`).
+Confluence is a property of the *tree* model (explicit `par` nodes), not of the field-wise flat `Par`.
+Determinism is instead a property of the **chosen schedule** (the sequential reducer's canonical order,
+Law 1/4/8) — the "same normal form" invariant below holds for *that* schedule, not for arbitrary `⟹`.
 
 ### C.2 Linearization (**stated**)
 

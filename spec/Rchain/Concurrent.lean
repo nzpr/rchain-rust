@@ -12,20 +12,18 @@ are in `Rchain.Rho`.
 - `parStep_comm` — two independent redexes (one on each side of `parMerge`) commute.
 - `parStep_to_reduce` — linearization: every parallel step is a finite sequence of sequential
   `Reduce` steps.
-- `List.append_eq_singleton`, `parMerge_eq_nilPar`, `sendPar_eq_parMerge`, `receivePar_eq_parMerge` —
-  the field-wise decomposition of the flat `Par` under `parMerge`.
+- `List.append_eq_singleton`, `parMerge_eq_nilPar`, `sendPar_eq_parMerge`, `receivePar_eq_parMerge`,
+  `redex_eq_parMerge` — the field-wise decomposition of the flat `Par` under `parMerge`.
 - `reduce_nilPar_impossible`, `reduce_sendPar_impossible`, `reduce_receivePar_impossible` — inertness:
   a nil/send-only/receive-only process cannot reduce (the `comm`-vs-`parLeft` cases are vacuous).
+- `reduce_redex_unique` — an *isolated* COMM redex reduces to its body, uniquely up to `StrCong`.
+- `strCong_sends_perm` — `≡` preserves the multiset of sends (Law 2: `≡` reorders, never changes).
 
-**Open** (the targets):
-
-- `parStep_diamond` — confluence of `⟹` up to `StrCong`.
-- `reduce_confluent` — confluence of `Reduce` up to `StrCong` (the corrected Law-4 clause; single-step
-  determinism is false — two independent COMM redexes reduce to non-`≡` results).
-
-The remaining step for confluence is the **COMM-redex decomposition** (`parMerge p q = parMerge
-(sendPar c [d]) (receivePar c b)` ⟹ the summands are `nilPar`/`sendPar`/`receivePar`/the redex), which
-combines the already-proven inertness and decomposition lemmas.
+**Not confluent (flat `Par`)** — `reduce_not_deterministic` shows `Reduce` is not even single-step
+deterministic up to `StrCong`: a term with one receive and two sends on one channel is a redex in two
+ways. Hence `reduce_confluent` / `parStep_diamond` (confluence up to `StrCong`) are **false** on the
+flat `Par`. Full confluence is a property of the **tree model** (`Rchain.Tree`, explicit `par` nodes):
+`reduceT_confluent` there proves the diamond, and `flatten` maps it soundly onto the flat `Par`.
 -/
 
 namespace Rchain
@@ -163,19 +161,193 @@ where
         · subst hp_eq; subst hq_eq; exact reduce_nilPar_impossible hq1
         · subst hp_eq; subst hq_eq; exact ih rfl
 
-/-- Confluence of parallel reduction up to structural congruence. -/
-theorem parStep_diamond {p q r : Par} (hpq : ParStep p q) (hpr : ParStep p r) :
-    ∃ s t, ParStep q s ∧ ParStep r t ∧ StrCong s t := by
-  sorry
+/-- `Par` is determined by its eight fields. -/
+lemma Par.eta (p : Par) :
+    p = Par.mk p.sends p.receives p.news p.exprs p.matches p.unforgeables p.bundles p.connectives := by
+  cases p; rfl
 
-/-- Law 4, correctly stated: *confluence* up to structural congruence. Two single-step reductions
-    converge to `StrCong`-equivalent reducts.
+/-- Reconstruct `p = sendPar chan data` from its field values. -/
+lemma eq_sendPar_of_fields {p chan : Par} {data : List Par}
+    (hs : p.sends = [Send.mk chan data false]) (hr : p.receives = [])
+    (hn : p.news = []) (he : p.exprs = []) (hm : p.matches = [])
+    (hu : p.unforgeables = []) (hb : p.bundles = []) (hc : p.connectives = []) :
+    p = sendPar chan data := by
+  rw [Par.eta p, hs, hr, hn, he, hm, hu, hb, hc]; rfl
 
-    Note: single-step determinism `Reduce p q → Reduce p q' → StrCong q q'` is **false** — two
-    independent COMM redexes in a `parMerge` reduce to non-`≡`-equivalent results (reducing the left
-    vs the right redex). Confluence (a common reduct) is the correct invariant. -/
-theorem reduce_confluent {p q r : Par} (hpq : Reduce p q) (hpr : Reduce p r) :
-    ∃ s t, Relation.ReflTransGen Reduce q s ∧ Relation.ReflTransGen Reduce r t ∧ StrCong s t := by
-  sorry
+/-- Reconstruct `p = nilPar` from its field values. -/
+lemma eq_nilPar_of_fields {p : Par}
+    (hs : p.sends = []) (hr : p.receives = []) (hn : p.news = []) (he : p.exprs = [])
+    (hm : p.matches = []) (hu : p.unforgeables = []) (hb : p.bundles = []) (hc : p.connectives = []) :
+    p = nilPar := by
+  rw [Par.eta p, hs, hr, hn, he, hm, hu, hb, hc]; rfl
+
+/-- Reconstruct `p = receivePar chan body` from its field values. -/
+lemma eq_receivePar_of_fields {p chan body : Par}
+    (hs : p.sends = [])
+    (hr : p.receives = [Receive.mk [ReceiveBind.mk [chan] body 1] body false 1])
+    (hn : p.news = []) (he : p.exprs = []) (hm : p.matches = [])
+    (hu : p.unforgeables = []) (hb : p.bundles = []) (hc : p.connectives = []) :
+    p = receivePar chan body := by
+  rw [Par.eta p, hs, hr, hn, he, hm, hu, hb, hc]; rfl
+
+/-- Reconstruct `p = parMerge (sendPar chan [data]) (receivePar chan body)` from its field values. -/
+lemma eq_commRedex_of_fields {p chan data body : Par}
+    (hs : p.sends = [Send.mk chan [data] false])
+    (hr : p.receives = [Receive.mk [ReceiveBind.mk [chan] body 1] body false 1])
+    (hn : p.news = []) (he : p.exprs = []) (hm : p.matches = [])
+    (hu : p.unforgeables = []) (hb : p.bundles = []) (hc : p.connectives = []) :
+    p = parMerge (sendPar chan [data]) (receivePar chan body) := by
+  rw [Par.eta p, hs, hr, hn, he, hm, hu, hb, hc]; rfl
+
+/-- A COMM redex split as `parMerge p q` decomposes into four cases, determined by which summand
+    carries the send and which carries the receive. -/
+lemma redex_eq_parMerge {chan data body p q : Par}
+    (h : parMerge (sendPar chan [data]) (receivePar chan body) = parMerge p q) :
+    (p = parMerge (sendPar chan [data]) (receivePar chan body) ∧ q = nilPar)
+    ∨ (p = sendPar chan [data] ∧ q = receivePar chan body)
+    ∨ (p = receivePar chan body ∧ q = sendPar chan [data])
+    ∨ (p = nilPar ∧ q = parMerge (sendPar chan [data]) (receivePar chan body)) := by
+  have hsends : p.sends ++ q.sends = [Send.mk chan [data] false] := by
+    simpa [parMerge, sendPar, receivePar] using (congrArg Par.sends h).symm
+  have hrecvs : p.receives ++ q.receives =
+      [Receive.mk [ReceiveBind.mk [chan] body 1] body false 1] := by
+    simpa [parMerge, sendPar, receivePar] using (congrArg Par.receives h).symm
+  have hnews : p.news = [] ∧ q.news = [] := by
+    exact List.append_eq_nil.mp (by simpa [parMerge, sendPar, receivePar] using (congrArg Par.news h).symm)
+  have hexprs : p.exprs = [] ∧ q.exprs = [] := by
+    exact List.append_eq_nil.mp (by simpa [parMerge, sendPar, receivePar] using (congrArg Par.exprs h).symm)
+  have hmatches : p.matches = [] ∧ q.matches = [] := by
+    exact List.append_eq_nil.mp (by simpa [parMerge, sendPar, receivePar] using (congrArg Par.matches h).symm)
+  have hunforgeables : p.unforgeables = [] ∧ q.unforgeables = [] := by
+    exact List.append_eq_nil.mp (by simpa [parMerge, sendPar, receivePar] using (congrArg Par.unforgeables h).symm)
+  have hbundles : p.bundles = [] ∧ q.bundles = [] := by
+    exact List.append_eq_nil.mp (by simpa [parMerge, sendPar, receivePar] using (congrArg Par.bundles h).symm)
+  have hconnectives : p.connectives = [] ∧ q.connectives = [] := by
+    exact List.append_eq_nil.mp (by simpa [parMerge, sendPar, receivePar] using (congrArg Par.connectives h).symm)
+  rcases List.append_eq_singleton hsends with ⟨hps, hqs⟩ | ⟨hps, hqs⟩
+  · rcases List.append_eq_singleton hrecvs with ⟨hpr, hqr⟩ | ⟨hpr, hqr⟩
+    · left
+      exact ⟨eq_commRedex_of_fields hps hpr hnews.1 hexprs.1 hmatches.1 hunforgeables.1 hbundles.1 hconnectives.1,
+             eq_nilPar_of_fields hqs hqr hnews.2 hexprs.2 hmatches.2 hunforgeables.2 hbundles.2 hconnectives.2⟩
+    · right; left
+      exact ⟨eq_sendPar_of_fields hps hpr hnews.1 hexprs.1 hmatches.1 hunforgeables.1 hbundles.1 hconnectives.1,
+             eq_receivePar_of_fields hqs hqr hnews.2 hexprs.2 hmatches.2 hunforgeables.2 hbundles.2 hconnectives.2⟩
+  · rcases List.append_eq_singleton hrecvs with ⟨hpr, hqr⟩ | ⟨hpr, hqr⟩
+    · right; right; left
+      exact ⟨eq_receivePar_of_fields hps hpr hnews.1 hexprs.1 hmatches.1 hunforgeables.1 hbundles.1 hconnectives.1,
+             eq_sendPar_of_fields hqs hqr hnews.2 hexprs.2 hmatches.2 hunforgeables.2 hbundles.2 hconnectives.2⟩
+    · right; right; right
+      exact ⟨eq_nilPar_of_fields hps hpr hnews.1 hexprs.1 hmatches.1 hunforgeables.1 hbundles.1 hconnectives.1,
+             eq_commRedex_of_fields hqs hqr hnews.2 hexprs.2 hmatches.2 hunforgeables.2 hbundles.2 hconnectives.2⟩
+
+/-- A COMM redex has a unique reduct up to `StrCong`. -/
+lemma reduce_redex_unique {chan data body q' : Par}
+    (h : Reduce (parMerge (sendPar chan [data]) (receivePar chan body)) q') :
+    StrCong q' body :=
+  reduce_redex_unique_aux h rfl
+where
+  reduce_redex_unique_aux : ∀ {p q' : Par},
+      Reduce p q' → p = parMerge (sendPar chan [data]) (receivePar chan body) → StrCong q' body := by
+    intro p q' h hp
+    induction h with
+    | comm c d b =>
+        have hrecvs : [Receive.mk [ReceiveBind.mk [c] b 1] b false 1] =
+            [Receive.mk [ReceiveBind.mk [chan] body 1] body false 1] := by
+          simpa [parMerge, sendPar, receivePar] using congrArg Par.receives hp
+        have hb : b = body := by
+          simpa using congrArg Receive.body (List.cons.inj hrecvs).1
+        rw [hb]
+        exact StrCong.refl body
+    | parLeft hp1 ih =>
+        rcases redex_eq_parMerge hp.symm with
+          ⟨hp_redex, hq_nil⟩ | ⟨hp_send, hq_recv⟩ | ⟨hp_recv, hq_send⟩ | ⟨hp_nil, hq_redex⟩
+        · subst hq_nil
+          exact StrCong.trans (StrCong.ident _) (ih hp_redex)
+        · subst hp_send
+          exact False.elim (reduce_sendPar_impossible hp1)
+        · subst hp_recv
+          exact False.elim (reduce_receivePar_impossible hp1)
+        · subst hp_nil
+          exact False.elim (reduce_nilPar_impossible hp1)
+    | parRight hq1 ih =>
+        rcases redex_eq_parMerge hp.symm with
+          ⟨hp_redex, hq_nil⟩ | ⟨hp_send, hq_recv⟩ | ⟨hp_recv, hq_send⟩ | ⟨hp_nil, hq_redex⟩
+        · subst hq_nil
+          exact False.elim (reduce_nilPar_impossible hq1)
+        · subst hq_recv
+          exact False.elim (reduce_receivePar_impossible hq1)
+        · subst hq_send
+          exact False.elim (reduce_sendPar_impossible hq1)
+        · subst hp_nil
+          exact StrCong.trans (strCong_nil_left _) (ih hq_redex)
+
+/-- Structural congruence preserves the multiset of sends: `≡` (Law 2) only reorders and
+    reassociates the eight field lists, never changing their contents. -/
+lemma strCong_sends_perm {p q : Par} (h : StrCong p q) : List.Perm p.sends q.sends := by
+  induction h with
+  | refl p => exact List.Perm.refl _
+  | symm hp ih => exact ih.symm
+  | trans hp hq ihp ihq => exact ihp.trans ihq
+  | comm p q =>
+      simpa [parMerge] using (List.perm_append_comm (l₁ := p.sends) (l₂ := q.sends))
+  | assoc p q r =>
+      simp [parMerge, List.append_assoc]
+  | ident p => simpa [parMerge, nilPar] using (List.Perm.refl p.sends)
+  | par hp hq ihp ihq => simpa [parMerge] using (List.Perm.append ihp ihq)
+
+/-- Two `sendPar`s carrying different data are never `≡`. -/
+lemma sendPar_ne_strCong {c d1 d2 : Par} (hne : d1 ≠ d2) :
+    ¬ StrCong (sendPar c [d1]) (sendPar c [d2]) := by
+  intro h
+  have hperm : List.Perm [Send.mk c [d1] false] [Send.mk c [d2] false] := by
+    simpa [sendPar] using strCong_sends_perm h
+  have hmem : Send.mk c [d1] false ∈ [Send.mk c [d2] false] :=
+    (List.Perm.mem_iff hperm).1 (by simp)
+  have hsend : Send.mk c [d1] false = Send.mk c [d2] false := by simpa using hmem
+  have hdata : [d1] = [d2] := congrArg Send.data hsend
+  exact hne ((List.cons.inj hdata).1)
+
+/-! ## The flat `Par` is **not** confluent
+
+The flat `parMerge` is a field-wise monoid, so a single flat term has several decompositions into
+`parMerge p q` summands. A term with one receive and two sends on the same channel
+
+    `sendPar c [d₁] | receivePar c nilPar | sendPar c [d₂]`
+
+is a COMM redex in **two** ways: the receive pairs with `d₁` (via `parLeft`) or with `d₂` (via
+`parRight`), reducing to the inert, non-`≡` terms `sendPar c [d₂]` and `sendPar c [d₁]`
+(`sendPar_ne_strCong`). Hence single-step confluence (`Reduce p q → Reduce p r → ∃ s t,
+q ⟶* s ∧ r ⟶* t ∧ s ≡ t`) and the `ParStep` diamond are **false** on the flat `Par`: `parMerge`
+erases the tree structure that would say *which* send pairs with the receive.
+
+What *does* hold is `reduce_redex_unique` above — an *isolated* redex is deterministic up to
+`StrCong`. Full confluence is a property of the tree model (explicit `par` nodes); the flat `Par`
+is its field-wise quotient, and the two are not interchangeable for confluence. -/
+
+/-- The flat `Reduce` is not even single-step deterministic up to `StrCong`: one term reduces (via
+    two different `parMerge` decompositions) to two non-`≡` send-only terms. -/
+theorem reduce_not_deterministic :
+    ∃ p q r, Reduce p q ∧ Reduce p r ∧ ¬ StrCong q r := by
+  let c := nilPar
+  let d1 := nilPar
+  let d2 := sendPar nilPar [nilPar]
+  have hne : d1 ≠ d2 := by
+    intro h
+    have := congrArg Par.sends h
+    simp [d1, d2, nilPar, sendPar] at this
+  refine ⟨parMerge (sendPar c [d1]) (parMerge (receivePar c nilPar) (sendPar c [d2])),
+      sendPar c [d2], sendPar c [d1], ?_, ?_, ?_⟩
+  · have hp : parMerge (sendPar c [d1]) (parMerge (receivePar c nilPar) (sendPar c [d2])) =
+        parMerge (parMerge (sendPar c [d1]) (receivePar c nilPar)) (sendPar c [d2]) := by
+      simp [parMerge, sendPar, receivePar]
+    rw [hp]
+    exact Reduce.parLeft (Reduce.comm c d1 nilPar)
+  · have hp : parMerge (sendPar c [d1]) (parMerge (receivePar c nilPar) (sendPar c [d2])) =
+        parMerge (sendPar c [d1]) (parMerge (sendPar c [d2]) (receivePar c nilPar)) := by
+      simp [parMerge, sendPar, receivePar]
+    rw [hp]
+    exact Reduce.parRight (Reduce.comm c d2 nilPar)
+  · intro h
+    exact sendPar_ne_strCong hne (StrCong.symm h)
 
 end Rchain

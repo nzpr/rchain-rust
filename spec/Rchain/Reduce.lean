@@ -14,10 +14,12 @@ unforgeable names. The Scala oracle is `Reduce.scala`; the Rust realization is
 
 namespace Rchain
 
-/- Law 4 (corrected): reduction is **confluent** up to structural congruence, not single-step
-   deterministic. The single-step form `Reduce p q → Reduce p q' → StrCong q q'` is **false**: two
-   independent COMM redexes in a `parMerge` reduce to non-`≡`-equivalent results. The correct
-   invariant is confluence — see `Rchain.Concurrent.reduce_confluent`. -/
+/- Law 4 (corrected): reduction is **not** even single-step deterministic up to `StrCong`, and the
+   flat `Par` is **not confluent** either — a term with one receive and two sends on one channel is a
+   redex in two ways (see `Rchain.Concurrent.reduce_not_deterministic`). What *does* hold on the flat
+   `Par` is that an *isolated* redex reduces uniquely up to `StrCong`
+   (`Rchain.Concurrent.reduce_redex_unique`). Full confluence is a property of the tree model, not of
+   the field-wise flat `Par`. -/
 
 /-- Law 4: `new` binds names that are fresh — reduction cannot mention a `new`-bound name outside
     its binder, so a fresh name never clashes with an existing one. Phrased as: the free variables

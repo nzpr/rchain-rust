@@ -11,8 +11,10 @@
 
 > **Concurrency is a scheduling freedom, never a semantics change.** Every concurrent execution — at
 > any layer — must reach the same canonical state as the purely-sequential execution. The 19 laws make
-> this a *theorem*, not a convention: reduction is deterministic up to `≡` (Law 4), and the state is
-> content-addressed (Law 10).
+> this a *theorem*, not a convention: the reducer picks a **canonical, deterministic schedule** (DFS +
+> content-sorted selection, Laws 4/8/11), and the state is content-addressed (Law 10). The *raw*
+> nondeterministic `Reduce` relation is not even single-step deterministic up to `≡`, and is not
+> confluent on the flat `Par` — determinism is a property of the chosen schedule, not of the relation.
 
 ## The three levels
 
@@ -38,7 +40,8 @@ tuple space) in DFS order.
   (Law 4/8), and a continuation's channel footprint is only known after its trigger effect runs — so
   the reducer keeps effects in DFS order to reproduce the sequential candidate choices.
 
-See [Concurrent reduction](concurrent-reduction.md) for the theorems (diamond, linearization).
+See [Concurrent reduction](concurrent-reduction.md) for the theorems (independent-redex commute,
+linearization).
 
 ## Level 2 — effect selection (content-addressed matching)
 
@@ -73,8 +76,12 @@ levels, but at the granularity of whole blocks.
 The model is sound if these hold. Each is the statement that a concurrent execution matches the
 sequential one.
 
-1. **Diamond / confluence** — two parallel steps on independent redexes commute (`P ⟹ Q₁ ∧ P ⟹ Q₂ ⇒
-   Q₁ ≡ Q₂`). Corollary: every schedule reaches the same canonical normal form.
+1. **Independent-redex commute** — two parallel steps on *independent* redexes commute
+   (`parStep_comm`: `Reduce p p' → Reduce q q' → Reduce (p'|q) (p'|q') ∧ Reduce (p|q') (p'|q')`).
+   The full **diamond/confluence does not hold** on the flat `Par`: a term with one receive and two
+   sends on one channel is a redex in two ways, reducing to two inert, non-`≡` terms (see
+   `spec/Rchain/Concurrent.lean`, `reduce_not_deterministic`). Confluence is a property of the *tree*
+   model (explicit `par` nodes); the flat `Par` is its field-wise quotient.
 2. **Linearization** — the sequential reducer (DFS, canonical order) is a valid refinement of the
    concurrent one; both reach the same `≡`-canonical state.
 3. **Disjoint commute** — `chans(e₁) ∩ chans(e₂) = ∅ ⇒ apply(e₁; e₂) ≡ apply(e₂; e₁)` (Law 9).
@@ -87,10 +94,15 @@ sequential one.
 - Already in `Rho.lean`: `StrCong` (`comm`/`assoc`/`ident`/`par`) and `Reduce` (`comm`/`parLeft`/
   `parRight`) — the *permission* for concurrent reduction.
 - Already in `Random.lean` (axiom): the associative splittable RNG merge (Law 19).
-- **To add** (`Concurrent.lean`): a parallel-step relation `⟹` (a set of pairwise-independent redexes),
-  then (1) diamond/confluence via `parLeft`/`parRight` commuting on disjoint redexes, and (2)
-  linearization of `⟹` to `⟶`-sequences. The effect-level theorems (3, 4) lift the same argument to the
-  tuple-space state monoid (Law 9/10).
+- **Done** (`Concurrent.lean`): a parallel-step relation `⟹` (`ParStep`), the independent-redex commute
+  (`parStep_comm`), linearization of `⟹` to `⟶`-sequences (`parStep_to_reduce`), the field-wise
+  decomposition + inertness lemmas, `reduce_redex_unique` (an isolated redex is deterministic up to
+  `StrCong`), and the counterexample `reduce_not_deterministic` showing the flat `Par` is not confluent.
+- **Done** (`Tree.lean`): the **tree model** — `Proc` with explicit (injective) `par` nodes, `ReduceT`/
+  `StrCongT`, and `reduceT_confluent` (the diamond holds up to `StrCongT`). `flatten : Proc → Par`
+  bridges the two (`flatten_reduce`/`flatten_strCong`): tree confluence is a sound refinement of the
+  flat `Reduce`, whose non-confluence is precisely the loss of tree structure under `parMerge`.
+  The effect-level theorems (3, 4) lift the same argument to the tuple-space state monoid (Law 9/10).
 
 > **Formal.** The full per-law catalog is [The 19 laws](the-19-laws.md) /
 > [`spec/INVENTORY.md`](../../../spec/INVENTORY.md). The machine realization of each law is
