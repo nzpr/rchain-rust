@@ -100,6 +100,7 @@ impl ReportingRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
+            .clone()
             .eval(&Par::from(par.clone()), env, rand, &self.cost)
             .await
     }

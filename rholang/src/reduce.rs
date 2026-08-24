@@ -6,6 +6,8 @@
 //! collection methods (`union`/`diff`/`add`/`delete`/`contains`/`slice`/`keys`).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -1225,10 +1227,11 @@ enum OwnedTerm {
     ExprMethod(Expr),
 }
 
-/// A unit of reduction work. `Par` expands into its sub-terms; `Produce`/`Consume`/`ProducePeeks`
-/// are resolved tuple-space effects. The scheduler drains these LIFO (in reverse insertion order)
-/// to reproduce the depth-first, left-to-right reduction order of the sequential interpreter.
-enum Work {
+/// A unit of reduction. `Par` expands into its sub-terms; `Produce`/`Consume`/`ProducePeeks` are
+/// resolved tuple-space effects carrying a channel footprint (used to shard disjoint effects
+/// concurrently). `Par` is a scheduling barrier: its footprint is unknown until it is expanded, so
+/// it is applied at its DFS position.
+enum Effect {
     Par(Par, Env<Par>, Blake2b512Random),
     Produce(SortedProc, ListParWithRandom, bool),
     Consume(Vec<(BindPattern, SortedProc)>, ParWithRandom, bool, bool),
@@ -1245,18 +1248,18 @@ fn resolve_term(
     rand: Blake2b512Random,
     urn_map: Arc<BTreeMap<String, Par>>,
     cost: Arc<CostAccounting>,
-) -> Result<Option<Work>, RholangError> {
+) -> Result<Option<Effect>, RholangError> {
     match term {
         OwnedTerm::Send(s) => resolve_send(&s, &env, &rand, cost.as_ref()).map(Some),
         OwnedTerm::Receive(r) => resolve_receive(&r, &env, &rand, cost.as_ref()).map(Some),
         OwnedTerm::New(n) => resolve_new(&n, &env, &rand, urn_map.as_ref(), cost.as_ref()).map(Some),
         OwnedTerm::Match(m) => resolve_match(&m, &env, &rand, cost.as_ref()),
-        OwnedTerm::Bundle(b) => Ok(Some(Work::Par(*b.body, env, rand))),
+        OwnedTerm::Bundle(b) => Ok(Some(Effect::Par(*b.body, env, rand))),
         OwnedTerm::ExprVar(v) => {
-            eval_var(&v, &env, cost.as_ref()).map(|p| Some(Work::Par(p, env, rand)))
+            eval_var(&v, &env, cost.as_ref()).map(|p| Some(Effect::Par(p, env, rand)))
         }
         OwnedTerm::ExprMethod(e) => {
-            eval_expr_to_par(&e, &env, cost.as_ref()).map(|p| Some(Work::Par(p, env, rand)))
+            eval_expr_to_par(&e, &env, cost.as_ref()).map(|p| Some(Effect::Par(p, env, rand)))
         }
     }
 }
@@ -1267,7 +1270,7 @@ fn resolve_send(
     env: &Env<Par>,
     rand: &Blake2b512Random,
     cost: &CostAccounting,
-) -> Result<Work, RholangError> {
+) -> Result<Effect, RholangError> {
     cost.charge(Costs::send_eval_cost())?;
     let eval_chan = eval_expr(send.chan.as_ref(), env, cost)?;
     let sub_chan = substitute_par_and_charge(&eval_chan, 0, env, cost)?;
@@ -1291,7 +1294,7 @@ fn resolve_send(
         .iter()
         .map(|d| substitute_par_and_charge(d, 0, env, cost))
         .collect::<Result<_, _>>()?;
-    Ok(Work::Produce(
+    Ok(Effect::Produce(
         SortedProc::new(unbundled),
         ListParWithRandom {
             pars: subst_data.into_iter().map(|d| SortedProc::new(d.eval())).collect(),
@@ -1307,7 +1310,7 @@ fn resolve_receive(
     env: &Env<Par>,
     rand: &Blake2b512Random,
     cost: &CostAccounting,
-) -> Result<Work, RholangError> {
+) -> Result<Effect, RholangError> {
     cost.charge(Costs::receive_eval_cost())?;
     let mut binds: Vec<(BindPattern, SortedProc)> = Vec::new();
     for rb in &receive.binds {
@@ -1328,7 +1331,7 @@ fn resolve_receive(
     }
     let subst_body =
         substitute_par_and_charge(&receive.body, 0, &env.shift(receive.bind_count), cost)?;
-    Ok(Work::Consume(
+    Ok(Effect::Consume(
         binds,
         ParWithRandom {
             body: SortedProc::new(subst_body),
@@ -1367,11 +1370,11 @@ fn resolve_new(
     rand: &Blake2b512Random,
     urn_map: &BTreeMap<String, Par>,
     cost: &CostAccounting,
-) -> Result<Work, RholangError> {
+) -> Result<Effect, RholangError> {
     cost.charge(Costs::new_bindings_cost(new.bind_count as i64))?;
     let mut r = (*rand).clone();
     let new_env = alloc(new.bind_count, &new.uri, &new.injections, env, urn_map, &mut r)?;
-    Ok(Work::Par((*new.p).clone(), new_env, (*rand).clone()))
+    Ok(Effect::Par((*new.p).clone(), new_env, (*rand).clone()))
 }
 
 fn alloc(
@@ -1420,7 +1423,7 @@ fn resolve_match(
     env: &Env<Par>,
     rand: &Blake2b512Random,
     cost: &CostAccounting,
-) -> Result<Option<Work>, RholangError> {
+) -> Result<Option<Effect>, RholangError> {
     cost.charge(Costs::match_eval_cost())?;
     let evaled_target = eval_expr(m.target.as_ref(), env, cost)?;
     let subst_target = substitute_par_and_charge(&evaled_target, 0, env, cost)?;
@@ -1432,24 +1435,27 @@ fn resolve_match(
             for e in 0..i32::from(case.free_count) {
                 new_env = new_env.put(free_map.get(&e).cloned().unwrap_or_default());
             }
-            return Ok(Some(Work::Par((*case.source).clone(), new_env, (*rand).clone())));
+            return Ok(Some(Effect::Par((*case.source).clone(), new_env, (*rand).clone())));
         }
     }
     Ok(None)
 }
+
+/// A boxed, `'static` reduction future. The reducer is `Arc`-shared; the recursive reduction methods
+/// take `self: Arc<Self>` and return this, so the scheduler can `tokio::spawn` disjoint branches.
+type ReducerFuture = Pin<Box<dyn Future<Output = Result<(), RholangError>> + std::marker::Send>>;
 
 /// The reducer (port of `DebruijnInterpreter`).
 pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     space: T,
     dispatcher: D,
     urn_map: Arc<BTreeMap<String, Par>>,
-    merge_chs: Mutex<Vec<SortedProc>>,
+    merge_chs: Arc<Mutex<Vec<SortedProc>>>,
     mergeable_tag_name: SortedProc,
-    queue: Mutex<Vec<Work>>,
     concurrent: bool,
 }
 
-impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
+impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
     pub fn new(
         space: T,
         dispatcher: D,
@@ -1460,80 +1466,57 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             space,
             dispatcher,
             urn_map: Arc::new(urn_map),
-            merge_chs: Mutex::new(Vec::new()),
+            merge_chs: Arc::new(Mutex::new(Vec::new())),
             mergeable_tag_name,
-            queue: Mutex::new(Vec::new()),
             concurrent: true,
         }
     }
 
-    /// Toggle concurrent per-term resolution (on by default). With concurrency disabled, `expand_par`
-    /// resolves terms in a plain sequential loop — the reference used by the differential tests.
+    /// Toggle concurrent per-term resolution (on by default). With concurrency disabled,
+    /// `resolve_children` resolves terms in a plain sequential loop — the reference used by the
+    /// differential tests.
     pub fn set_concurrent(&mut self, concurrent: bool) {
         self.concurrent = concurrent;
     }
 
-    /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`): enqueue the process and drain the
-    /// work queue to completion. The queue is drained LIFO so sub-processes reduce in the same
-    /// depth-first, left-to-right order as the sequential interpreter.
+    /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`): reduce the process to normal form via
+    /// the recursive reducer.
     pub async fn eval(
-        &self,
+        self: Arc<Self>,
         par: &Par,
         env: &Env<Par>,
         rand: &Blake2b512Random,
         cost: &Arc<CostAccounting>,
     ) -> Result<(), RholangError> {
-        self.enqueue(Work::Par((*par).clone(), (*env).clone(), (*rand).clone()));
-        self.drain(cost).await
+        self.reduce_par((*par).clone(), (*env).clone(), (*rand).clone(), cost.clone())
+            .await
     }
 
-    /// Push a unit of work onto the scheduler queue (LIFO).
-    fn enqueue(&self, work: Work) {
-        self.queue.lock().unwrap_or_else(|p| p.into_inner()).push(work);
+    /// Reduce a `Par` (public: the continuation-dispatch hook used by the dispatcher's eval closure).
+    /// Resolves the `Par`'s sub-terms to effects, then reduces those effects in DFS order.
+    pub fn reduce_par(
+        self: Arc<Self>,
+        par: Par,
+        env: Env<Par>,
+        rand: Blake2b512Random,
+        cost: Arc<CostAccounting>,
+    ) -> ReducerFuture {
+        Box::pin(async move {
+            let effects = self.resolve_children(&par, &env, &rand, &cost).await?;
+            self.reduce_effects(effects, cost).await
+        })
     }
 
-    /// Enqueue a `Par` reduction job — the continuation-dispatch hook used by the dispatcher's eval
-    /// closure. Continuations are scheduled rather than reduced inline, decoupling matching from
-    /// execution.
-    pub fn enqueue_par(&self, par: Par, env: Env<Par>, rand: Blake2b512Random) {
-        self.enqueue(Work::Par(par, env, rand));
-    }
-
-    /// Drain the work queue to completion. A single coordinator pops work in DFS order; `expand_par`
-    /// fans out the pure per-term resolution to the tokio runtime and rejoins before any tuple-space
-    /// effect is applied, so effects stay in the sequential reducer's order.
-    async fn drain(&self, cost: &Arc<CostAccounting>) -> Result<(), RholangError> {
-        loop {
-            let work = self.queue.lock().unwrap_or_else(|p| p.into_inner()).pop();
-            match work {
-                Some(w) => self.process_work(w, cost).await?,
-                None => return Ok(()),
-            }
-        }
-    }
-
-    /// Process one unit of work.
-    async fn process_work(&self, work: Work, cost: &Arc<CostAccounting>) -> Result<(), RholangError> {
-        match work {
-            Work::Par(par, env, rand) => self.expand_par(&par, &env, &rand, cost).await,
-            Work::Produce(chan, data, persistent) => self.produce(&chan, data, persistent).await,
-            Work::Consume(binds, body, persistent, peek) => {
-                self.consume(&binds, body, persistent, peek).await
-            }
-            Work::ProducePeeks(data_list) => self.produce_peeks(&data_list).await,
-        }
-    }
-
-    /// Flatten a `Par` into its owned sub-terms, resolve each term's pure part concurrently, then
-    /// enqueue the resolved effects/children in reverse order so they reduce left-to-right in DFS
-    /// order. Each term keeps the same index-based RNG split as the sequential interpreter.
-    async fn expand_par(
+    /// Flatten a `Par` into its owned sub-terms and resolve each term's pure part (concurrently when
+    /// `concurrent` is set), returning the resolved effects in DFS order. Each term keeps the same
+    /// index-based RNG split as the sequential interpreter.
+    async fn resolve_children(
         &self,
         par: &Par,
         env: &Env<Par>,
         rand: &Blake2b512Random,
         cost: &Arc<CostAccounting>,
-    ) -> Result<(), RholangError> {
+    ) -> Result<Vec<Effect>, RholangError> {
         let mut terms: Vec<OwnedTerm> = Vec::new();
         for s in &par.sends {
             terms.push(OwnedTerm::Send(s.clone()));
@@ -1565,11 +1548,11 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
             )));
         }
         let n = terms.len();
-        let mut jobs: Vec<Work> = Vec::with_capacity(n);
+        let mut effects: Vec<Effect> = Vec::with_capacity(n);
         if self.concurrent {
             // Resolve each term's pure part concurrently. The tokio multi-thread runtime bounds
-            // actual CPU parallelism to its worker count; the effect/child application below stays
-            // in DFS order, so the final state is schedule-independent.
+            // actual CPU parallelism to its worker count; the effects are then applied in DFS order
+            // by the scheduler, so the final state is schedule-independent.
             let mut handles = Vec::with_capacity(n);
             for (i, term) in terms.into_iter().enumerate() {
                 let r = split_rand(rand, i, n)?;
@@ -1583,7 +1566,7 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                     .await
                     .map_err(|e| RholangError::ReduceError(format!("reducer task panicked: {e}")))??;
                 if let Some(w) = resolved {
-                    jobs.push(w);
+                    effects.push(w);
                 }
             }
         } else {
@@ -1593,97 +1576,113 @@ impl<T: Tuplespace, D: Dispatch> DebruijnInterpreter<T, D> {
                 let e = (*env).clone();
                 let resolved = resolve_term(term, e, r, self.urn_map.clone(), cost.clone())?;
                 if let Some(w) = resolved {
-                    jobs.push(w);
+                    effects.push(w);
                 }
             }
         }
-        for job in jobs.into_iter().rev() {
-            self.enqueue(job);
-        }
-        Ok(())
+        Ok(effects)
     }
 
-    async fn produce(
-        &self,
-        chan: &SortedProc,
-        data: ListParWithRandom,
-        persistent: bool,
-    ) -> Result<(), RholangError> {
-        self.update_mergeable_channels(chan);
-        let result = self.space.produce(chan, data.clone(), persistent).await?;
-        match result {
-            Some((continuation, data_list, peek)) => {
-                // Enqueue the re-produce *below* the dispatched continuation so the continuation
-                // fully reduces before the persistent/peek re-produce (LIFO pops the continuation
-                // first), preserving the sequential reducer's ordering.
-                if persistent {
-                    self.enqueue(Work::Produce(chan.clone(), data.clone(), true));
-                } else if peek {
-                    self.enqueue(Work::ProducePeeks(data_list.clone()));
-                }
-                self.dispatch(&continuation, &data_list).await?;
+    /// Reduce a sequence of effects in DFS order. The sequential reference loop; the sharded
+    /// scheduler (disjoint-channel components run concurrently) is layered on top of this in the
+    /// next phase.
+    fn reduce_effects(
+        self: Arc<Self>,
+        effects: Vec<Effect>,
+        cost: Arc<CostAccounting>,
+    ) -> ReducerFuture {
+        Box::pin(async move {
+            for effect in effects {
+                self.clone().apply_effect(effect, cost.clone()).await?;
             }
-            None => {}
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn consume(
-        &self,
-        binds: &[(BindPattern, SortedProc)],
-        body: ParWithRandom,
-        persistent: bool,
-        peek: bool,
-    ) -> Result<(), RholangError> {
-        let patterns: Vec<BindPattern> = binds.iter().map(|(p, _)| p.clone()).collect();
-        let sources: Vec<SortedProc> = binds.iter().map(|(_, s)| s.clone()).collect();
-        for s in &sources {
-            self.update_mergeable_channels(s);
-        }
-        let peeks: BTreeSet<usize> = if peek {
-            (0..sources.len()).collect()
-        } else {
-            BTreeSet::new()
-        };
-        let result = self
-            .space
-            .consume(
-                &sources,
-                &patterns,
-                TaggedContinuation::ParBody(body.clone()),
-                persistent,
-                peeks.clone(),
-            )
-            .await?;
-        match result {
-            Some((continuation, data_list, p)) => {
-                if persistent {
-                    self.enqueue(Work::Consume(binds.to_vec(), body.clone(), true, peek));
-                } else if p {
-                    self.enqueue(Work::ProducePeeks(data_list.clone()));
+    /// Apply one effect: expand a nested `Par` (a scheduling barrier), or perform a produce/consume/
+    /// peek and reduce any matched continuation inline (the continuation-prepend invariant). The
+    /// persistent/peek re-produce is applied *after* the continuation subtree.
+    fn apply_effect(
+        self: Arc<Self>,
+        effect: Effect,
+        cost: Arc<CostAccounting>,
+    ) -> ReducerFuture {
+        Box::pin(async move {
+            match effect {
+                Effect::Par(par, env, rand) => self.reduce_par(par, env, rand, cost).await,
+                Effect::Produce(chan, data, persistent) => {
+                    self.update_mergeable_channels(&chan);
+                    let result = self.space.produce(&chan, data.clone(), persistent).await?;
+                    if let Some((continuation, data_list, peek)) = result {
+                        self.dispatch(&continuation, &data_list).await?;
+                        if persistent {
+                            self.clone()
+                                .apply_effect(
+                                    Effect::Produce(chan.clone(), data.clone(), true),
+                                    cost,
+                                )
+                                .await?;
+                        } else if peek {
+                            self.clone()
+                                .apply_effect(Effect::ProducePeeks(data_list.clone()), cost)
+                                .await?;
+                        }
+                    }
+                    Ok(())
                 }
-                self.dispatch(&continuation, &data_list).await?;
+                Effect::Consume(binds, body, persistent, peek) => {
+                    let patterns: Vec<BindPattern> = binds.iter().map(|(p, _)| p.clone()).collect();
+                    let sources: Vec<SortedProc> = binds.iter().map(|(_, s)| s.clone()).collect();
+                    for s in &sources {
+                        self.update_mergeable_channels(s);
+                    }
+                    let peeks: BTreeSet<usize> = if peek {
+                        (0..sources.len()).collect()
+                    } else {
+                        BTreeSet::new()
+                    };
+                    let result = self
+                        .space
+                        .consume(
+                            &sources,
+                            &patterns,
+                            TaggedContinuation::ParBody(body.clone()),
+                            persistent,
+                            peeks.clone(),
+                        )
+                        .await?;
+                    if let Some((continuation, data_list, p)) = result {
+                        self.dispatch(&continuation, &data_list).await?;
+                        if persistent {
+                            self.clone()
+                                .apply_effect(
+                                    Effect::Consume(binds.clone(), body.clone(), true, peek),
+                                    cost,
+                                )
+                                .await?;
+                        } else if p {
+                            self.clone()
+                                .apply_effect(Effect::ProducePeeks(data_list.clone()), cost)
+                                .await?;
+                        }
+                    }
+                    Ok(())
+                }
+                Effect::ProducePeeks(data_list) => {
+                    for (chan, _, removed_data, persist) in &data_list {
+                        if !persist {
+                            self.clone()
+                                .apply_effect(
+                                    Effect::Produce(chan.clone(), removed_data.clone(), false),
+                                    cost.clone(),
+                                )
+                                .await?;
+                        }
+                    }
+                    Ok(())
+                }
             }
-            None => {}
-        }
-        Ok(())
-    }
-
-    async fn produce_peeks(
-        &self,
-        data_list: &[(SortedProc, ListParWithRandom, ListParWithRandom, bool)],
-    ) -> Result<(), RholangError> {
-        // Re-produce the peeked (non-persistent) data, in order. Enqueue in reverse so the LIFO
-        // scheduler pops them back in the original order.
-        let jobs: Vec<Work> = data_list
-            .iter()
-            .filter(|(_, _, _, persist)| !persist)
-            .map(|(chan, _, removed_data, _)| Work::Produce(chan.clone(), removed_data.clone(), false))
-            .collect();
-        for job in jobs.into_iter().rev() {
-            self.enqueue(job);
-        }
-        Ok(())
+        })
     }
 
     async fn dispatch(
@@ -1852,12 +1851,12 @@ mod tests {
         let space = MockSpace {
             produced: Mutex::new(Vec::new()),
         };
-        let interp = DebruijnInterpreter::new(
+        let interp = Arc::new(DebruijnInterpreter::new(
             space,
             MockDispatch,
             BTreeMap::new(),
             SortedProc::default(),
-        );
+        ));
         let cost = Arc::new(CostAccounting::from_initial(Costs::unsafe_max()));
         let env = Env::new();
         let rand = Blake2b512Random::new_random(128);
@@ -1873,7 +1872,7 @@ mod tests {
             sends: vec![send],
             ..Default::default()
         };
-        interp.eval(&par, &env, &rand, &cost).await.unwrap();
+        interp.clone().eval(&par, &env, &rand, &cost).await.unwrap();
 
         let produced = interp.space.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 1);
@@ -1889,7 +1888,7 @@ mod tests {
         let space = MockSpace {
             produced: Mutex::new(Vec::new()),
         };
-        let interp = DebruijnInterpreter::new(space, MockDispatch, BTreeMap::new(), SortedProc::default());
+        let interp = Arc::new(DebruijnInterpreter::new(space, MockDispatch, BTreeMap::new(), SortedProc::default()));
         let cost = Arc::new(CostAccounting::from_initial(Costs::unsafe_max()));
         let env = Env::new();
         let rand = Blake2b512Random::new_random(128);
@@ -1906,7 +1905,7 @@ mod tests {
             sends,
             ..Default::default()
         };
-        interp.eval(&par, &env, &rand, &cost).await.unwrap();
+        interp.clone().eval(&par, &env, &rand, &cost).await.unwrap();
 
         let produced = interp.space.produced.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(produced.len(), 64);

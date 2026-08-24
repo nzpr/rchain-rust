@@ -151,6 +151,25 @@ async fn concurrent_and_sequential_state_hashes_match() {
         // Same-channel race: several produces compete for one receive. Sorted (content-addressed)
         // selection must pick the same sorted-first datum under both schedulers.
         r#"new c in { c!(1) | c!(2) | c!(3) | for (@x <- c) { @"race"!(x) } }"#,
+        // Join: a multi-channel receive overlapping two sibling sends on disjoint channels.
+        r#"new c, d in { c!(1) | d!(2) | for (@x <- c; @y <- d) { @"join"!([x, y]) } }"#,
+        // Join race: multiple data on both join channels; sorted selection fixes the winner.
+        r#"new c, d in { c!(1) | c!(2) | d!(10) | d!(20) | for (@x <- c; @y <- d) { @"joinrace"!([x, y]) } }"#,
+        // Transitive re-entry: a continuation sends back on its trigger channel before the next sibling.
+        r#"new c in { c!(1) | for (@x <- c) { c!(x + 10) } | for (@y <- c) { @"out"!(y) } }"#,
+        // Nested `new` is a scheduling barrier between disjoint sibling effects.
+        r#"new x in { @"a"!(1) | new y in { @"b"!(2) } | @"c"!(3) }"#,
+        // Persistent re-produce lands after the continuation subtree, before the disjoint sibling.
+        r#"new c in { c!!(42) | for (@x <- c) { @"p"!(x) } | @"after"!(0) }"#,
+        // Disjoint-channel continuations reduce independently.
+        r#"new c, d in { c!(1) | d!(2) | for (@x <- c) { @"oc"!(x) } | for (@y <- d) { @"od"!(y) } }"#,
+        // Cross-channel race (the continuation-footprint counterexample): the receive on `c` produces
+        // on `d`, a channel a *disjoint-looking* sibling also touches. A static channel-sharded
+        // fork-join would let the `for(@y<-d)` consume before `d!(x)` lands; the path-ordered scheduler
+        // must instead apply d!(2), d!(3), d!(1), then the receive, so `@"out"` gets 1 (sorted-first).
+        r#"new c, d in { c!(1) | d!(2) | d!(3) | for (@x <- c) { d!(x) } | for (@y <- d) { @"out"!(y) } }"#,
+        // Cross-channel re-entry into a join: a continuation feeds a sibling join's channel.
+        r#"new c, d in { c!(1) | d!(2) | for (@x <- c) { d!(x + 10) } | for (@y <- d; @z <- c) { @"join"!([y, z]) } }"#,
     ];
     for term in terms {
         let rt_c = build_runtime(true).await;

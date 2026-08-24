@@ -46,7 +46,7 @@ pub type RhoReducer =
 /// reducer.
 pub fn setup_reducer(
     charging_space: ChargingRSpace,
-    _cost: Arc<CostAccounting>,
+    cost: Arc<CostAccounting>,
     mergeable_tag_name: SortedProc,
 ) -> Arc<RhoReducer> {
     let dispatcher = Arc::new(RholangAndScalaDispatcher::new(BTreeMap::new()));
@@ -59,10 +59,8 @@ pub fn setup_reducer(
     let reducer_for_eval = reducer.clone();
     dispatcher.set_eval(Box::new(move |par, env, rand| {
         let reducer = reducer_for_eval.clone();
-        Box::pin(async move {
-            reducer.enqueue_par(par, env, rand);
-            Ok(())
-        })
+        let cost = cost.clone();
+        Box::pin(async move { reducer.reduce_par(par, env, rand, cost).await })
     }));
     reducer
 }
@@ -167,12 +165,11 @@ pub(crate) async fn build_runtime_core(
     reducer.set_concurrent(concurrent);
     let reducer = Arc::new(reducer);
     let reducer_for_eval = reducer.clone();
+    let cost_for_eval = cost.clone();
     dispatcher.set_eval(Box::new(move |par, env, rand| {
         let reducer = reducer_for_eval.clone();
-        Box::pin(async move {
-            reducer.enqueue_par(par, env, rand);
-            Ok(())
-        })
+        let cost = cost_for_eval.clone();
+        Box::pin(async move { reducer.reduce_par(par, env, rand, cost).await })
     }));
 
     Ok(RuntimeCore {
@@ -225,6 +222,7 @@ impl RhoRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
+            .clone()
             .eval(&Par::from(par.clone()), env, rand, &self.cost)
             .await
     }
@@ -421,6 +419,7 @@ impl ReplayRhoRuntime {
         rand: &Blake2b512Random,
     ) -> Result<(), RholangError> {
         self.reducer
+            .clone()
             .eval(&Par::from(par.clone()), env, rand, &self.cost)
             .await
     }
@@ -611,6 +610,7 @@ mod tests {
         };
         let rand = Blake2b512Random::new_random(128);
         reducer
+            .clone()
             .eval(&par, &Env::new(), &rand, &cost)
             .await
             .unwrap();
