@@ -738,13 +738,18 @@ async fn graceful_exit(
 }
 
 /// Poll `retrieve` until the result grows, returning the larger result (port of
-/// `ListenAtName.applyUntil`).
+/// `ListenAtName.applyUntil`, with one deviation: a non-empty *initial* result is returned
+/// immediately, so `listen-data-at-name` also works as a one-shot query after the data is already
+/// on-chain, not just as a monitor started before the data appears).
 async fn poll_until_grows<T, F, Fut>(mut retrieve: F) -> Result<Vec<T>, Vec<String>>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<Vec<T>, Vec<String>>>,
 {
     let mut current = retrieve().await?;
+    if !current.is_empty() {
+        return Ok(current);
+    }
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let next = retrieve().await?;
