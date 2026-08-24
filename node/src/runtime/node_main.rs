@@ -183,12 +183,14 @@ fn build_names(type_of_name: &str, content: &[String]) -> Result<Vec<Name>, Vec<
 /// Resolve the deploy private key from `--private-key` (hex) or `--private-key-path` (PEM) (port of
 /// `NodeMain.runCLI`'s `getPrivateKey`).
 fn resolve_private_key(
-    private_key: Option<&[u8]>,
+    private_key: Option<&str>,
     private_key_path: Option<&Path>,
     console: &mut dyn ConsoleIo,
 ) -> Result<PrivateKey, Vec<String>> {
-    if let Some(bytes) = private_key {
-        Ok(PrivateKey::new(bytes.to_vec()))
+    if let Some(hex) = private_key {
+        let bytes = rchain_shared::base16::decode(hex)
+            .ok_or_else(|| vec!["Invalid base16 private key".to_string()])?;
+        Ok(PrivateKey::new(bytes))
     } else if let Some(path) = private_key_path {
         decrypt_key_from_pem_file(console, path)
     } else {

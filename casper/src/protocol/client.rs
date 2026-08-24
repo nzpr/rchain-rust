@@ -654,7 +654,7 @@ impl DeployRuntime {
         let result = poll_until_grows(|| async {
             service
                 .listen_for_data_at_name(&DataAtNameQuery {
-                    depth: i32::MAX,
+                    depth: 50,
                     name: par.clone(),
                 })
                 .await
@@ -679,7 +679,7 @@ impl DeployRuntime {
         let result = poll_until_grows(|| async {
             service
                 .listen_for_continuation_at_name(&ContinuationAtNameQuery {
-                    depth: i32::MAX,
+                    depth: 50,
                     names: pars.clone(),
                 })
                 .await

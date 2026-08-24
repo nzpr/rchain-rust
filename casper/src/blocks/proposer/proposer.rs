@@ -37,6 +37,7 @@ pub enum ProposerResult {
     Failure {
         status: ProposeStatus,
         seq_number: i64,
+        message: String,
     },
     Started {
         seq_number: i64,
@@ -139,10 +140,12 @@ impl Proposer {
                 Ok((result, None)) => ProposerResult::Failure {
                     status: result.propose_status.clone(),
                     seq_number: next_seq,
+                    message: result.propose_status.to_string(),
                 },
-                Err(_) => ProposerResult::Failure {
+                Err(e) => ProposerResult::Failure {
                     status: ProposeStatus::BugError,
                     seq_number: next_seq,
+                    message: e.clone(),
                 },
             };
             let _ = propose_id.send(proposer_result);

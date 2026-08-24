@@ -483,9 +483,14 @@ impl RuntimeManager {
         let final_hash = self.runtime.create_checkpoint().await.map_err(|e| e)?.root;
         match result {
             Ok(()) => {
+                let system_deploy = match &deploy.op {
+                    Some(NativeSystemDeployOp::CloseBlock) => SystemDeployData::CloseBlock,
+                    Some(NativeSystemDeployOp::Slash { validator }) => SystemDeployData::Slash(*validator),
+                    _ => SystemDeployData::Empty,
+                };
                 let processed = ProcessedSystemDeploy::Succeeded {
                     event_list,
-                    system_deploy: SystemDeployData::Empty,
+                    system_deploy,
                 };
                 Ok((
                     final_hash,

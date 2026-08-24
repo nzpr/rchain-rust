@@ -86,8 +86,8 @@ pub enum Commands {
         phlo_price: i64,
         #[arg(long = "valid-after-block-number")]
         valid_after_block_number: Option<i64>,
-        #[arg(long = "private-key", value_parser = parse_base16)]
-        private_key: Option<Vec<u8>>,
+        #[arg(long = "private-key")]
+        private_key: Option<String>,
         #[arg(long = "private-key-path")]
         private_key_path: Option<PathBuf>,
         #[arg(long = "shard-id", default_value = "")]
