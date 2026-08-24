@@ -2,14 +2,15 @@
 
 [Structural congruence and reduction](congruence-reduction.md) defined the *sequential* dynamics of the
 ρ-calculus: one `⟶` step contracts a single COMM redex, and reduction is a congruence under `|`. This
-document extends that to the *concurrent* dynamics — the claim the node is built to realize but does
-not yet execute.
+document extends that to the *concurrent* dynamics.
 
 The ρ-calculus is a **concurrent** calculus: `|` is parallel composition, and the laws already grant
 the permission to reduce independent sub-processes simultaneously. The node's reducer
-(`rholang::reduce::DebruijnInterpreter`) does **not** yet exercise that permission — it flattens a
-`Par` and reduces it in a single sequential loop. This document is the specification of the concurrent
-execution model that the reducer is being refactored to implement, **founded in the 19 laws**
+(`rholang::reduce::DebruijnInterpreter`) exercises **only the Level-1 permission**: it resolves a `Par`'s
+*pure* sub-terms (substitution, spatial matching, `new`-allocation) concurrently, then applies the
+tuple-space effects in DFS order. Effect-level parallelism (Level 3) is **unsound** — see
+[Effect scheduling](effect-scheduling.md) S.3 — so the reducer deliberately does not attempt it. This
+document is the specification of that concurrent execution model, **founded in the 19 laws**
 ([`spec/INVENTORY.md`](../../../spec/INVENTORY.md)).
 
 Throughout, "sequential" and "concurrent" are about the *scheduler*: both reduce the same `⟶` relation
@@ -125,7 +126,7 @@ Law 1/4/8) — the "same normal form" invariant below holds for *that* schedule,
 The sequential reducer — one redex at a time, in canonical order (Law 1), first-match-wins (Law 4/8) —
 is a valid refinement of `⟹`: for every sequential run there is a schedule of `⟹` steps with the same
 normal form, and vice versa (every `⟹` schedule linearizes to some sequential run reaching a `≡`-equal
-state). This is what makes the current `eval` loop a *correct but sequential* scheduler, and what the
+state). This is what makes the sequential `eval` loop a *correct* scheduler, and what any (future)
 concurrent scheduler must preserve.
 
 ### C.3 Commutative merge (**stated**, the Law 9/17 pair)
@@ -154,9 +155,10 @@ of parallel branches. The merge associativity/commutativity is already an **axio
 | C.3 Commutative merge | `StateChange`/`ChannelChange` monoid + `compute_trie_actions` | `rspace/src/merger/*` |
 | C.4 RNG determinism | `Blake2b512Random::{split_byte,split_short,merge}` | `crypto/src/hash/blake2b512_random.rs` |
 
-The one mechanism **not** yet present is the scheduler itself — the ready-queue that replaces the
-sequential `eval` loop and turns `⟹` from a mathematical permission into an executed behavior. That is
-the implementation this specification fronts (see the reducer refactor plan).
+The one mechanism **not** present is an effect-level scheduler — and, per
+[Effect scheduling](effect-scheduling.md) S.3/S.4, a sound one does not exist at the effect level (the
+sound condition is disjoint *closure*, which is not statically decidable). The reducer's only sound
+parallelism is Level 1 (pure resolution), already realized in `rholang/src/reduce.rs`.
 
 ---
 

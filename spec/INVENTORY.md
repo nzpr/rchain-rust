@@ -14,7 +14,11 @@ guided by `Rchain/Rho.lean` and `Rchain/Ty.lean`. It is **not** a new law and do
 what must serialize, and why — is specified in
 [`../docs/src/formal/concurrency-model.md`](../docs/src/formal/concurrency-model.md). Its soundness
 theorems (diamond/linearization, disjoint-commute, sharded-scheduler, replay determinism) are the target
-of `Rchain/Concurrent.lean`.
+of `Rchain/Concurrent.lean`. **Effect-level correction:** the "disjoint-channel" reading of Law 9 is
+*insufficient* — sound concurrent *effect* scheduling requires disjoint **continuation closures**, not
+disjoint footprints; the channel-sharded scheduler is therefore unsound (see `Rchain/Effect.lean`, the
+proved counterexample `effect_reorder_diverges`, and `docs/src/formal/effect-scheduling.md` S.3/S.4). The
+reducer's only sound parallelism is Level 1 (pure-resolution fork-join).
 
 **Status legend**
 
@@ -38,7 +42,7 @@ of `Rchain/Concurrent.lean`.
 | 6 | Rholang | **No globally free variables** in a program | `rholang/src/main/k/rholang/{free,program-restrictions}.k`, `models/.../HasLocallyFree.scala` | `models::types::Closed` (newtype) | `Rchain/FreeVars.lean` (`Closed` in `Ty.lean`) | **proven** (`Ty.lean`) |
 | 7 | RSpace | **Join commutativity** (channel keys hashed in sorted order) | `rspace/.../hashing/StableHashProvider.scala:18-22` | `rspace::hashing::StableHashProvider::hash_seq` (sorted) | `Rchain/RSpace/Join.lean` | **stated** |
 | 8 | RSpace | **Deterministic COMM** (candidate selection sorted-first by content hash; produce refs sorted; content-addressed events) | `rspace/.../trace/Event.scala:35-39`, `rspace/.../SpaceMatcher.scala` | `rspace::space_matcher` (sorted candidates) + `rspace::rspace` (sorted produce) + `Comm` event | `Rchain/RSpace/Comm.lean` | **stated** |
-| 9 | RSpace | **Merge is a monoid**; non-conflicting logs commute | `rspace/.../merger/{StateChange,ChannelChange,EventLogMergingLogic}.scala` | `rspace::merger::state_change_merger` (`compute_trie_actions`) | `Rchain/RSpace/Merge.lean` | **stated** |
+| 9 | RSpace | **Merge is a monoid**; non-conflicting logs commute — *strengthened for effect scheduling*: disjoint **closure** (not footprint) ⇒ commute | `rspace/.../merger/{StateChange,ChannelChange,EventLogMergingLogic}.scala` | `rspace::merger::state_change_merger` (`compute_trie_actions`) | `Rchain/RSpace/Merge.lean`; `Rchain/Effect.lean` (`effect_reorder_diverges` proved; `effect_commute_of_disjoint_closure` stated) | **stated** |
 | 10 | RSpace | **Merkle determinism**: content-addressed radix trie, collision-free, empty-root | `rspace/.../history/RadixTree.scala:50-68` | `rspace::history::RadixTreeImpl` (`Node = [Item; 256]`) | `Rchain/RSpace/Merkle.lean` | **stated** |
 | 11 | RSpace | **Replay determinism**: recomputed COMM ⊆ recorded trace | `rspace/.../ReplayRSpace.scala:68-71` | `rspace::ReplayRSpace` | `Rchain/RSpace/Comm.lean` | **stated** |
 | 12 | Rosette | **Actor atomicity** (single-threaded `mbox.nextMsg`) | `rosette/README:27-35`, `roscala/.../ob/Actor.scala:52-61` | *deferred* (`rosette`/`roscala` orphaned) | *(none)* | **orphaned** (Rosette VM out of scope) |

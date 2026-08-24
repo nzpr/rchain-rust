@@ -1,33 +1,40 @@
 # Effect scheduling
 
 [Concurrent reduction](concurrent-reduction.md) established the *process-level* contract: reduction is
-permitted anywhere inside `|`, and any schedule reaches the same canonical state. This document moves
-down one level to the **effect level** — the concrete `produce`/`consume` operations a reduction step
-issues against the tuple space — and states the contract the *effect scheduler* must satisfy, founded in
-the 19 laws.
+permitted anywhere inside `|`. This document moves down one level to the **effect level** — the concrete
+`produce`/`consume` operations a reduction step issues against the tuple space — and states what an
+*effect scheduler* may and may not do. It is grounded in the Lean model [`Rchain.Effect`](../../../spec/Rchain/Effect.lean),
+which is the oracle for this layer.
+
+> **Status: the naive reading of Law 9 is insufficient.** The channel-sharded effect scheduler (partition
+> a `Par`'s effects by *static channel footprint* and run disjoint parts concurrently) is **unsound**. This
+> document records the counterexample and the sound condition (`Rchain.Effect`).
 
 ## The effect level of reduction
 
-A reduction step `P ⟹ Q` is realized by a set of **effects**:
+A reduction step is realized by a set of **effects**:
 
 - a **produce** `send(c, d, persistent)` — a send of datum `d` on channel `c`;
-- a **consume** `receive(C, p, persistent)` — a receive on a **channel set** `C` (a join, Law 7) with
-  patterns `p`.
+- a **consume** `receive(C, p, persistent)` — a receive on a channel set `C` (a join, Law 7) with patterns
+  `p`; on a match its **continuation** (the receive body) runs, and the continuation's own effects are
+  emitted only *after* the trigger matches.
 
-Each effect has a **channel footprint** `chans(e)`: the singleton `{c}` for a send, and the channel set
-`C` for a join receive. Two effects are **independent** when their footprints are disjoint.
+Each effect has two notions of "which channels it touches":
 
-The effects a step issues are exactly the COMM events that the RSpace turns into state changes; the
-scheduler's job is to choose the order — and the concurrency — in which those effects are applied.
+- **footprint** `chans(e)` — the channels the effect *directly* touches (the trigger channels);
+- **closure** `closure(e)` — the channels reachable through `e`'s *transitive continuation descent*
+  (the trigger channels, plus everything the continuation can send/receive on, recursively).
+
+Two effects are **independent** only when their **closures** are disjoint, not merely their footprints.
 
 ## Concurrency profile of the 19 laws (effect level)
 
-**Enables — "you may apply disjoint effects concurrently":**
+**Enables — "you may apply independent effects concurrently":**
 
 | # | Law | What it grants | Rust realization |
 |---|-----|----------------|------------------|
-| **9** | Merge is a monoid; non-conflicting logs commute | disjoint-channel effects commute — they may be applied in any order and merged | `rspace/src/merger/*` (`StateChange`/`ChannelChange` monoid) |
-| **7** | Join commutativity | a join's channel set is hashed in sorted order, so its identity is order-independent | `rspace/src/hashing/stable_hash_provider.rs` (`hash_seq`) |
+| **9** | Merge is a monoid; non-conflicting logs commute | *closure*-disjoint effects commute (see S.4 — the footprint reading S.1 is too weak) | `rspace/src/merger/*` |
+| **7** | Join commutativity | a join's channel set is hashed in sorted order, so its identity is order-independent | `rspace/src/hashing/stable_hash_provider.rs` |
 | **19** | `Blake2b512Random` associative splittable merge | each effect's RNG is pre-split, so `new`-freshness is schedule-independent | `crypto/src/hash/blake2b512_random.rs` |
 
 **Constrains — "the *order* of same-channel effects is fixed":**
@@ -37,68 +44,82 @@ scheduler's job is to choose the order — and the concurrency — in which thos
 | **4** | `reduce_deterministic` | the consumed candidate is fixed, not scheduler-chosen | `rholang/src/reduce.rs` |
 | **8** | Deterministic COMM | candidate selection is sorted-first by content hash | `rspace/src/space_matcher.rs`, `rspace/src/rspace.rs` |
 | **11** | Replay determinism | the effect *order* is fixed — replay must reproduce the recorded trace | `rspace/src/replay_rspace.rs` |
-| **10** | Merkle determinism | the trie root is the state — a given effect *set* yields the same root | `rspace/src/history/*` (canonical leaf serializers) |
+| **10** | Merkle determinism | the trie root is the state — a given effect *set* yields the same root | `rspace/src/history/*` |
 
-The subtle point the rest of this document makes precise: **sorted selection (Law 8) removes the
-order-sensitivity of *which stored candidate* a comm consumes, but not the *arrival order* — which
-produce/consume matches a waiting continuation first.** A continuation is consumed once; the first effect
-to reach its channel wins. That residual sensitivity is what forces same-channel effects to keep a fixed
-total order.
+The subtle point the rest of this document makes precise: sorted selection (Law 8) removes the
+order-sensitivity of *which stored candidate* a comm consumes, but **not** the *arrival order* — and, more
+fundamentally, a continuation's effects are discovered only after its trigger runs, so the *closure* of a
+"disjoint-looking" effect can reach a sibling's channel.
 
 ## Soundness theorems
 
-### S.1 Disjoint commute (Law 9)
+### S.1 Footprint commute (the naive Law 9)
 
 ```
 chans(e₁) ∩ chans(e₂) = ∅   ⇒   apply(e₁; e₂)  ≡  apply(e₂; e₁)
 ```
 
-Two effects on disjoint channels touch disjoint state, so their state changes commute (Law 9) and their
-relative order — and concurrency — is irrelevant. This is the *permission* to run disjoint-channel
-effects concurrently.
+This is the natural reading of Law 9 (`Rchain.RSpace.Merge.mergeChanges_comm`): two effects touching
+disjoint *channels* commute. **This statement is false at the effect level**, because `chans(e)` is only
+the footprint — it does not account for the continuation closure. S.3 is the counterexample.
 
 ### S.2 Same-channel order (Law 4/8/11)
 
-For effects sharing a channel, the candidate a comm consumes depends on arrival order (a waiting
-continuation is consumed by the first produce to reach it; a stored datum is consumed by the
-sorted-first, but *which* data are stored at all depends on arrival). So same-channel effects must be
-applied in a **fixed total order** — the reducer's depth-first (DFS) order, which is exactly the order
-the sequential scheduler uses and the order replay re-derives (Law 11).
+For effects sharing a channel, the candidate a comm consumes depends on arrival order. Same-channel
+effects must therefore be applied in a **fixed total order** — the reducer's depth-first (DFS) order,
+which is exactly the order the sequential scheduler uses and the order replay re-derives (Law 11). This
+part is correct and remains a hard constraint.
 
-### S.3 Sharded-scheduler linearization (the soundness of the design)
+### S.3 The counterexample: disjoint footprint, overlapping closure, non-commuting
 
-A scheduler that
+`Rchain.Effect.effect_reorder_diverges` proves there exist two effects with **disjoint footprints** but
+**overlapping closures** that do **not** commute. Concretely (channels `c`, `d`, `"join"`, `"out"`; both
+`c` and `d` hold a datum):
 
-1. applies **disjoint-channel effects concurrently**, and
-2. serializes **same-channel effects in DFS order**,
+```
+e₁ = receive d { receive c { @"join"!() } }     -- footprint {d}, closure {d, c, "join"}
+e₂ = receive c { @"out"!() }                    -- footprint {c}, closure {c, "out"}
+```
 
-reaches the **same canonical state** as the purely-sequential scheduler.
+`footprint_disjoint` shows `chans(e₁) ∩ chans(e₂) = ∅`; `closure_overlap` shows `closure(e₁) ∩ closure(e₂)
+≠ ∅`. Applying `e₁` then `e₂` yields `"join"` filled and `"out"` empty; applying `e₂` then `e₁` yields the
+opposite. Hence a scheduler that partitions by *static footprint* and runs the parts concurrently may
+reach a state the sequential scheduler never reaches — it is **unsound**.
 
-*Argument.* By S.1, reordering disjoint effects is state-invariant, so the only constraint is the
-per-channel order; by S.2, applying same-channel effects in DFS order reproduces the sequential
-candidate choices; by Law 10 the canonical root then matches. The one place the naive "spawn all effects"
-approach fails — a continuation's channel footprint is unknown until its trigger runs — is handled by
-the **prepend invariant** below.
+### S.4 Closure commute (the *strengthened* Law 9 — the sound condition)
+
+```
+closure(e₁) ∩ closure(e₂) = ∅   ⇒   apply(e₁; e₂)  ≡  apply(e₂; e₁)
+```
+
+This is `Rchain.Effect.effect_commute_of_disjoint_closure`, the correct soundness criterion for
+concurrent effect scheduling: two effects may run concurrently only when their **closures** are disjoint.
+Because a continuation's closure is discovered only by running the trigger, this condition is not
+statically decidable. Consequently **no static footprint partition is sound**, and the sound maximum is
+**Level 1** — pure-resolution parallelism only (the reducer resolves a `Par`'s sub-terms concurrently,
+but applies the tuple-space effects in DFS order).
 
 ## Realization map — theorem → mechanism
 
 | Theorem | Mechanism | Location |
 |---------|-----------|----------|
-| S.1 Disjoint commute | per-channel effect FIFOs drained concurrently | `rholang/src/reduce.rs` |
-| S.2 Same-channel DFS order | FIFO filled in DFS order + the **continuation prepend** invariant | `rholang/src/reduce.rs` |
+| S.1 Footprint commute | *insufficient* — not a valid concurrency permission | — |
+| S.2 Same-channel DFS order | the sequential reducer's DFS order (effects applied in order) | `rholang/src/reduce.rs` |
+| S.3 Counterexample | `effect_reorder_diverges` | `spec/Rchain/Effect.lean` |
+| S.4 Closure commute | the sound condition (not statically decidable) | `spec/Rchain/Effect.lean` |
 | Law 7 (join key) | channel-set keys (`Vec<C>`) | `rholang/src/reduce.rs` |
 | Law 8 (sorted selection) | candidate sort by content hash | `rspace/src/space_matcher.rs` |
 | Atomicity | per-channel `TwoStepLock` | `rspace/src/concurrent/{multi_lock,two_step_lock}.rs` |
 | Law 11 oracle | `ReplayRSpace` trace check | `rspace/src/replay_rspace.rs` |
 
-### The continuation-prepend invariant
+## The "continuation-prepend invariant" is necessary but not sufficient
 
-When a `produce`/`consume` on channel `c` matches a continuation, the continuation's resolved effects
-must run **before the remaining pending effects on `c`** — i.e. they are *prepended* to `c`'s queue, not
-appended. This reproduces the DFS order `trigger → continuation subtree → next sibling`, and it is what
-lets a worker apply the trigger concurrently with other channels' workers while still keeping the
-per-channel order. (A persistent/peek re-produce is the one effect that must instead land *after* the
-continuation's whole subtree; the implementation defers it with a per-channel continuation-depth
-counter.)
+It is tempting to repair the footprint partition by "prepending" a matched continuation's effects to the
+target channel's queue (so they run before the remaining pending effects on that channel). This handles
+the *same-channel* ordering, but **not** the cross-channel case: a continuation's effect on channel `d`
+is enqueued only *after* the trigger on `c` runs, so a sibling effect already claimed on `d` can be
+applied first — exactly the S.3 race. The prepend invariant fixes the order *once both effects are in the
+queue*; it cannot stop the sibling from being claimed *before* the continuation is enqueued. Only the
+closure condition (S.4) is sufficient, and it is not statically checkable.
 
 > Next: how the *data* moves in a comm — [Substitution and matching](substitution-matching.md).

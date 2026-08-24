@@ -50,14 +50,17 @@ When a channel has more than one matching datum or continuation, the space must 
 removes the order-sensitivity of *which stored candidate* a comm consumes. See
 [Sorted matching](../node/sorted-matching.md).
 
-## Level 3 — effect scheduling (disjoint channels commute)
+## Level 3 — effect scheduling (footprint is not enough)
 
-Two effects on **disjoint channels** touch disjoint state and commute (Law 9), so they may apply
-concurrently. Two effects on the **same channel** must apply in DFS order: the *arrival order* — which
-produce/consume matches a waiting continuation first — is order-sensitive, and sorted selection does not
-remove it. This is the one place the naive "spawn all effects" scheduler is unsound, and it is the reason
-the reducer keeps same-channel effects serial. See [Effect scheduling](effect-scheduling.md) for the
-disjoint-commute and sharded-scheduler-linearization theorems.
+Two effects on **disjoint channels** touch disjoint state and commute (Law 9), so — *at the footprint
+level* — they may apply concurrently. Two effects on the **same channel** must apply in DFS order (Law
+4/8/11). But this footprint reading of "disjoint" is **insufficient**: a continuation's effects are
+discovered only after its trigger runs, so an effect's *closure* can reach a "disjoint-looking" sibling's
+channel. The channel-sharded scheduler (partition a `Par`'s effects by static footprint, run disjoint
+parts concurrently) is therefore **unsound** — see [Effect scheduling](effect-scheduling.md) S.3, and the
+proved counterexample `Rchain.Effect.effect_reorder_diverges`. The sound condition is disjoint
+**closure** (`Rchain.Effect.effect_commute_of_disjoint_closure`), which is not statically decidable, so
+the sound maximum at this level is **Level 1** (pure-resolution parallelism only).
 
 ## Level 4 — cross-block validation (replay is verify-only)
 

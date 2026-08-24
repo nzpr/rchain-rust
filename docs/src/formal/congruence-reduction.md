@@ -58,7 +58,11 @@ The K executable form is `processes-semantics.k` (`*@P ⇒ P`, `@*C ⇒ C`, para
 The *full* Law 4 adds three clauses beyond this core, stated (not yet proven) in
 [`spec/Rchain/Reduce.lean`](../../../spec/Rchain/Reduce.lean):
 
-- **Determinism (first-match-wins)** — `reduce_deterministic`: `p ⟶ q` and `p ⟶ q'` imply `q ≡ q'`.
+- **Determinism (first-match-wins)** — *withdrawn*: the flat `Par` is **not** single-step deterministic
+  up to `≡` (`Rchain.Concurrent.reduce_not_deterministic`). What holds is that an *isolated* redex
+  reduces uniquely up to `≡` (`Rchain.Concurrent.reduce_redex_unique`), and full confluence is recovered
+  only in the tree model (`Rchain.Tree.reduceT_confluent`). In the node, determinism is supplied by the
+  **chosen schedule** (DFS + content-sorted first-match-wins, Laws 1/4/8), not by the raw relation.
 - **`new` freshness** — `reduce_freeVars_subset`: reduction never introduces a free variable
   (`freeVars q ⊆ freeVars p`).
 - **Replication** — `!P` re-inserts the redex after a comm, and persistent send/receive (`!!`/`<=`)
@@ -66,8 +70,13 @@ The *full* Law 4 adds three clauses beyond this core, stated (not yet proven) in
 
 ## What these guarantee
 
-Because `⟶` is deterministic up to `≡`, and `≡` is decidable, two implementations of the same program
-produce the same canonical result. That determinism is the property a blockchain's consensus depends
-on: every node computes the same state transition from the same deploy.
+`⟶` is **not** single-step deterministic up to `≡`: the flat `Par` is not confluent (a term with one
+receive and two sends on one channel is a redex in two ways — see
+`Rchain.Concurrent.reduce_not_deterministic`). What *does* hold is that an isolated redex reduces uniquely
+up to `≡` (`Rchain.Concurrent.reduce_redex_unique`), and confluence is recovered only in the tree model
+(`Rchain.Tree.reduceT_confluent`). Determinism in the node is therefore a property of the **chosen
+schedule** — the sequential reducer's canonical order (DFS + content-sorted first-match-wins, Laws 1/4/8),
+which the concurrent scheduler linearizes to — not of the raw relation. That is the property a
+blockchain's consensus depends on: every node computes the same state transition from the same deploy.
 
 > Next: reducing independent sub-processes simultaneously — [Concurrent reduction](concurrent-reduction.md).
