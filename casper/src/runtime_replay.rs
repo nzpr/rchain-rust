@@ -41,6 +41,7 @@ use rchain_rspace::trace::Log;
 use rchain_rspace::util::ReplayException;
 
 use crate::event_converter::to_rspace_event;
+use crate::genesis::contracts::Vault;
 use crate::rholang::ReplayFailure;
 use crate::system_deploy::{
     process_bool_result, NativeSystemDeployOp, SystemDeploy, SystemDeployUserError,
@@ -118,9 +119,10 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         block_data: BlockData,
         with_cost_accounting: bool,
         bonds: &BTreeMap<Validator, NonNegI64>,
+        vaults: &[Vault],
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         self.runtime.set_block_data(block_data);
-        self.replay_deploys(start_hash, rand, terms, system_deploys, with_cost_accounting, bonds)
+        self.replay_deploys(start_hash, rand, terms, system_deploys, with_cost_accounting, bonds, vaults)
             .await
     }
 
@@ -134,15 +136,20 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
         system_deploys: &[ProcessedSystemDeploy],
         with_cost_accounting: bool,
         bonds: &BTreeMap<Validator, NonNegI64>,
+        vaults: &[Vault],
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         self.runtime
             .reset(*start_hash)
             .await
             .map_err(ReplayFailure::internal_error)?;
-        // Genesis replay (no cost accounting): re-install the native bonds so the replayed post-state
-        // hash matches the play genesis hash.
+        // Genesis replay (no cost accounting): re-install the native bonds and vault balances so the
+        // replayed post-state hash matches the play genesis hash.
         if !with_cost_accounting {
-            NativeSystemState::new(self.runtime.native_store()).set_bonds(bonds);
+            let native = NativeSystemState::new(self.runtime.native_store());
+            native.set_bonds(bonds);
+            for vault in vaults {
+                native.set_vault_balance(&vault.rev_address.to_base58(), vault.initial_balance);
+            }
         }
 
         let mut mergeable: Vec<NumberChannelsDiff> = Vec::new();

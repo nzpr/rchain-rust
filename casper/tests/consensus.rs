@@ -44,6 +44,7 @@ async fn genesis_deploy_replay_recomputes_state() {
             &rand,
             BlockData::empty(),
             &std::collections::BTreeMap::new(),
+            &[],
         )
         .await
         .expect("compute_genesis");
@@ -61,6 +62,7 @@ async fn genesis_deploy_replay_recomputes_state() {
             BlockData::empty(),
             false,
             &std::collections::BTreeMap::new(),
+            &[],
         )
         .await
         .expect("replay_compute_state");
@@ -91,6 +93,7 @@ async fn deploy_exceeding_phlo_limit_fails_and_next_runs() {
             &rand,
             BlockData::empty(),
             &std::collections::BTreeMap::new(),
+            &[],
         )
         .await
         .expect("compute_genesis");
@@ -122,6 +125,7 @@ async fn replay_matches_play_for_persistent_and_peek() {
             &rand,
             BlockData::empty(),
             &std::collections::BTreeMap::new(),
+            &[],
         )
         .await
         .expect("compute_genesis");
@@ -137,6 +141,7 @@ async fn replay_matches_play_for_persistent_and_peek() {
             BlockData::empty(),
             false,
             &std::collections::BTreeMap::new(),
+            &[],
         )
         .await
         .expect("replay_compute_state");
