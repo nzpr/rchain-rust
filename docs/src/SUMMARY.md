@@ -35,6 +35,7 @@
 - [Sorted matching (proposal)](node/sorted-matching.md)
 - [Storage](node/storage.md)
 - [Operating the node](node/operating.md)
+- [Local devnet (Docker)](node/devnet.md)
 
 # Part IV — Contributor / port
 

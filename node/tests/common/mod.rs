@@ -20,6 +20,23 @@ use rchain_shared::log::StderrLog;
 /// The default secp256k1 validator private key (hex), port of `ConstructDeploy.defaultSec`.
 pub const VALIDATOR_PRIV_HEX: &str = "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76";
 
+/// The deployer (validator-0) REV address, funded in the genesis wallets file. Derived from
+/// `VALIDATOR_PRIV_HEX`'s secp256k1 pubkey; a deploy signed with `VALIDATOR_PRIV_HEX` pays phlo from
+/// this vault.
+pub const DEPLOYER_REV_ADDR: &str = "11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau";
+
+/// Build a standalone `NodeConf` bound to 5 loopback ports `[http, admin-http, grpc-internal,
+/// protocol, grpc-external]`, with a bonded validator (`VALIDATOR_PRIV_HEX`) and a funded deployer
+/// wallet so signed deploys can pay phlo.
+pub fn deploy_conf(dir: &Path, ports: &[u16]) -> NodeConf {
+    assert!(ports.len() >= 5, "need [http, admin-http, grpc-internal, protocol, grpc-external]");
+    let mut conf = standalone_conf(dir, &ports[0..4], Some(VALIDATOR_PRIV_HEX));
+    conf.api_server.port_grpc_external = ports[4] as i32;
+    let wallets = conf.casper.genesis_block_data.wallets_file.clone();
+    std::fs::write(&wallets, format!("{DEPLOYER_REV_ADDR},1000000000000\n")).expect("write wallets");
+    conf
+}
+
 /// A multi-threaded tokio runtime with a large per-worker stack. The genesis blessed terms recurse
 /// deeper than the default 2 MiB worker stack allows (matching the node binary's runtime).
 pub fn test_runtime() -> tokio::runtime::Runtime {
