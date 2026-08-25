@@ -42,16 +42,16 @@ pub struct NodeSyncing<I: RSpaceImporter> {
     validator_id: Option<ValidatorIdentity>,
     #[allow(dead_code)] // reserved (Scala stores it; consumed by the caller)
     trim_state: bool,
-    importer: I,
+    importer: Option<I>,
     incoming_blocks_tx: tokio::sync::mpsc::Sender<BlockMessage>,
-    incoming_blocks_rx: tokio::sync::mpsc::Receiver<BlockMessage>,
+    incoming_blocks_rx: Option<tokio::sync::mpsc::Receiver<BlockMessage>>,
     tuple_space_tx: tokio::sync::mpsc::Sender<StoreItemsMessage>,
-    tuple_space_rx: tokio::sync::mpsc::Receiver<StoreItemsMessage>,
+    tuple_space_rx: Option<tokio::sync::mpsc::Receiver<StoreItemsMessage>>,
     start_requester: bool,
     finished: Arc<tokio::sync::Notify>,
 }
 
-impl<I: RSpaceImporter> NodeSyncing<I> {
+impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         transport: Arc<dyn TransportLayer>,
@@ -78,11 +78,11 @@ impl<I: RSpaceImporter> NodeSyncing<I> {
             log_source: LogSource::new("casper.engine.NodeSyncing"),
             validator_id,
             trim_state,
-            importer,
+            importer: Some(importer),
             incoming_blocks_tx,
-            incoming_blocks_rx,
+            incoming_blocks_rx: Some(incoming_blocks_rx),
             tuple_space_tx,
-            tuple_space_rx,
+            tuple_space_rx: Some(tuple_space_rx),
             start_requester: true,
             finished: Arc::new(tokio::sync::Notify::new()),
         }
@@ -171,88 +171,147 @@ impl<I: RSpaceImporter> NodeSyncing<I> {
                         .join(" ")
                 ),
             );
-            self.request_approved_state(fringe).await?;
-            self.approved_store
-                .put(&[(FINALIZED_FRINGE_KEY, fringe.clone())])
-                .await?;
-            self.log
-                .info(self.log_source, "LFS state is successfully restored.");
+
+            // Spawn the LFS sync in the background. Awaiting it here deadlocks: the sync drains
+            // `tuple_space_rx`/`incoming_blocks_rx`, which are only fed by `handle` (the
+            // StoreItemsMessage/BlockMessage branches) running in this same dispatch loop, which is
+            // currently blocked inside this call. Spawning lets `handle` return and keep routing.
+            let fringe = fringe.clone();
+            let transport = self.transport.clone();
+            let conf = self.conf.clone();
+            let block_store = self.block_store.clone();
+            let dag = self.dag.clone();
+            let approved_store = self.approved_store.clone();
+            let comm_util = self.comm_util.clone();
+            let log = self.log.clone();
+            let finished = self.finished.clone();
+            let importer = self.importer.take().expect("importer already taken");
+            let incoming_blocks_rx = self
+                .incoming_blocks_rx
+                .take()
+                .expect("incoming-blocks receiver already taken");
+            let tuple_space_rx = self
+                .tuple_space_rx
+                .take()
+                .expect("tuple-space receiver already taken");
+            tokio::spawn(async move {
+                let source = LogSource::new("casper.engine.NodeSyncing");
+                match run_approved_state_sync(
+                    &fringe,
+                    transport,
+                    conf,
+                    block_store,
+                    dag,
+                    comm_util,
+                    log.clone(),
+                    importer,
+                    incoming_blocks_rx,
+                    tuple_space_rx,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        if let Err(e) = approved_store
+                            .put(&[(FINALIZED_FRINGE_KEY, fringe.clone())])
+                            .await
+                        {
+                            log.error(source, &format!("Failed to store approved block: {e}"));
+                        }
+                        log.info(source, "LFS state is successfully restored.");
+                    }
+                    Err(e) => log.error(source, &format!("LFS state sync failed: {e}")),
+                }
+                finished.notify_waiters();
+            });
         }
         Ok(())
     }
+}
 
-    /// Request the approved (last finalized) state: download the blocks and the tuple space in
-    /// parallel, then populate the DAG (port of `requestApprovedState`).
-    async fn request_approved_state(&mut self, fringe: &FinalizedFringe) -> Result<(), String> {
-        let block_heights_before_fringe =
-            i32::try_from(DEPLOY_LIFESPAN).map_err(|e| e.to_string())?;
-        let block_fut = request_blocks(
-            fringe,
-            &mut self.incoming_blocks_rx,
-            block_heights_before_fringe,
-            Duration::from_secs(30),
-            &self.block_store,
-            self.comm_util.as_ref(),
-            self.log.as_ref(),
-        );
-        let tuple_fut = request_tuple_space(
-            fringe,
-            &mut self.tuple_space_rx,
-            Duration::from_secs(120),
-            self.transport.as_ref(),
-            &self.conf,
-            &mut self.importer,
-            self.log.as_ref(),
-        );
+/// Download the approved (last finalized) state — blocks + tuple space in parallel — and populate the
+/// DAG (port of `requestApprovedState`). Free function so it can be spawned off the dispatch loop.
+#[allow(clippy::too_many_arguments)]
+async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
+    fringe: &FinalizedFringe,
+    transport: Arc<dyn TransportLayer>,
+    conf: RPConf,
+    block_store: BlockStore,
+    dag: Arc<dyn BlockDagStorage>,
+    comm_util: Arc<CommUtil>,
+    log: Arc<dyn Log>,
+    mut importer: I,
+    mut incoming_blocks_rx: tokio::sync::mpsc::Receiver<BlockMessage>,
+    mut tuple_space_rx: tokio::sync::mpsc::Receiver<StoreItemsMessage>,
+) -> Result<(), String> {
+    let source = LogSource::new("casper.engine.NodeSyncing");
+    let block_heights_before_fringe = i32::try_from(DEPLOY_LIFESPAN).map_err(|e| e.to_string())?;
+    let block_fut = request_blocks(
+        fringe,
+        &mut incoming_blocks_rx,
+        block_heights_before_fringe,
+        Duration::from_secs(30),
+        &block_store,
+        comm_util.as_ref(),
+        log.as_ref(),
+    );
+    let tuple_fut = request_tuple_space(
+        fringe,
+        &mut tuple_space_rx,
+        Duration::from_secs(120),
+        transport.as_ref(),
+        &conf,
+        &mut importer,
+        log.as_ref(),
+    );
 
-        let (block_st, tuple_res) = tokio::join!(block_fut, tuple_fut);
-        tuple_res.map_err(|e| e.to_string())?;
+    let (block_st, tuple_res) = tokio::join!(block_fut, tuple_fut);
+    tuple_res.map_err(|e| e.to_string())?;
 
-        self.log
-            .info(self.log_source, "Rholang state received and saved to store.");
-        self.populate_dag(block_st.lower_bound, &block_st.height_map)
-            .await?;
-        self.finished.notify_waiters();
-        Ok(())
-    }
+    log.info(source, "Rholang state received and saved to store.");
+    populate_dag(
+        dag.as_ref(),
+        &block_store,
+        log.as_ref(),
+        block_st.lower_bound,
+        &block_st.height_map,
+    )
+    .await?;
+    Ok(())
+}
 
-    /// Insert the received blocks into the DAG (port of `populateDag`).
-    async fn populate_dag(
-        &self,
-        min_height: i64,
-        height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
-    ) -> Result<(), String> {
-        self.log
-            .info(self.log_source, "Adding blocks for approved state to DAG.");
+/// Insert the received blocks into the DAG (port of `populateDag`).
+async fn populate_dag(
+    dag: &dyn BlockDagStorage,
+    block_store: &BlockStore,
+    log: &dyn Log,
+    min_height: i64,
+    height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
+) -> Result<(), String> {
+    let source = LogSource::new("casper.engine.NodeSyncing");
+    log.info(source, "Adding blocks for approved state to DAG.");
 
-        let mut hashes: Vec<BlockHash> = height_map
-            .values()
-            .flat_map(|s| s.iter().copied())
-            .collect();
-        hashes.reverse();
+    let mut hashes: Vec<BlockHash> = height_map
+        .values()
+        .flat_map(|s| s.iter().copied())
+        .collect();
+    hashes.reverse();
 
-        for hash in hashes {
-            let block = self
-                .block_store
-                .get(&[hash])
-                .await?
-                .into_iter()
-                .flatten()
-                .next()
-                .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
-            let block_height = i64::from(block.block_number);
-            if block_height >= min_height {
-                self.log.info(
-                    self.log_source,
-                    &format!("Adding #{} {}.", block.block_number, hash.to_hex()),
-                );
-                let bmd = BlockMetadata::from_block(&block);
-                self.dag.insert(bmd, block).await?;
-            }
+    for hash in hashes {
+        let block = block_store
+            .get(&[hash])
+            .await?
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
+        let block_height = i64::from(block.block_number);
+        if block_height >= min_height {
+            log.info(source, &format!("Adding #{} {}.", block.block_number, hash.to_hex()));
+            let bmd = BlockMetadata::from_block(&block);
+            dag.insert(bmd, block).await?;
         }
-
-        self.log
-            .info(self.log_source, "Blocks for approved state added to DAG.");
-        Ok(())
     }
+
+    log.info(source, "Blocks for approved state added to DAG.");
+    Ok(())
 }

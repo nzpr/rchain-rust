@@ -179,7 +179,7 @@ async fn create_store_broadcast_genesis(
 
 /// The node launch mode dispatch (port of `NodeLaunch.apply`).
 #[allow(clippy::too_many_arguments)]
-pub async fn apply<I: RSpaceImporter, E: RSpaceExporter>(
+pub async fn apply<I: RSpaceImporter + Send + 'static, E: RSpaceExporter>(
     mut packet_rx: mpsc::Receiver<PeerMessage>,
     incoming_blocks: mpsc::Sender<BlockMessage>,
     conf: CasperConf,

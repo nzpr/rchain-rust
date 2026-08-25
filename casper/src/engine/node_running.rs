@@ -331,7 +331,9 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 peer.endpoint.host
             ),
         );
-        transport_layer_syntax::send_to_peer(
+        // Stream the response (matching Scala's `streamToPeer`); the unary `send_to_peer` path does
+        // not deliver to the syncing peer, which stalls LFS state sync.
+        transport_layer_syntax::stream_to_peer(
             self.transport.as_ref(),
             &self.conf,
             peer,
