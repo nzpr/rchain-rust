@@ -69,15 +69,18 @@ the **Rho Vision (formerly RChain Community)** collective:
 
 ## Layout
 
-Twelve crates mirror the original sbt modules, ported in dependency order. The per-crate status, the
-layer map, the rewrite order, and the remaining work are consolidated in
+The Cargo workspace has thirteen members — twelve crates ported from the original sbt modules
+(`sdk`, `shared`, `crypto`, `graphz`, `models`, `block-storage`, `comm`, `rspace`, `rholang`,
+`casper`, `node`, `rspace-bench`) plus `qucalc`, the Rust-first native AI + governance crate
+(Part V of the book). The per-crate status, the layer map, the rewrite order, and the remaining work
+are consolidated in
 [docs/src/contributor/architecture.md](docs/src/contributor/architecture.md).
 
 ## Build & test
 
 ```sh
-cargo build
-cargo test
+cargo build --release -p rchain-node --bin rnode   # the `rnode` binary
+cargo test --workspace                              # the full test suite
 ```
 
 Build and serve the documentation book:
@@ -126,6 +129,22 @@ from it over the TLS transport (`rnode://<id>@bootstrap?protocol=40400&discovery
 
 The full operation guide (commands, ports, the genesis ceremony, and the multi-node topology) is in
 [docs/src/node/operating.md](docs/src/node/operating.md).
+
+## Local devnet (Docker)
+
+For deploying and testing rholang smart contracts, `tools/devnet.sh` brings up 1–3 bonded validators
+plus optional observers with a funded deployer wallet, and exposes `deploy`/`query` helpers:
+
+```sh
+tools/devnet.sh build                  # build the rnode:local image
+tools/devnet.sh up --validators 1      # start a single validator (autopropose)
+tools/devnet.sh deploy hello.rho       # signed deploy (examples/hello.rho sends "world")
+tools/devnet.sh query hello            # -> "world"
+tools/devnet.sh down -v                # stop + drop volumes
+```
+
+This is distinct from `tools/docker-network.sh` (a network-*topology* harness). See
+[docs/src/node/devnet.md](docs/src/node/devnet.md).
 
 ## Where the Scala went
 
