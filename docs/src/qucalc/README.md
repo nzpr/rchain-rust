@@ -77,6 +77,7 @@ decision support
 | [`quantum-to-rho.md`](quantum-to-rho.md) | The justification for quantum operators on RChain, and the precise translation of each quantum operator into the ρ-calculus and rholang. |
 | [`multi-stakeholder-governance.md`](multi-stakeholder-governance.md) | The rationale for on-chain multi-stakeholder governance, and how the `rho:gov:*` layer realizes it (adapted from a Google Doc). |
 | [`architecture.md`](architecture.md) | The technical architecture: crate layout, ZFA predicate, dialectical synthesis, governance core, system processes, determinism guarantees. |
+| [`extensions.md`](extensions.md) | How to call the eight system processes: signatures, argument shapes, return values, and worked examples. Start here to use QuCalc from a deploy. |
 | [`examples.md`](examples.md) | Catalog of the runnable rholang examples and the Rust coprocessor. |
 | [`references.md`](references.md) | Upstream AI / agent / decision-support documents in the forked quantum-os and quantum-logical-framework repos. |
 | [`Governance.md`](../../../qucalc/rholang/Governance.md) | The governance design: liquid democracy + liquid trust, the governing rule, and the self-signed envelope model. |
