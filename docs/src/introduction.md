@@ -33,7 +33,9 @@ decade.
   **19 laws** that govern the language, each mapped to its machine-checked formalization.
 - **Part III — The node** describes the software that executes rholang: the tuple space, the Merkle
   state, and the Casper consensus protocol.
-- **Part IV — Contributor / port** is the engineering appendix: why the node is written in Rust, and
+- **Part IV — Building applications** is the developer guide: stand up the local Docker devnet and
+  configure your app's endpoints to deploy rholang and read back the results.
+- **Part V — Contributor / port** is the engineering appendix: why the node is written in Rust, and
   the module-by-module status of the implementation.
 
 ## For AI agents

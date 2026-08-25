@@ -26,7 +26,8 @@ The **authoritative formal specification** is the [`spec/`](../../spec/) tree â€
 | Understand consensus / finality | [Consensus (Casper)](node/consensus.md) |
 | Understand the tuple space / storage | [The tuple space (RSpace)](node/rspace.md), [Storage](node/storage.md) |
 | Run a validator (hardware requirements / sizing) | [Running a validator: hardware requirements](node/validator-requirements.md) |
-| Understand the port (why Rust, module status) | [Part IV](contributor/why-rust.md) |
+| Build an app against a running node (deploy rholang, read responses) | [Building applications on the local devnet](developer/building-apps.md) |
+| Understand the port (why Rust, module status) | [Part V](contributor/why-rust.md) |
 | Find the machine-checked proofs | [`spec/Rchain/`](../../spec/Rchain/) (Lean), [`spec/coq/`](../../spec/coq/) (Coq) |
 
 ## The invariant catalog, in one screen

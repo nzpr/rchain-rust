@@ -38,14 +38,18 @@
 - [Running a validator: hardware requirements](node/validator-requirements.md)
 - [Local devnet (Docker)](node/devnet.md)
 
-# Part IV — Contributor / port
+# Part IV — Building applications
+
+- [Building applications on the local devnet](developer/building-apps.md)
+
+# Part V — Contributor / port
 
 - [Why Rust](contributor/why-rust.md)
 - [Architecture & port status](contributor/architecture.md)
 - [The 19 laws → Rust code](contributor/laws-to-rust.md)
 - [Formal specification & audit](contributor/spec.md)
 
-# Part V — QuCalc: native AI & governance
+# Part VI — QuCalc: native AI & governance
 
 - [Overview](qucalc/README.md)
 - [Quantum operators → the ρ-calculus](qucalc/quantum-to-rho.md)
