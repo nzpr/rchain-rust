@@ -141,6 +141,14 @@ tools/devnet.sh propose
 curl -s -X POST http://localhost:40405/api/v1/propose
 ```
 
+`POST /api/v1/propose` takes **no body** and returns a plain-text string, not JSON. Success is
+`Success! Block <hex> created and added.`; a failure is `Failure: <reason> (seqNum <n>)`. It is a
+*synchronous* call — it waits for the block to be created and validated, so it is the right path when
+you need a block deterministically (e.g. your node is **not** autoproposing). When `--autopropose` or
+`--propose-on-deploy` is on — the devnet default — blocks are already produced automatically, and
+calling `propose` is redundant; an extra call while one is in flight returns
+`Failure: another propose is in progress`, which is harmless.
+
 ## 4. End-to-end example (curl)
 
 ```bash
@@ -207,6 +215,12 @@ exposes `propose` and `proposeResult`. The protobuf definitions live in
   reporting routes are unavailable unless you enable them.
 - **One node vs many.** Non-bootstrap nodes offset their host ports by `1000·i`; for a single-validator
   devnet the bootstrap numbers above are the only ones you need.
+- **`InvalidStateHash` on propose.** A `Failure: … (seqNum N)` containing `InvalidStateHash` means the
+  node rejected its **own** freshly-created block: the post-state hash it computed did not match the
+  state it recomputed by replaying the block's deploys. It is a node-side bug, *not* caused by your
+  deploy, your signature, or calling `propose`/`explore-deploy`. Read-only requests (data-at-name,
+  explore-deploy) run on an isolated fork of the state, so they cannot disturb block production; if
+  you see this error, it is a consensus bug to report, not a request you should retry.
 
 ## 8. When blocks are created (the formal spec)
 

@@ -29,7 +29,7 @@ impl fmt::Display for ProposeStatus {
             ProposeStatus::TooFarAheadOfLastFinalized => {
                 write!(f, "Proposal failed: too far ahead of the last finalized block")
             }
-            ProposeStatus::BugError(reason) => write!(f, "Proposal failed: BugError ({reason})"),
+            ProposeStatus::BugError(reason) => write!(f, "Proposal failed: internal error ({reason})"),
         }
     }
 }

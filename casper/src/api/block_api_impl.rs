@@ -337,8 +337,8 @@ impl BlockApi for BlockApiImpl {
             ProposerResult::Empty => {
                 return Err("Failure: another propose is in progress".to_string());
             }
-            ProposerResult::Failure { status, seq_number, message } => {
-                return Err(format!("Failure: {status} (seqNum {seq_number}): {message}"));
+            ProposerResult::Failure { status, seq_number, .. } => {
+                return Err(format!("Failure: {status} (seqNum {seq_number})"));
             }
             ProposerResult::Started { seq_number } => {
                 format!("Propose started (seqNum {seq_number})")

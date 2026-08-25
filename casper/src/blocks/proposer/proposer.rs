@@ -127,12 +127,15 @@ impl Proposer {
                     self.log.error(
                         LogSource::new("casper.blocks.Proposer"),
                         &format!(
-                            "Self-created block #{} (seq {}) failed validation: {status:?} — node state accounting is inconsistent.",
+                            "Self-created block #{} (seq {}) failed validation: {status} — node state accounting is inconsistent.",
                             block.block_number, block.seq_num
                         ),
                     );
                     Err(format!(
-                        "Validation of self created block failed with reason: {status:?}, cancelling propose."
+                        "the node rejected its own block #{block} (seq {seq}): {status}. \
+                         This is a node-side bug, not a problem with your request.",
+                        block = block.block_number,
+                        seq = block.seq_num,
                     ))
                 }
                 Err(ValidateError::Internal(e)) => {
@@ -145,7 +148,10 @@ impl Proposer {
                         ),
                     );
                     Err(format!(
-                        "Validation of self created block failed with internal error: {e}, cancelling propose."
+                        "the node rejected its own block #{block} (seq {seq}) with an internal \
+                         error: {e}. This is a node-side bug, not a problem with your request.",
+                        block = block.block_number,
+                        seq = block.seq_num,
                     ))
                 }
             },

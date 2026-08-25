@@ -110,6 +110,19 @@ impl RuntimeManager {
             .map_err(|e| e.to_string())
     }
 
+    /// Fork a fresh, isolated play runtime seeded at `root` (the play counterpart of
+    /// `fork_replay_runtime`). Read/exploration paths (data-at-name, explore-deploy) run on this so
+    /// they never mutate the shared play runtime the proposer is concurrently using to create blocks.
+    pub async fn fork_play_runtime(&self, root: Blake2b256Hash) -> Result<RhoRuntime, String> {
+        let reader = self.history_repo.get_history_reader(root).await;
+        let hot = Arc::new(InMemHotStore::new(reader.base()));
+        let (play, _replay) =
+            RSpace::create_with_replay(self.history_repo.clone(), hot, Arc::new(RhoMatch));
+        RhoRuntime::create(play, self.history_repo.clone(), SortedProc::default())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     /// Load mergeable channels from the store (port of `loadMergeableChannels`).
     pub async fn load_mergeable_channels(
         &self,
@@ -180,25 +193,28 @@ impl RuntimeManager {
         Ok(calculate_num_channel_diff(channels_data, &init_values))
     }
 
-    /// Read the `Par`s at a channel in the state identified by `hash` (port of `getData`).
+    /// Read the `Par`s at a channel in the state identified by `hash` (port of `getData`). Runs on a
+    /// forked runtime so the read cannot reset the shared play runtime out from under the proposer.
     pub async fn get_data(&self, hash: &StateHash, channel: &Par) -> Result<Vec<Par>, String> {
-        self.runtime.reset(to_blake(hash)).await.map_err(|e| e)?;
-        self.runtime
+        let runtime = self.fork_play_runtime(to_blake(hash)).await?;
+        runtime.reset(to_blake(hash)).await.map_err(|e| e)?;
+        runtime
             .get_data_par(&SortedProc::new(channel.clone()))
             .await
             .map_err(|e| e.to_string())
     }
 
     /// Read the `ParBody` continuations at `channels` in the state identified by `hash` (port of
-    /// `getContinuation`).
+    /// `getContinuation`). Runs on a forked runtime for the same reason as `get_data`.
     pub async fn get_continuation(
         &self,
         hash: &StateHash,
         channels: &[Par],
     ) -> Result<Vec<(Vec<BindPattern>, Par)>, String> {
-        self.runtime.reset(to_blake(hash)).await.map_err(|e| e)?;
+        let runtime = self.fork_play_runtime(to_blake(hash)).await?;
+        runtime.reset(to_blake(hash)).await.map_err(|e| e)?;
         let channels: Vec<SortedProc> = channels.iter().map(|c| SortedProc::new(c.clone())).collect();
-        self.runtime
+        runtime
             .get_continuation_par(&channels)
             .await
             .map_err(|e| e.to_string())
@@ -628,24 +644,25 @@ impl RuntimeManager {
         rand: &Blake2b512Random,
         return_channel: &Par,
     ) -> Result<Vec<Par>, String> {
-        self.runtime.reset(to_blake(start)).await.map_err(|e| e)?;
+        // Fork a fresh, isolated play runtime at `start`: exploration must never mutate the shared
+        // runtime the proposer uses to create blocks (a concurrent explore-deploy would otherwise
+        // reset/re-evaluate the shared space mid-block and corrupt the block's post-state hash).
+        let runtime = self.fork_play_runtime(to_blake(start)).await?;
+        runtime.reset(to_blake(start)).await.map_err(|e| e)?;
         // Bound the exploratory evaluation (documented Scala deviation): a phlo cap (the reducer
         // aborts with `OutOfPhlogistonsError` once the balance is exhausted) + a wall-clock
         // deadline, mirroring the Repl bound.
-        self.runtime
+        runtime
             .cost()
             .set(Cost::new(EXPLORATORY_PHLO_LIMIT, "exploratory"));
-        let eval = tokio::time::timeout(
-            EXPLORATORY_EVAL_TIMEOUT,
-            self.runtime.evaluate(term, rand),
-        )
-        .await
-        .map_err(|_| format!("exploratory deploy timed out after {EXPLORATORY_EVAL_TIMEOUT:?}"))?
-        .map_err(|e| e.to_string())?;
+        let eval = tokio::time::timeout(EXPLORATORY_EVAL_TIMEOUT, runtime.evaluate(term, rand))
+            .await
+            .map_err(|_| format!("exploratory deploy timed out after {EXPLORATORY_EVAL_TIMEOUT:?}"))?
+            .map_err(|e| e.to_string())?;
         if !eval.errors.is_empty() {
             return Err(format!("{:?}", eval.errors));
         }
-        self.runtime
+        runtime
             .get_data_par(&SortedProc::new(return_channel.clone()))
             .await
             .map_err(|e| e.to_string())
