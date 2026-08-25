@@ -53,7 +53,7 @@ help() {
 usage: tools/devnet.sh <command> [options]
 
 Commands:
-  build                          build the rnode:local image
+  build [--fresh]                build the rnode:local image (--fresh: --no-cache --pull)
   up [options]                   start the network (see options below)
   down [-v]                      stop the network (+ drop data volumes with -v)
   status                         docker ps for the network
@@ -94,7 +94,13 @@ validator_name() { echo "${PREFIX}-validator-${1}"; }
 observer_name()   { echo "${PREFIX}-observer-${1}"; }
 
 cmd_build() {
-  docker build -f docker/rnode/Dockerfile -t "$IMAGE" .
+  local opts=()
+  if [[ "${1:-}" == "--fresh" ]]; then
+    opts=(--no-cache --pull)
+  elif [[ -n "${1:-}" ]]; then
+    echo "unknown flag: $1" >&2; help
+  fi
+  docker build "${opts[@]}" -f docker/rnode/Dockerfile -t "$IMAGE" .
 }
 
 # Write genesis files (N validators + optionally a funded deployer wallet) into `$1`.
@@ -424,7 +430,7 @@ cmd_propose() {
 }
 
 case "${1:-}" in
-  build) cmd_build ;;
+  build) shift; cmd_build "$@" ;;
   up) shift; cmd_up "$@" ;;
   down) cmd_down "${2:-}" ;;
   status) cmd_status ;;

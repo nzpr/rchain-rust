@@ -122,7 +122,8 @@ against the node's isolated `eval-*` store, and printed as `Deployment cost:` + 
   sync/gossip, driven manually via `cli <node> propose`.
 
 ```sh
-tools/devnet.sh build                 # build the rnode:local image
+tools/devnet.sh build                 # build the rnode:local image (cached)
+tools/devnet.sh build --fresh         # force a clean rebuild (--no-cache --pull)
 
 # contract devnet:
 tools/devnet.sh up --validators 1     # single validator, autoproposing
