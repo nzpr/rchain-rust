@@ -11,6 +11,7 @@ use std::time::Duration;
 use rchain_block_storage::approved_store::{ApprovedStore, FINALIZED_FRINGE_KEY};
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::BlockDagStorage;
+use rchain_block_storage::syntax::insert_genesis;
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
@@ -307,8 +308,15 @@ async fn populate_dag(
         let block_height = i64::from(block.block_number);
         if block_height >= min_height {
             log.info(source, &format!("Adding #{} {}.", block.block_number, hash.to_hex()));
-            let bmd = BlockMetadata::from_block(&block);
-            dag.insert(bmd, block).await?;
+            if block_height == 0 {
+                // Genesis block: insert with validated metadata (fringe empty, fringe_state =
+                // pre_state), matching `insert_genesis`, so the validator is bonded and can build on
+                // block 0.
+                insert_genesis(dag, block).await?;
+            } else {
+                let bmd = BlockMetadata::from_block(&block);
+                dag.insert(bmd, block).await?;
+            }
         }
     }
 

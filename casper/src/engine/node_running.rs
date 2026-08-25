@@ -25,6 +25,7 @@ use rchain_models::casper::protocol::casper_message::{
 use rchain_models::casper::protocol::packet_type_tag::ToPacket;
 use rchain_rspace::state::RSpaceExporter;
 use rchain_shared::log::{Log, LogSource};
+use rchain_shared::refined::BlockHeight;
 
 use crate::blocks::block_receiver::not_validated;
 use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
@@ -488,11 +489,37 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 let repr = self.dag.get_representation().await;
                 let latest_fringe_hashes: BTreeSet<BlockHash> =
                     repr.latest_fringe().iter().map(|m| m.id).collect();
-                if let Some(fringe_data) = repr.fringe_states.get(&latest_fringe_hashes) {
-                    let fringe_response = FinalizedFringe {
-                        hashes: latest_fringe_hashes.iter().copied().collect(),
-                        state_hash: StateHash::from_slice(fringe_data.state_hash.as_bytes()),
-                    };
+                let fringe_response = if latest_fringe_hashes.is_empty() {
+                    // Fresh genesis: the shard-choice fringe is empty (no finalized messages), so the
+                    // "chosen" state is the genesis block (block 0). Hand it over so the syncing
+                    // validator downloads block 0 + its post-state (bonds) instead of ending up
+                    // unbonded with an empty DAG.
+                    let genesis_hash = repr
+                        .height_map
+                        .get(&BlockHeight::zero())
+                        .and_then(|s| s.iter().next().copied());
+                    match genesis_hash {
+                        Some(genesis_hash) => self
+                            .block_store
+                            .get(&[genesis_hash])
+                            .await
+                            .ok()
+                            .and_then(|mut v| v.pop().flatten())
+                            .map(|b| FinalizedFringe {
+                                hashes: vec![genesis_hash],
+                                state_hash: b.post_state_hash,
+                            }),
+                        None => None,
+                    }
+                } else {
+                    repr.fringe_states.get(&latest_fringe_hashes).map(|fringe_data| {
+                        FinalizedFringe {
+                            hashes: latest_fringe_hashes.iter().copied().collect(),
+                            state_hash: StateHash::from_slice(fringe_data.state_hash.as_bytes()),
+                        }
+                    })
+                };
+                if let Some(fringe_response) = fringe_response {
                     handle_finalized_fringe_request(
                         self.transport.as_ref(),
                         &self.conf,
