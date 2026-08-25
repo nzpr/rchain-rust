@@ -231,7 +231,9 @@ cmd_eval() {
 
 cmd_query() {
   local name="${1:?public name required}"
-  node_cli "$BOOTSTRAP" listen-data-at-name -t pub -c "$name"
+  # The name is a public (forgeable) name; quote it so the client normalizes it as a rholang
+  # *ground string* (matching `@"hello"!("world")`), not as a free variable.
+  node_cli "$BOOTSTRAP" listen-data-at-name -t pub -c "\"$name\""
 }
 
 cmd_propose() {

@@ -50,6 +50,10 @@ pub async fn replay_block(
             block_data,
             with_cost_accounting,
             &block.bonds,
+            // Genesis vault balances are not carried on the block (they are installed at genesis
+            // and re-derived only on the trusted genesis replay path); block replay here is always
+            // cost-accounting (non-genesis), so no vault re-install is needed.
+            &[],
         )
         .await?;
     Ok(state_hash)

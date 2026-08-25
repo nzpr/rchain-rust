@@ -34,21 +34,25 @@ goal-indexed map for readers and AI agents is
 
 ## Why Rust
 
-Two reasons drive the rewrite.
+Three reasons drive the rewrite.
 
 **Memory safety.** The Scala/JVM node leaked memory and paused on garbage collection — it shipped
-JVM `Memory`/`GarbageCollector` diagnostics and needed `SBT_OPTS="-Xmx4g -Xss2m"` to run. Rust's
-ownership model and lack of a tracing GC eliminate the leak and the stop-the-world pause by
-construction.
+`Memory`/`GarbageCollector` diagnostics and needed `SBT_OPTS="-Xmx4g -Xss2m"` to run. Rust's ownership
+model and lack of a tracing GC make the leak and the stop-the-world pause unrepresentable.
+
+**Decentralization.** ~69,000 lines of Rust compile to a single tight native binary — no JVM, no GC,
+no heap tuning — so a validator runs on any modern desktop or laptop with an NVMe SSD. Validator
+operation sits within consumer-grade hardware, which is what makes the network genuinely decentralized
+(see [hardware requirements](docs/src/node/validator-requirements.md)).
 
 **The calculus hierarchy.** Rust natively expresses the λ-calculus (closures), the π-calculus
-(channels and `Send`/`Sync` name mobility), and the ρ-calculus (the reflective π-calculus: a name is
-a quoted process, expressed here as the sortable `Par` value). The port's type discipline embeds ρ as
+(channels and `Send`/`Sync` name mobility), and the ρ-calculus (the reflective π-calculus: a name is a
+quoted process, expressed here as the sortable `Par` value). The port's type discipline embeds ρ as
 the base sort of a Calculus of Constructions, constructible and provable in Lean 4 and Coq.
 
-The full argument — with a Rust → calculus → formalization correspondence table — is in
-[docs/src/contributor/why-rust.md](docs/src/contributor/why-rust.md). The prose documentation is also
-served as a book: `mdbook serve docs`.
+The full argument — including the co-op lesson and the Rust → calculus → formalization correspondence
+table — is in [docs/src/contributor/why-rust.md](docs/src/contributor/why-rust.md). The prose
+documentation is also served as a book: `mdbook serve docs`.
 
 ## Governance
 
@@ -69,15 +73,18 @@ the **Rho Vision (formerly RChain Community)** collective:
 
 ## Layout
 
-Twelve crates mirror the original sbt modules, ported in dependency order. The per-crate status, the
-layer map, the rewrite order, and the remaining work are consolidated in
+The Cargo workspace has thirteen members — twelve crates ported from the original sbt modules
+(`sdk`, `shared`, `crypto`, `graphz`, `models`, `block-storage`, `comm`, `rspace`, `rholang`,
+`casper`, `node`, `rspace-bench`) plus `qucalc`, the Rust-first native AI + governance crate
+(Part V of the book). The per-crate status, the layer map, the rewrite order, and the remaining work
+are consolidated in
 [docs/src/contributor/architecture.md](docs/src/contributor/architecture.md).
 
 ## Build & test
 
 ```sh
-cargo build
-cargo test
+cargo build --release -p rchain-node --bin rnode   # the `rnode` binary
+cargo test --workspace                              # the full test suite
 ```
 
 Build and serve the documentation book:
@@ -126,6 +133,22 @@ from it over the TLS transport (`rnode://<id>@bootstrap?protocol=40400&discovery
 
 The full operation guide (commands, ports, the genesis ceremony, and the multi-node topology) is in
 [docs/src/node/operating.md](docs/src/node/operating.md).
+
+## Local devnet (Docker)
+
+For deploying and testing rholang smart contracts, `tools/devnet.sh` brings up 1–3 bonded validators
+plus optional observers with a funded deployer wallet, and exposes `deploy`/`query` helpers:
+
+```sh
+tools/devnet.sh build                  # build the rnode:local image
+tools/devnet.sh up --validators 1      # start a single validator (autopropose)
+tools/devnet.sh deploy hello.rho       # signed deploy (examples/hello.rho sends "world")
+tools/devnet.sh query hello            # -> "world"
+tools/devnet.sh down -v                # stop + drop volumes
+```
+
+This is distinct from `tools/docker-network.sh` (a network-*topology* harness). See
+[docs/src/node/devnet.md](docs/src/node/devnet.md).
 
 ## Where the Scala went
 

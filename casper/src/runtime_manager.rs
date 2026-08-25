@@ -37,6 +37,7 @@ use rchain_rspace::rspace::RSpace;
 use rchain_shared::typed_store::KeyValueTypedStore;
 
 use crate::event_converter::to_casper_event;
+use crate::genesis::contracts::Vault;
 use crate::rholang::{ReplayFailure, SystemDeployRuntimeResult, UserDeployRuntimeResult};
 use crate::runtime_replay::RuntimeReplayOps;
 use crate::system_deploy::{
@@ -364,6 +365,7 @@ impl RuntimeManager {
         rand: &Blake2b512Random,
         block_data: BlockData,
         bonds: &BTreeMap<Validator, NonNegI64>,
+        vaults: &[Vault],
     ) -> Result<(Blake2b256Hash, Blake2b256Hash, Vec<UserDeployRuntimeResult>), String> {
         let creator = block_data.sender.bytes().to_vec();
         let seq_num = i64::from(block_data.seq_num);
@@ -389,6 +391,11 @@ impl RuntimeManager {
         // content-addressed into the post-state hash.
         let native = NativeSystemState::new(self.runtime.native_store());
         native.set_bonds(bonds);
+        // Seed the initial REV vault balances from the genesis wallets file so pre-charge can
+        // deduct phlo (the native vault map is otherwise empty, and every deploy fails pre-charge).
+        for vault in vaults {
+            native.set_vault_balance(&vault.rev_address.to_base58(), vault.initial_balance);
+        }
         let checkpoint = self.runtime.create_checkpoint().await.map_err(|e| e)?;
         let mergeable_chs: Vec<NumberChannelsDiff> =
             results.iter().map(|r| r.mergeable.clone()).collect();
@@ -551,6 +558,7 @@ impl RuntimeManager {
         block_data: BlockData,
         with_cost_accounting: bool,
         bonds: &BTreeMap<Validator, NonNegI64>,
+        vaults: &[Vault],
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         self.replay_compute_state_with(
             &self.replay_runtime,
@@ -561,6 +569,7 @@ impl RuntimeManager {
             block_data,
             with_cost_accounting,
             bonds,
+            vaults,
         )
         .await
     }
@@ -578,6 +587,7 @@ impl RuntimeManager {
         block_data: BlockData,
         with_cost_accounting: bool,
         bonds: &BTreeMap<Validator, NonNegI64>,
+        vaults: &[Vault],
     ) -> Result<(Blake2b256Hash, Vec<NumberChannelsDiff>), ReplayFailure> {
         let creator = block_data.sender.bytes().to_vec();
         let seq_num = i64::from(block_data.seq_num);
@@ -590,6 +600,7 @@ impl RuntimeManager {
                 block_data,
                 with_cost_accounting,
                 bonds,
+                vaults,
             )
             .await?;
         self.save_mergeable_channels(state_hash, &creator, seq_num, &mergeable_chs, *start_hash)
@@ -717,6 +728,7 @@ mod tests {
                 BlockData::empty(),
                 false,
                 &BTreeMap::new(),
+                &[],
             )
             .await;
         assert!(result.is_ok());

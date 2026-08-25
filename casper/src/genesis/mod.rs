@@ -109,7 +109,7 @@ pub async fn create_genesis_block(
     let rand = BlockRandomSeed::random_generator_from_shard_id(&genesis.shard_id);
     let bonds = build_bonds_map(&genesis.proof_of_stake);
     let (start_hash, state_hash, processed_results) = runtime
-        .compute_genesis(&blessed_terms, &rand, block_data, &bonds)
+        .compute_genesis(&blessed_terms, &rand, block_data, &bonds, &genesis.vaults)
         .await?;
     // Surface deploy evaluation errors (the Scala `require` only checks the `isFailed` flag; the
     // underlying errors are otherwise lost, making genesis failures opaque).

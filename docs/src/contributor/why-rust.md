@@ -24,6 +24,40 @@ leaks and use-after-free unrepresentable, with **no tracing garbage collector** 
 stop-the-world pause and no heap pressure to tune away. Resource lifetime becomes a compile-time,
 statically checked property rather than a runtime, best-effort one.
 
+### The practical upshot — a validator on modest hardware
+
+The payoff is operational, not just theoretical. Roughly **69,000 lines of Rust** across 351 source
+files compile to a single tight **native binary** — no JVM to boot, no tracing GC to pause, no
+`-Xmx4g -Xss2m` to tune. The stop-the-world pauses and heap pressure that made the JVM node's runtime
+heavy and its latency unpredictable are gone by construction, so a validator runs comfortably — and
+with deterministic resource use — on any reasonably modern desktop PC or high-performance laptop with
+an NVMe SSD. See [Running a validator: hardware requirements](../node/validator-requirements.md).
+
+The consequence is structural: **validator operation genuinely decentralizes.** The requirements sit
+within consumer-grade hardware, not a datacenter, so the barrier to running a validating node is a
+commodity machine. The same native code buys throughput too — no GC pauses and no JVM startup leave
+the CPU free for reduction itself, even while full ρ-calculus thread-level concurrency remains work in
+progress (see [the concurrency model](../formal/concurrency-model.md)).
+
+That decentralization is not an abstract ideal; it is the lesson of the original network's failure.
+Running a validator meant an always-on, co-op-operated AWS instance. Operators who self-hosted —
+including co-op members from their own homes — routinely hit technical difficulties and risked having
+their stake slashed for downtime, so staking on anything but a co-op node carried too much risk. The
+co-op ended up running the validators itself, and when the treasury ran dry as the token price fell,
+it could no longer afford the instances that kept the network alive. Consumer-grade hardware removes
+that centralizing pressure: the barrier to *being* a validator drops to a commodity machine that any
+operator can keep online.
+
+The **main strategic aim** of the port follows directly: to decentralize mainnet infrastructure to
+the point where *anyone* can run a validator, so that whatever succeeds the co-op is no longer
+responsible for keeping the network itself online. Its role becomes what does not scale down to an
+individual operator — node software upgrades, research, technical expertise, standards and best
+practices, and the mechanics of the REV token transition. A network that runs on commodity hardware is
+self-healing and has no single point of failure, so the token earns a genuine price floor from the
+fees paid on a network that keeps running — the same structural property as Ethereum or Bitcoin.
+Whatever the market decides that price is — a tenth of a cent or a dollar — it is a price that exists
+and persists.
+
 ## 2. Rust natively expresses the calculus hierarchy
 
 The second reason is deeper, and it is about what the node *is*, not just how it runs.

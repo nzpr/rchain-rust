@@ -25,6 +25,7 @@ The **authoritative formal specification** is the [`spec/`](../../spec/) tree â€
 | Understand the "no silent partiality" / totality guarantee | [Closedness and the Calculus of Constructions](formal/closedness-coc.md) |
 | Understand consensus / finality | [Consensus (Casper)](node/consensus.md) |
 | Understand the tuple space / storage | [The tuple space (RSpace)](node/rspace.md), [Storage](node/storage.md) |
+| Run a validator (hardware requirements / sizing) | [Running a validator: hardware requirements](node/validator-requirements.md) |
 | Understand the port (why Rust, module status) | [Part IV](contributor/why-rust.md) |
 | Find the machine-checked proofs | [`spec/Rchain/`](../../spec/Rchain/) (Lean), [`spec/coq/`](../../spec/coq/) (Coq) |
 

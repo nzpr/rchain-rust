@@ -9,9 +9,9 @@ mod common;
 
 use std::time::Duration;
 
-use rchain_casper::protocol::client::{DeployRuntime, DeployService, GrpcDeployService, GrpcProposeService, ProposeService};
+use rchain_casper::protocol::client::{build_par, DeployRuntime, DeployService, GrpcDeployService, GrpcProposeService, Name, ProposeService};
 use rchain_crypto::private_key::PrivateKey;
-use rchain_models::casper::protocol::deploy_service::BlocksQuery;
+use rchain_models::casper::protocol::deploy_service::{BlocksQuery, DataAtNameQuery};
 use rchain_shared::base16;
 
 use common::{deploy_conf, free_ports, temp_dir, test_runtime, VALIDATOR_PRIV_HEX};
@@ -74,9 +74,18 @@ fn deploy_is_processed_into_a_block() {
         let blocks = deploy.get_blocks(&BlocksQuery { depth: 5 }).await.expect("blocks");
         assert!(blocks.contains("block 1"), "proposed block missing from DAG:\n{blocks}");
 
-        // TODO: `listen-data-at-name` returns empty — the block's `deploy_log` is not populated in
-        // the block-production path (a separate event-log bug), so data-at-name queries aren't
-        // exercised here yet.
+        // The deploy's send must be observable: query the `"hello"` channel and assert the `"world"`
+        // datum was recorded (exercises the deploy_log → is_listening_name_reduced path).
+        let query_par = build_par(&Name::PubName("\"hello\"".to_string())).expect("build query name");
+        let data = deploy
+            .listen_for_data_at_name(&DataAtNameQuery { depth: 50, name: query_par })
+            .await
+            .expect("listen-data-at-name");
+        let world = build_par(&Name::PubName("\"world\"".to_string())).expect("build world datum");
+        assert!(
+            data.iter().any(|d| d.post_block_data.contains(&world)),
+            "expected `\"world\"` at `\"hello\"`, got: {data:?}"
+        );
 
         node.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
