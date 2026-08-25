@@ -180,6 +180,10 @@ pub struct Run {
     #[arg(long = "autopropose")]
     pub autopropose: bool,
 
+    /// Propose a block immediately after a deploy is accepted.
+    #[arg(long = "propose-on-deploy")]
+    pub propose_on_deploy: bool,
+
     /// Disable UPnP.
     #[arg(long = "no-upnp")]
     pub no_upnp: bool,

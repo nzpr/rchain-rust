@@ -15,6 +15,7 @@ use rchain_crypto::public_key::PublicKey;
 pub struct NodeConf {
     pub standalone: bool,
     pub autopropose: bool,
+    pub propose_on_deploy: bool,
     pub protocol_server: ProtocolServer,
     pub protocol_client: ProtocolClient,
     pub peers_discovery: PeersDiscovery,

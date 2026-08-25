@@ -319,6 +319,7 @@ pub fn node_conf_from_hocon(h: &Hocon) -> Result<NodeConf, String> {
     Ok(NodeConf {
         standalone: to_bool(get(h, "standalone")?)?,
         autopropose: to_bool(get(h, "autopropose")?)?,
+        propose_on_deploy: to_bool(get(h, "propose-on-deploy")?)?,
         protocol_server: protocol_server_from_hocon(get(h, "protocol-server")?)?,
         protocol_client: protocol_client_from_hocon(get(h, "protocol-client")?)?,
         peers_discovery: peers_discovery_from_hocon(get(h, "peers-discovery")?)?,

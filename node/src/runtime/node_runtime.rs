@@ -1102,6 +1102,7 @@ pub async fn setup(
         trigger_propose,
         proposer_state.clone(),
         conf.autopropose,
+        conf.propose_on_deploy,
         std::collections::BTreeSet::new(),
     ));
 

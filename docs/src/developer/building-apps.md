@@ -17,10 +17,13 @@ tools/devnet.sh build                 # build the rnode:local image (once)
 tools/devnet.sh up --validators 1     # 1 validator, autoproposing (the default)
 # or a small multi-validator net:
 tools/devnet.sh up --validators 3 --observers 1
+# or a bare 1–5 node network topology (no autopropose, manual propose):
+tools/devnet.sh up --nodes 3
 ```
 
-The **bootstrap** node (validator 0) is the one apps should talk to. Tear down with
-`tools/devnet.sh down -v` (drop the `-v` to keep the data volumes).
+The **bootstrap** node (`devnet-bootstrap`) is the one apps should talk to. Tear down with
+`tools/devnet.sh down -v` (drop the `-v` to keep the data volumes). Run `tools/devnet.sh help` for the
+full flag reference (autopropose / propose-on-deploy / admin / deployer-key / nodes).
 
 ## 2. Endpoints
 
@@ -205,20 +208,32 @@ exposes `propose` and `proposeResult`. The protobuf definitions live in
 - **One node vs many.** Non-bootstrap nodes offset their host ports by `1000·i`; for a single-validator
   devnet the bootstrap numbers above are the only ones you need.
 
-## 8. Simulating Casper: how blocks are produced
+## 8. When blocks are created (the formal spec)
 
-CBC-Casper here is **deploy-driven** — there is no heartbeat or block timer. A validator proposes a
-block only when it has new work to record: new user deploys, slashes, or an epoch change — plus
-*attestation* blocks that carry no deploys but attest to other validators' blocks to advance finality.
-An idle *non-dev-mode* node produces no blocks.
+CBC-Casper is **deploy-driven**: a block is created **only** when one of three triggers fires on a
+node. An idle node with none of them produces no blocks — there is no independent heartbeat.
 
-The devnet opts every node into **dev-mode** (`--dev-mode --deployer-private-key`), so `--autopropose`
-injects a signed `Nil` **dummy deploy** whenever the pool is empty and keeps producing blocks on its
-own — no manual deploys needed. `up` waits until `latestBlockNumber` is advancing before returning:
+1. **Propose-on-deploy** (`--propose-on-deploy`) — a submitted deploy triggers an immediate propose so
+   it lands in the next block.
+2. **Autopropose** (`--autopropose`) — the node keeps proposing on its own: a timer tick, a validated
+   peer block, or (with dev-mode) a signed `Nil` **dummy deploy** injected whenever the pool is empty.
+3. **Manual propose** — `POST /api/v1/propose` (admin HTTP, `--admin`) or `rnode propose` (gRPC).
 
-```sh
-tools/devnet.sh up --validators 3     # 3 validators, each self-producing dummy-deploy blocks
-```
+The devnet defaults to all three on; the bare topology (`up --nodes N`) is all three off. The full flag
+matrix is `tools/devnet.sh help`:
+
+| Script flag | Node flag(s) | Effect |
+|---|---|---|
+| `--autopropose` (default on) | `--autopropose` | continuous block production (timer + dummy deploy) |
+| `--propose-on-deploy` (default on) | `--propose-on-deploy` | propose immediately after a deploy is accepted |
+| `--admin` (default on) | `--api-enable-devnet-cors` + publish `40405` | expose the admin `/api/v1/propose` to the host |
+| `--deployer-key` (default on) | `--dev-mode --deployer-private-key` | fund the deployer wallet + dummy-deploy keepalive |
+| `--nodes N` | (all of the above off) | bare 1–5 node network topology, manual propose via `cli` |
+
+**Gotcha:** if you `deploy` against a node that wasn't started with `--deployer-key` (or `propose
+--admin` against one without `--admin`), the request fails — the script surfaces a clear warning/error
+instead of a raw connection failure. Run `tools/devnet.sh diagnose` for a per-node PASS/WARN/FAIL
+report of syncing, block production, and peer connectivity.
 
 Observe consensus and finality over the public HTTP API (`http://localhost:40403`):
 

@@ -40,5 +40,5 @@ Scenario checklist (mirrors legacy/integration-tests/):
   [ ] REV transfers (wallets)
   [ ] multi-node finalization / fault-tolerance / merge / bonding / slashing
   [x] REPL (rnode repl)
-  [x] Dockerisation e2e (tools/docker-network.sh, 1-5 nodes)
+  [x] Dockerisation e2e (tools/devnet.sh, 1-5 nodes)
 EOF

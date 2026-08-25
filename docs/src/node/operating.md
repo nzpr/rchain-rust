@@ -119,10 +119,12 @@ thin-client model — not on the REPL client.
 
 ---
 
-## The Docker multi-node network
+## The Docker multi-node network (bare topology)
 
-`tools/docker-network.sh` builds the `rnode` image and boots a local network of **1–5 nodes** on a
-Docker bridge, then lets the CLI drive it. The image is built from
+`tools/devnet.sh up --nodes N` boots a bare **1–5 node** network (one bootstrap + `N-1` unbonded peers)
+with no autopropose and no deployer wallet — the network-*topology* mode for exercising sync/gossip,
+driven manually via `cli`. (The same script's default mode is the contract *devnet* — see
+[Local devnet](devnet.md).) The image is built from
 [`docker/rnode/Dockerfile`](../../../docker/rnode/Dockerfile).
 
 ### Prereqs
@@ -133,23 +135,23 @@ Docker bridge, then lets the CLI drive it. The image is built from
 ### Commands
 
 ```sh
-tools/docker-network.sh build            # build the rnode:local image
-tools/docker-network.sh up [N]           # start a bootstrap + N-1 peers (default 3, N in 1..5)
-tools/docker-network.sh status           # docker ps for the network
-tools/docker-network.sh logs <node>      # tail a node's logs (bootstrap, peer1, …)
-tools/docker-network.sh cli <node> <subcommand…>   # run the Rust client against <node>
-tools/docker-network.sh down             # stop the network
-tools/docker-network.sh down -v          # stop + delete the data volumes
+tools/devnet.sh build                       # build the rnode:local image
+tools/devnet.sh up --nodes 3                # bootstrap + 2 peers (N in 1..5)
+tools/devnet.sh status                      # docker ps for the network
+tools/devnet.sh logs <node>                 # tail a node's logs
+tools/devnet.sh cli <node> <subcommand…>    # run the Rust client against <node>
+tools/devnet.sh down                        # stop the network
+tools/devnet.sh down -v                     # stop + delete the data volumes
 ```
 
 ### Topology and genesis
 
-`up N` starts:
+`up --nodes N` starts:
 
-1. **`bootstrap`** — `rnode run -s` (standalone). It generates its own TLS cert, **creates the
-   genesis block**, and is bonded as the sole validator via a fixed validator key
-   (`VALIDATOR_PRIV_HEX` in the script) and a generated `bonds.txt`/`wallets.txt` mounted read-only.
-2. **`peer1` … `peer{N-1}`** — `rnode run --bootstrap rnode://<bootstrap-id>@bootstrap?protocol=40400&discovery=40404`.
+1. **`devnet-bootstrap`** — `rnode run -s` (standalone). It generates its own TLS cert, **creates the
+   genesis block**, and is bonded as the sole validator via a fixed validator key and a generated
+   `bonds.txt`/`wallets.txt` mounted read-only.
+2. **`devnet-observer-1` … `devnet-observer-N-1`** — `rnode run --bootstrap rnode://<bootstrap-id>@devnet-bootstrap?protocol=40400&discovery=40404`.
    Each peer gets its own data volume (so its node identity — the TLS cert — is stable), connects to
    the bootstrap over the **TLS protocol transport** (port 40400), and syncs the finalized fringe.
 
@@ -159,9 +161,10 @@ each peer's bootstrap URL.
 
 ### Ports
 
-Each node binds the same in-container ports; `up` maps each node's **deploy** gRPC port — the only
-network-reachable gRPC service — to a distinct host port so you can also reach a node from the host.
-Propose/repl bind loopback-only (`127.0.0.1:40402`), so they are not host-mapped:
+Each node binds the same in-container ports; `up` maps each node's **deploy** gRPC port to a distinct
+host port so you can also reach a node from the host. Propose/repl bind loopback-only
+(`127.0.0.1:40402`), so they are not host-mapped. In bare (`--nodes`) mode the admin HTTP port is not
+published (`--no-admin`):
 
 | Service | In-container | Host (bootstrap / peerN) |
 |---|---|---|
@@ -169,8 +172,8 @@ Propose/repl bind loopback-only (`127.0.0.1:40402`), so they are not host-mapped
 | discovery (Kademlia) | 40404 | not mapped |
 | gRPC API — Deploy | 40401 | 40402 / 40402 + 1000·N |
 | gRPC API — Propose/Repl | 40402 | not mapped (loopback-only) |
-| HTTP | 40403 | not mapped |
-| admin HTTP | 40405 | not mapped (loopback-only) |
+| HTTP | 40403 | 40403 / 40403 + 1000·N |
+| admin HTTP | 40405 | not published |
 
 ### Interacting from the CLI
 
@@ -179,9 +182,10 @@ can reach both the deploy server (external port **40401**) and the loopback-only
 (`127.0.0.1:40402`):
 
 ```sh
-tools/docker-network.sh cli bootstrap status
-tools/docker-network.sh cli bootstrap repl          # interactive REPL against the bootstrap
-tools/docker-network.sh cli peer1 status
+tools/devnet.sh cli devnet-bootstrap status
+tools/devnet.sh cli devnet-bootstrap repl       # interactive REPL against the bootstrap
+tools/devnet.sh cli devnet-observer-1 status
+tools/devnet.sh cli devnet-bootstrap propose   # force a block (bare mode has no autopropose)
 ```
 
 No `--grpc-port` is passed: the client defaults to the right port per subcommand (`deploy`/`status`/
@@ -190,6 +194,6 @@ No `--grpc-port` is passed: the client defaults to the right port per subcommand
 `deploy` / `eval` read a file at a path inside the container; copy a local file in first:
 
 ```sh
-docker cp demo.rho bootstrap:/tmp/demo.rho
-tools/docker-network.sh cli bootstrap deploy /tmp/demo.rho
+docker cp demo.rho devnet-bootstrap:/tmp/demo.rho
+tools/devnet.sh cli devnet-bootstrap deploy /tmp/demo.rho
 ```

@@ -97,6 +97,7 @@ pub fn from_options(options: &Options) -> Hocon {
     if let Commands::Run(run) = &options.subcommand {
         flag(&mut e, "standalone", run.standalone);
         flag(&mut e, "autopropose", run.autopropose);
+        flag(&mut e, "propose-on-deploy", run.propose_on_deploy);
         opt_str(&mut e, "protocol-server.network-id", &run.network_id);
         flag(&mut e, "protocol-server.dynamic-ip", run.dynamic_ip);
         flag(&mut e, "protocol-server.no-upnp", run.no_upnp);

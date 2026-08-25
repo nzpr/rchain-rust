@@ -1,26 +1,14 @@
 #!/usr/bin/env bash
 #
-# devnet — a local Docker testnet for deploying and testing rholang smart contracts.
+# devnet — a single Docker script for a local RChain network.
 #
-# Unlike tools/docker-network.sh (a 1..5 node *network-topology* harness), this is a *contract
-# devnet*: it brings up 1..3 bonded validators (full consensus, autopropose) plus optional
-# observers, seeds genesis with a funded deployer wallet, and exposes deploy/query helpers.
+# Two modes, one script:
+#   • devnet  (default) — bonded validators that produce blocks + a funded deployer wallet, for
+#     developing/deploying rholang contracts and reading results back.
+#   • network — a bare 1..5 node topology (no autopropose, no deployer) for exercising sync/gossip;
+#     drive it manually with `cli <node> propose`.
 #
-#   tools/devnet.sh build                        build the rnode:local image
-#   tools/devnet.sh up --validators N [--observers M]
-#                                                start N validators (default 1) + M observers (default 0)
-#   tools/devnet.sh deploy <contract.rho>        signed deploy to the bootstrap (file lives in examples/)
-#   tools/devnet.sh eval <file.rho>              thin-client REPL eval of a file on the bootstrap
-#   tools/devnet.sh query <name>                 listen for data at a public name
-#   tools/devnet.sh propose                      force the bootstrap to propose a block
-#   tools/devnet.sh status                       docker ps for the devnet
-#   tools/devnet.sh logs <node>                  tail a node's logs
-#   tools/devnet.sh diagnose                     per-node health check (PASS/FAIL)
-#   tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
-#
-# Nodes publish Deploy gRPC (in-container 40401), the public HTTP API (in-container 40403), and the
-# admin HTTP API (in-container 40405) to the host; Propose+Repl stay in-container on 40402, reached
-# by the helpers via `docker exec`. The host needs only docker + openssl.
+# Prereqs: docker (a running daemon) and openssl.
 #
 # SECURITY: the validator/deployer keys below are throwaway keys for a LOCAL testnet only.
 # Never reuse them for anything with real value.
@@ -48,7 +36,7 @@ VALIDATOR_PUB=(
 )
 MAX_VALIDATORS=${#VALIDATOR_PRIV[@]}
 
-# Deployer = validator[0] (its pubkey -> REV address is funded in genesis).
+# Deployer = validator[0] (its pubkey -> REV address is funded in genesis when DEPLOYER is on).
 DEPLOYER_PRIV="${VALIDATOR_PRIV[0]}"
 DEPLOYER_REV_ADDR="11112VYAt8rUGNRRZX3eJdgagaAhtWTK8Js7F7X5iqddMVqyDTtYau"
 DEPLOYER_BALANCE=1000000000000
@@ -60,8 +48,45 @@ GRPC_BASE=40402   # host port mapped to the bootstrap's deploy gRPC (in-containe
 HTTP_BASE=40403   # host port mapped to the bootstrap's public HTTP API (in-container 40403)
 ADMIN_BASE=40405  # host port mapped to the bootstrap's admin HTTP API (in-container 40405)
 
-usage() {
-  sed -n '2,25p' "$0" >&2
+help() {
+  cat >&2 <<'EOF'
+usage: tools/devnet.sh <command> [options]
+
+Commands:
+  build                          build the rnode:local image
+  up [options]                   start the network (see options below)
+  down [-v]                      stop the network (+ drop data volumes with -v)
+  status                         docker ps for the network
+  logs <node>                    tail a node's logs
+  diagnose                       per-node health check (PASS/WARN/FAIL)
+  deploy <contract.rho> [--to N] signed deploy to the bootstrap (file lives in examples/)
+  eval <file.rho>                thin-client REPL eval of a file on the bootstrap
+  query <name>                   listen for data at a public name
+  propose [--admin]              force the bootstrap to propose (gRPC, or admin HTTP with --admin)
+  cli <node> <rnode subcommand…> run the Rust client inside a node container
+  help                           this message
+
+`up` options:
+  --validators N                 bonded validators (1..3, default 1)
+  --observers M                  unbonded observers (0..3, default 0)
+  --nodes N                      bare network topology: 1 bootstrap + N-1 peers (1..5),
+                                 shorthand for --validators 1 --observers N-1 --no-autopropose
+                                 --no-deployer --no-admin
+  --autopropose | --no-autopropose
+                                 continuously produce blocks on a timer (default: on for devnet,
+                                 off for --nodes)
+  --propose-on-deploy | --no-propose-on-deploy
+                                 propose a block immediately after a deploy (default: on for devnet)
+  --admin | --no-admin           publish the admin HTTP API (40405) to the host (default: on for devnet)
+  --deployer-key HEX | --no-deployer
+                                 fund the deployer wallet + enable dev-mode dummy-deploy keepalive
+                                 (default: on for devnet, using validator[0]'s key)
+
+When are blocks created?
+  A block is created only when one of these fires: (a) --propose-on-deploy and a deploy is accepted;
+  (b) --autopropose's timer/dummy-deploy; or (c) an explicit `propose`/`POST /api/v1/propose`. An idle
+  node with none of these produces no blocks.
+EOF
   exit 2
 }
 
@@ -72,14 +97,18 @@ cmd_build() {
   docker build -f docker/rnode/Dockerfile -t "$IMAGE" .
 }
 
-# Write genesis files (N validators + a funded deployer wallet) into `$1`.
+# Write genesis files (N validators + optionally a funded deployer wallet) into `$1`.
 genesis_files() {
   local dir="$1" n="$2" i
   : > "$dir/bonds.txt"
   for (( i = 0; i < n; i++ )); do
     echo "${VALIDATOR_PUB[$i]} 100" >> "$dir/bonds.txt"
   done
-  echo "$DEPLOYER_REV_ADDR,$DEPLOYER_BALANCE" > "$dir/wallets.txt"
+  if $DEPLOYER; then
+    echo "$DEPLOYER_REV_ADDR,$DEPLOYER_BALANCE" > "$dir/wallets.txt"
+  else
+    : > "$dir/wallets.txt"
+  fi
 }
 
 wait_for_cert() {
@@ -100,14 +129,17 @@ bootstrap_id() {
     | awk -F'=' '{print $NF}'
 }
 
-# Wait until the bootstrap serves /api/v1/status and is producing blocks (latestBlockNumber > 0).
-# With `--dev-mode --deployer-private-key` this happens without any user deploy.
+# Wait until the bootstrap serves /api/v1/status and (if autopropose is on) is producing blocks.
 wait_for_http() {
   local url="http://localhost:${HTTP_BASE}/api/v1/status"
   local body block_num
   for _ in $(seq 1 120); do
     if body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
       block_num="$(printf '%s' "$body" | sed -n 's/.*"latestBlockNumber":\([0-9]*\).*/\1/p')"
+      if ! $AUTOPROPOSE; then
+        echo "==> $BOOTSTRAP serving /api/v1/status (autopropose off; block production is manual)"
+        return 0
+      fi
       if [[ -n "$block_num" && "$block_num" -gt 0 ]]; then
         echo "==> $BOOTSTRAP serving /api/v1/status (latestBlockNumber=$block_num)"
         return 0
@@ -115,40 +147,58 @@ wait_for_http() {
     fi
     sleep 1
   done
-  echo "timed out waiting for $BOOTSTRAP to serve /api/v1/status with latestBlockNumber > 0" >&2
+  echo "timed out waiting for $BOOTSTRAP to serve /api/v1/status" >&2
   return 1
 }
 
 # `docker run` flags shared by every node (container name/network/ports + data + contracts mounts).
-# Publishes deploy gRPC (40401), the public HTTP API (40403), and the admin HTTP API (40405).
 docker_opts() {
   local name="$1" grpc_host="$2" http_host="$3" admin_host="$4"
-  echo "-d --name $name --network $NETWORK \
-    -p ${grpc_host}:40401 -p ${http_host}:40403 -p ${admin_host}:40405 \
+  local ports="-p ${grpc_host}:40401 -p ${http_host}:40403"
+  if $ADMIN; then ports="$ports -p ${admin_host}:40405"; fi
+  echo "-d --name $name --network $NETWORK $ports \
     -v ${name}-data:/var/lib/rnode \
     -v ${CONTRACTS_DIR}:/contracts:ro"
 }
 
-# `rnode run` flags shared by every node (identity/ports/data-dir).
-# `--dev-mode --deployer-private-key` makes autopropose inject a signed `Nil` dummy deploy whenever the
-# pool is empty, so each node keeps producing blocks on its own (port of Scala `dev.deployer-private-key`).
+# `rnode run` flags shared by every node, assembled from the current flag globals.
 rnode_run_common() {
   local name="$1"
-  echo "run --host $name --api-host 0.0.0.0 --data-dir /var/lib/rnode \
+  local flags="run --host $name --api-host 0.0.0.0 --data-dir /var/lib/rnode \
     --protocol-port 40400 --discovery-port 40404 \
     --api-port-grpc-external 40401 --api-port-grpc-internal 40402 \
-    --api-port-http 40403 --api-port-admin-http 40405 \
-    --api-enable-devnet-cors \
-    --dev-mode --deployer-private-key ${DEPLOYER_PRIV}"
+    --api-port-http 40403 --api-port-admin-http 40405"
+  if $AUTOPROPOSE; then flags="$flags --autopropose"; fi
+  if $PROPOSE_ON_DEPLOY; then flags="$flags --propose-on-deploy"; fi
+  if $ADMIN; then flags="$flags --api-enable-devnet-cors"; fi
+  if $DEPLOYER; then flags="$flags --dev-mode --deployer-private-key ${DEPLOYER_PRIV}"; fi
+  echo "$flags"
 }
 
 cmd_up() {
+  # Mode globals: devnet defaults.
   local n=1 m=0
+  AUTOPROPOSE=true
+  PROPOSE_ON_DEPLOY=true
+  ADMIN=true
+  DEPLOYER=true
+
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --validators) n="${2:?}"; shift 2 ;;
       --observers)  m="${2:?}"; shift 2 ;;
-      *) echo "unknown flag: $1" >&2; usage ;;
+      --nodes)
+        n=1; m=$((${2:?} - 1)); AUTOPROPOSE=false; PROPOSE_ON_DEPLOY=false; ADMIN=false; DEPLOYER=false
+        shift 2 ;;
+      --autopropose) AUTOPROPOSE=true; shift ;;
+      --no-autopropose) AUTOPROPOSE=false; shift ;;
+      --propose-on-deploy) PROPOSE_ON_DEPLOY=true; shift ;;
+      --no-propose-on-deploy) PROPOSE_ON_DEPLOY=false; shift ;;
+      --admin) ADMIN=true; shift ;;
+      --no-admin) ADMIN=false; shift ;;
+      --deployer-key) DEPLOYER=true; DEPLOYER_PRIV="${2:?}"; shift 2 ;;
+      --no-deployer) DEPLOYER=false; shift ;;
+      *) echo "unknown flag: $1" >&2; help ;;
     esac
   done
   if (( n < 1 || n > MAX_VALIDATORS )); then
@@ -158,19 +208,20 @@ cmd_up() {
     echo "--observers must be in 0..3" >&2; exit 2
   fi
 
-  echo "==> devnet: $n validator(s) + $m observer(s) (throwaway dev keys — local use only)"
+  echo "==> devnet: $n validator(s) + $m observer(s)"
+  echo "    autopropose=$AUTOPROPOSE propose-on-deploy=$PROPOSE_ON_DEPLOY admin=$ADMIN deployer=$DEPLOYER"
   docker network create "$NETWORK" >/dev/null 2>&1 || true
 
   local genesis_dir
   genesis_dir="$(mktemp -d)"
   genesis_files "$genesis_dir" "$n"
 
-  # Validator 0 = bootstrap: creates + approves genesis, autoproposes.
+  # Validator 0 = bootstrap: creates + approves genesis (autopropose optional).
   echo "==> starting $BOOTSTRAP (validator 0, standalone, creates genesis)"
   # shellcheck disable=SC2046
   docker run $(docker_opts "$BOOTSTRAP" "$GRPC_BASE" "$HTTP_BASE" "$ADMIN_BASE") \
     -v "${genesis_dir}:/genesis:ro" \
-    "$IMAGE" $(rnode_run_common "$BOOTSTRAP") -s --autopropose \
+    "$IMAGE" $(rnode_run_common "$BOOTSTRAP") -s \
       --bonds-file /genesis/bonds.txt --wallets-file /genesis/wallets.txt \
       --validator-private-key "${VALIDATOR_PRIV[0]}"
 
@@ -179,7 +230,7 @@ cmd_up() {
   id="$(bootstrap_id)"
   echo "==> bootstrap id: $id"
 
-  # Validators 1..n-1: bonded in genesis, autopropose with their own key.
+  # Validators 1..n-1: bonded in genesis.
   local i name host_port http_port admin_port
   for (( i = 1; i < n; i++ )); do
     name="$(validator_name "$i")"
@@ -189,12 +240,12 @@ cmd_up() {
     echo "==> starting $name (validator $i, bootstraps from $BOOTSTRAP)"
     # shellcheck disable=SC2046
     docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
-      "$IMAGE" $(rnode_run_common "$name") --autopropose \
+      "$IMAGE" $(rnode_run_common "$name") \
         --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404" \
         --validator-private-key "${VALIDATOR_PRIV[$i]}"
   done
 
-  # Observers: unbonded, no autopropose; they replicate the chain.
+  # Observers / bare peers: unbonded, replicate the chain.
   for (( i = 1; i <= m; i++ )); do
     name="$(observer_name "$i")"
     host_port=$((GRPC_BASE + (n + i) * 1000))
@@ -213,11 +264,13 @@ cmd_up() {
   echo "==> up. Interact with:"
   echo "    tools/devnet.sh deploy <contract.rho>   # signed deploy to $BOOTSTRAP"
   echo "    tools/devnet.sh query <name>            # listen for data at a public name"
-  echo "    tools/devnet.sh status | logs <node> | down"
+  echo "    tools/devnet.sh propose [--admin]       # force a block"
+  echo "    tools/devnet.sh status | logs <node> | diagnose | down"
   echo ""
   echo "    Public HTTP API:  http://localhost:${HTTP_BASE}/api/v1/status"
-  echo "    OpenAPI document: http://localhost:${HTTP_BASE}/api/v1/openapi.json"
-  echo "    Admin HTTP API:   http://localhost:${ADMIN_BASE}/api/v1/propose"
+  if $ADMIN; then
+    echo "    Admin HTTP API:   http://localhost:${ADMIN_BASE}/api/v1/propose"
+  fi
 }
 
 cmd_down() {
@@ -248,7 +301,7 @@ host_port_for() {
   docker port "$c" "$container_port" 2>/dev/null | head -n1 | sed -n 's/.*:\([0-9]*\)$/\1/p'
 }
 
-# check <label> <ok?> — print PASS/FAIL and increment the global $FAILURES counter.
+# check <label> <ok?> — PASS/FAIL; warn <label> — WARN. Both track globals.
 check() {
   local label="$1" ok="$2"
   if [[ "$ok" == "0" ]]; then
@@ -258,11 +311,16 @@ check() {
     FAILURES=$((FAILURES + 1))
   fi
 }
+warn() {
+  echo "  WARN  $1"
+  WARNINGS=$((WARNINGS + 1))
+}
 
-# diagnose: per-node health report (state, ports, sockets, reachability, block number); non-zero exit
-# on any failure.
+# diagnose: per-node health report (state, ports, sockets, reachability, syncing, block number);
+# non-zero exit on any FAIL.
 cmd_diagnose() {
   FAILURES=0
+  WARNINGS=0
   local names=("$BOOTSTRAP") i
   for (( i = 1; i <= MAX_VALIDATORS; i++ )); do names+=("$(validator_name "$i")"); done
   for (( i = 1; i <= 3; i++ )); do names+=("$(observer_name "$i")"); done
@@ -283,12 +341,6 @@ cmd_diagnose() {
     [[ -n "$http_host" ]]; check "public HTTP published (40403)" $?
     [[ -n "$admin_host" ]]; check "admin HTTP published (40405)" $?
 
-    # In-container listening sockets (best-effort via /proc/net/tcp; ports 40403=0x9DD3, 40405=0x9DD5).
-    local tcp
-    tcp="$(docker exec "$c" sh -c 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null || true' 2>/dev/null || true)"
-    grep -q ':9DD3' <<<"$tcp"; check "in-container 40403 listening" $?
-    grep -q ':9DD5' <<<"$tcp"; check "in-container 40405 listening" $?
-
     # Host HTTP reachability + block number + peer counts.
     local body block peers nodes
     if body="$(curl -fsS --max-time 5 "http://localhost:${http_host}/api/v1/status" 2>/dev/null)"; then
@@ -296,7 +348,16 @@ cmd_diagnose() {
       block="$(printf '%s' "$body" | sed -n 's/.*"latestBlockNumber":\([0-9]*\).*/\1/p')"
       peers="$(printf '%s' "$body" | sed -n 's/.*"peers":\([0-9]*\).*/\1/p')"
       nodes="$(printf '%s' "$body" | sed -n 's/.*"nodes":\([0-9]*\).*/\1/p')"
-      echo "         latestBlockNumber=$block peers=$peers nodes=$nodes"
+      if [[ -n "$block" && "$block" -gt 0 ]]; then
+        check "block production (latestBlockNumber=$block)" 0
+      else
+        warn "no blocks yet (latestBlockNumber=0) — idle, still syncing, or not autoproposing"
+      fi
+      if [[ "$peers" == "0" && "$nodes" == "0" ]]; then
+        warn "no peers discovered (peers=0 nodes=0)"
+      else
+        check "peer connectivity (peers=$peers nodes=$nodes)" 0
+      fi
     else
       check "GET /api/v1/status reachable" 1
     fi
@@ -304,23 +365,30 @@ cmd_diagnose() {
 
   echo ""
   if (( FAILURES > 0 )); then
-    echo "==> $FAILURES check(s) FAILED"
+    echo "==> $FAILURES check(s) FAILED${WARNINGS:+ ($WARNINGS warning(s))}"
     return 1
   fi
-  echo "==> all checks passed"
+  echo "==> all checks passed${WARNINGS:+ ($WARNINGS warning(s))}"
   return 0
 }
 
 # Run `rnode` inside a node container (reaches deploy 40401 + propose/repl 40402 via localhost).
 node_cli() {
   local node="$1"; shift
-  docker exec -i "$node" rnode --grpc-host localhost "$@"
+  local tty=""
+  [[ "${1:-}" == "repl" ]] && tty="-t"
+  docker exec -i $tty "$node" rnode --grpc-host localhost "$@"
+}
+
+cmd_cli() {
+  local node="${1:?node name required}"; shift
+  node_cli "$node" "$@"
 }
 
 cmd_deploy() {
   local file="${1:?contract file required (relative to examples/)}"; shift
   local node="$BOOTSTRAP"
-  if [[ "${1:-}" == "--to" ]]; then node="${2:?}"; shift 2; fi
+  if [[ "${1:-}" == "--to" ]]; then node="$(validator_name "${2:?}")"; shift 2; fi
   local base; base="$(basename "$file")"
   echo "==> deploying $base to $node"
   node_cli "$node" deploy \
@@ -344,7 +412,15 @@ cmd_query() {
 }
 
 cmd_propose() {
-  node_cli "$BOOTSTRAP" propose
+  if [[ "${1:-}" == "--admin" ]]; then
+    if ! docker port "$BOOTSTRAP" 40405 >/dev/null 2>&1; then
+      echo "ERROR: admin HTTP (40405) is not published — restart with 'up --admin'." >&2
+      exit 2
+    fi
+    curl -s -X POST "http://localhost:${ADMIN_BASE}/api/v1/propose"
+  else
+    node_cli "$BOOTSTRAP" propose
+  fi
 }
 
 case "${1:-}" in
@@ -357,6 +433,8 @@ case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
   eval) shift; cmd_eval "$@" ;;
   query) shift; cmd_query "$@" ;;
-  propose) cmd_propose ;;
-  *) usage ;;
+  propose) shift; cmd_propose "${1:-}" ;;
+  cli) shift; cmd_cli "$@" ;;
+  help|--help|-h) help ;;
+  *) help ;;
 esac

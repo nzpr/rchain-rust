@@ -4,8 +4,8 @@ A local Docker **testnet** for deploying and testing rholang smart contracts, dr
 `tools/devnet.sh` script. It brings up 1–3 bonded validators (full consensus, autopropose) plus optional
 unbonded observers, seeds genesis with a funded deployer wallet, and exposes `deploy`/`query` helpers.
 
-It is deliberately separate from [`tools/docker-network.sh`](../../tools/docker-network.sh), which is a
-1–5 node *network-topology* harness (no autopropose, no deployer wallet, no deploy helpers).
+The same script's `up --nodes N` mode is the bare 1–5 node *network-topology* harness (no autopropose,
+no deployer wallet, no deploy helpers) — see [Operating the node](operating.md).
 
 > **Security.** The validator and deployer keys baked into the script are throwaway dev keys for a
 > *local* testnet only. Never reuse them for anything with real value.

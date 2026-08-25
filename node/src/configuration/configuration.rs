@@ -212,6 +212,7 @@ mod tests {
         NodeConf {
             standalone: false,
             autopropose: false,
+            propose_on_deploy: false,
             dev_mode: false,
             protocol_server: ProtocolServer {
                 network_id: "testnet".to_string(),
@@ -368,6 +369,7 @@ mod tests {
         let expected = NodeConf {
             standalone: true,
             autopropose: false,
+            propose_on_deploy: false,
             dev_mode: true,
             protocol_server: ProtocolServer {
                 network_id: "testnet".to_string(),

@@ -73,6 +73,7 @@ pub struct BlockApiImpl {
     trigger_propose: Option<ProposeFunction>,
     proposer_state: Option<Arc<tokio::sync::Mutex<ProposerState>>>,
     auto_propose: bool,
+    propose_on_deploy: bool,
     system_public_keys: BTreeSet<Vec<u8>>,
 }
 
@@ -94,6 +95,7 @@ impl BlockApiImpl {
         trigger_propose: Option<ProposeFunction>,
         proposer_state: Option<Arc<tokio::sync::Mutex<ProposerState>>>,
         auto_propose: bool,
+        propose_on_deploy: bool,
         system_public_keys: BTreeSet<Vec<u8>>,
     ) -> Self {
         BlockApiImpl {
@@ -112,6 +114,7 @@ impl BlockApiImpl {
             trigger_propose,
             proposer_state,
             auto_propose,
+            propose_on_deploy,
             system_public_keys,
         }
     }
@@ -272,7 +275,7 @@ impl BlockApi for BlockApiImpl {
         };
 
         // Auto-propose if enabled and a trigger is available.
-        if self.auto_propose {
+        if self.propose_on_deploy || self.auto_propose {
             if let Some(trigger) = &self.trigger_propose {
                 let _ = trigger(true).await;
             }

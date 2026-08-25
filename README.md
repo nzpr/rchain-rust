@@ -112,43 +112,37 @@ Each term is parsed, normalized (an `Evaluating:` line is echoed on the node con
 against the node's isolated `eval-*` store, and printed as `Deployment cost:` + `Storage Contents:`.
 `:q` quits. Evaluate files non-interactively with `rnode eval <file>...`.
 
-## Docker multi-node network
+## Docker
 
-A scripted pipeline builds the `rnode` image and boots a local **1–5 node** network on a Docker
-bridge, then drives it from the CLI:
+`tools/devnet.sh` is the single script for a local Docker network, with two modes:
 
-```sh
-tools/docker-network.sh build            # build the rnode image
-tools/docker-network.sh up 3             # bootstrap + 2 peers (any N in 1..5)
-tools/docker-network.sh status           # docker ps for the network
-tools/docker-network.sh cli bootstrap status
-tools/docker-network.sh cli bootstrap repl
-tools/docker-network.sh cli peer1 status
-tools/docker-network.sh down             # stop (add -v to also drop the data volumes)
-```
-
-The bootstrap node runs standalone, creates genesis, and is bonded as a validator; peers bootstrap
-from it over the TLS transport (`rnode://<id>@bootstrap?protocol=40400&discovery=40404`). The
-`cli <node> <subcommand...>` helper runs the Rust client inside the network against that node.
-
-The full operation guide (commands, ports, the genesis ceremony, and the multi-node topology) is in
-[docs/src/node/operating.md](docs/src/node/operating.md).
-
-## Local devnet (Docker)
-
-For deploying and testing rholang smart contracts, `tools/devnet.sh` brings up 1–3 bonded validators
-plus optional observers with a funded deployer wallet, and exposes `deploy`/`query` helpers:
+- **devnet** (default) — 1–3 bonded validators with autopropose + a funded deployer wallet, for
+  deploying/testing rholang contracts and reading results back.
+- **network** (`up --nodes N`) — a bare 1–5 node topology with no autopropose/deployer, for exercising
+  sync/gossip, driven manually via `cli <node> propose`.
 
 ```sh
-tools/devnet.sh build                  # build the rnode:local image
-tools/devnet.sh up --validators 1      # start a single validator (autopropose)
-tools/devnet.sh deploy hello.rho       # signed deploy (examples/hello.rho sends "world")
-tools/devnet.sh query hello            # -> "world"
-tools/devnet.sh down -v                # stop + drop volumes
+tools/devnet.sh build                 # build the rnode:local image
+
+# contract devnet:
+tools/devnet.sh up --validators 1     # single validator, autoproposing
+tools/devnet.sh deploy hello.rho      # signed deploy (examples/hello.rho sends "world")
+tools/devnet.sh query hello           # -> "world"
+
+# bare network topology:
+tools/devnet.sh up --nodes 3          # bootstrap + 2 peers, manual propose
+tools/devnet.sh cli devnet-bootstrap propose
+
+tools/devnet.sh down -v               # stop + drop volumes
 ```
 
-This is distinct from `tools/docker-network.sh` (a network-*topology* harness). See
-[docs/src/node/devnet.md](docs/src/node/devnet.md).
+A block is created only when one of these fires: (a) a deploy arrives and `--propose-on-deploy` is set,
+(b) `--autopropose`'s timer fires, or (c) someone calls `propose`/`POST /api/v1/propose`. An idle node
+with none of these produces no blocks.
+
+See [docs/src/node/devnet.md](docs/src/node/devnet.md) (contract devnet),
+[docs/src/node/operating.md](docs/src/node/operating.md) (network topology), and `tools/devnet.sh help`
+for the full flag reference.
 
 ## Where the Scala went
 
