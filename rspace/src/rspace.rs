@@ -383,6 +383,15 @@ where
         continuation: K,
     ) -> std::result::Result<Option<(K, Vec<A>)>, crate::errors::RSpaceError> {
         let store = self.current_store();
+        // Idempotent install: the play and replay runtimes are both created over the same store
+        // and each installs the system contracts, so the second install must be a no-op rather
+        // than a duplicate. Skipping an identical consume also keeps `install` from erroring on a
+        // restored state that already carries data at a fixed channel.
+        let consume_ref = Consume::apply(channels, patterns, &continuation, true);
+        let existing = store.get_continuations(channels).await?;
+        if existing.iter().any(|wc| wc.source == consume_ref) {
+            return Ok(None);
+        }
         let mut channel_to_indexed_data = BTreeMap::new();
         for c in channels {
             let data = store.get_data(c).await?;
