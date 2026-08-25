@@ -34,27 +34,25 @@ goal-indexed map for readers and AI agents is
 
 ## Why Rust
 
-Two reasons drive the rewrite.
+Three reasons drive the rewrite.
 
 **Memory safety.** The Scala/JVM node leaked memory and paused on garbage collection — it shipped
-JVM `Memory`/`GarbageCollector` diagnostics and needed `SBT_OPTS="-Xmx4g -Xss2m"` to run. Rust's
-ownership model and lack of a tracing GC eliminate the leak and the stop-the-world pause by
-construction.
+`Memory`/`GarbageCollector` diagnostics and needed `SBT_OPTS="-Xmx4g -Xss2m"` to run. Rust's ownership
+model and lack of a tracing GC make the leak and the stop-the-world pause unrepresentable.
 
-**The upshot:** ~69,000 lines of Rust compile to a single tight **native binary** — no JVM, no GC, no
-heap tuning — so a validator runs comfortably on any reasonably modern desktop or high-performance
-laptop with an NVMe SSD (see [hardware requirements](docs/src/node/validator-requirements.md)). That
-puts validator operation within consumer-grade hardware — genuinely decentralized — and the native
-code also buys throughput, even while full ρ-calculus concurrency is still a work in progress.
+**Decentralization.** ~69,000 lines of Rust compile to a single tight native binary — no JVM, no GC,
+no heap tuning — so a validator runs on any modern desktop or laptop with an NVMe SSD. Validator
+operation sits within consumer-grade hardware, which is what makes the network genuinely decentralized
+(see [hardware requirements](docs/src/node/validator-requirements.md)).
 
 **The calculus hierarchy.** Rust natively expresses the λ-calculus (closures), the π-calculus
-(channels and `Send`/`Sync` name mobility), and the ρ-calculus (the reflective π-calculus: a name is
-a quoted process, expressed here as the sortable `Par` value). The port's type discipline embeds ρ as
+(channels and `Send`/`Sync` name mobility), and the ρ-calculus (the reflective π-calculus: a name is a
+quoted process, expressed here as the sortable `Par` value). The port's type discipline embeds ρ as
 the base sort of a Calculus of Constructions, constructible and provable in Lean 4 and Coq.
 
-The full argument — with a Rust → calculus → formalization correspondence table — is in
-[docs/src/contributor/why-rust.md](docs/src/contributor/why-rust.md). The prose documentation is also
-served as a book: `mdbook serve docs`.
+The full argument — including the co-op lesson and the Rust → calculus → formalization correspondence
+table — is in [docs/src/contributor/why-rust.md](docs/src/contributor/why-rust.md). The prose
+documentation is also served as a book: `mdbook serve docs`.
 
 ## Governance
 
