@@ -304,6 +304,10 @@ pub struct Run {
     #[arg(long = "api-enable-reporting")]
     pub api_enable_reporting: bool,
 
+    /// Relax CORS on the admin HTTP API (devnet / browser-wallet access only).
+    #[arg(long = "api-enable-devnet-cors")]
+    pub api_enable_devnet_cors: bool,
+
     /// Custom keepalive time.
     #[arg(long = "api-keep-alive-time", value_parser = parse_duration_arg)]
     pub api_keep_alive_time: Option<Duration>,

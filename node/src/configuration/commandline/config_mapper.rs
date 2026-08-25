@@ -302,6 +302,11 @@ pub fn from_options(options: &Options) -> Hocon {
         opt_i32(&mut e, "api-server.port-http", run.api_port_http);
         opt_i32(&mut e, "api-server.port-admin-http", run.api_port_admin_http);
         flag(&mut e, "api-server.enable-reporting", run.api_enable_reporting);
+        flag(
+            &mut e,
+            "api-server.enable-devnet-cors",
+            run.api_enable_devnet_cors,
+        );
         opt_i32(&mut e, "api-server.max-blocks-limit", run.api_max_blocks_limit);
         opt_duration(&mut e, "api-server.keep-alive-time", run.api_keep_alive_time);
         opt_duration(

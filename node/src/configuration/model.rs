@@ -72,6 +72,7 @@ pub struct ApiServer {
     pub port_admin_http: i32,
     pub max_blocks_limit: i32,
     pub enable_reporting: bool,
+    pub enable_devnet_cors: bool,
     pub keep_alive_time: Duration,
     pub keep_alive_timeout: Duration,
     pub permit_keep_alive_time: Duration,

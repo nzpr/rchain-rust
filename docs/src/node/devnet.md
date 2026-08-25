@@ -67,6 +67,11 @@ phlo). Contracts in `examples/` are mounted read-only at `/contracts` inside eve
 
 ## Ports
 
-Deploy is served on external gRPC `40401` and Propose+Repl on `40402`; the helpers run the Rust `rnode`
-client *inside* a node container (`docker exec`) so they reach both via `localhost`. The host maps each
-node's deploy port to `40402 + 1000·i`.
+Deploy is served on gRPC `40401` and Propose+Repl on `40402`; the helpers run the Rust `rnode` client
+*inside* a node container (`docker exec`) so they reach both via `localhost`. The public HTTP API
+(in-container `40403`) and the admin HTTP API (in-container `40405`) are also published to the host,
+so a browser can reach them directly.
+
+The host maps each node's deploy gRPC port to `40402 + 1000·i`, its public HTTP port to
+`40403 + 1000·i`, and its admin HTTP port to `40405 + 1000·i` — the bootstrap is `i = 0`, so it
+publishes `40402`/`40403`/`40405` directly.

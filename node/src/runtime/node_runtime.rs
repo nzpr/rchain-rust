@@ -326,6 +326,7 @@ pub struct NodeProgram {
     grpc_max_recv_message_size: usize,
     max_connection_idle: Duration,
     enable_reporting: bool,
+    enable_devnet_cors: bool,
     protocol_server: Option<ProtocolServer>,
     status_provider: Option<StatusProvider>,
 }
@@ -347,6 +348,7 @@ impl NodeProgram {
             grpc_max_recv_message_size,
             max_connection_idle,
             enable_reporting,
+            enable_devnet_cors,
             protocol_server,
             status_provider,
         } = self;
@@ -404,6 +406,7 @@ impl NodeProgram {
                     "127.0.0.1",
                     port_admin_http,
                     admin_web_api,
+                    enable_devnet_cors,
                     max_connection_idle,
                 )
                 .await
@@ -1073,6 +1076,7 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
                 .map_err(|e| e.to_string())?,
             max_connection_idle: conf.api_server.max_connection_idle,
             enable_reporting: conf.api_server.enable_reporting,
+            enable_devnet_cors: conf.api_server.enable_devnet_cors,
             protocol_server: None,
             status_provider: None,
         },

@@ -17,9 +17,9 @@
 #   tools/devnet.sh logs <node>                  tail a node's logs
 #   tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
 #
-# Nodes serve Deploy on external gRPC 40401 and Propose+Repl on 40402; the helpers run the Rust
-# `rnode` client *inside* a node container (docker exec) so they reach both. The host needs only
-# docker + openssl.
+# Nodes publish Deploy gRPC (in-container 40401), the public HTTP API (in-container 40403), and the
+# admin HTTP API (in-container 40405) to the host; Propose+Repl stay in-container on 40402, reached
+# by the helpers via `docker exec`. The host needs only docker + openssl.
 #
 # SECURITY: the validator/deployer keys below are throwaway keys for a LOCAL testnet only.
 # Never reuse them for anything with real value.
@@ -56,6 +56,8 @@ DEPLOYER_BALANCE=1000000000000
 CONTRACTS_DIR="$(pwd)/examples"
 
 GRPC_BASE=40402   # host port mapped to the bootstrap's deploy gRPC (in-container 40401)
+HTTP_BASE=40403   # host port mapped to the bootstrap's public HTTP API (in-container 40403)
+ADMIN_BASE=40405  # host port mapped to the bootstrap's admin HTTP API (in-container 40405)
 
 usage() {
   sed -n '2,24p' "$0" >&2
@@ -97,10 +99,12 @@ bootstrap_id() {
     | awk -F'=' '{print $NF}'
 }
 
-# `docker run` flags shared by every node (container name/network/port + data + contracts mounts).
+# `docker run` flags shared by every node (container name/network/ports + data + contracts mounts).
+# Publishes deploy gRPC (40401), the public HTTP API (40403), and the admin HTTP API (40405).
 docker_opts() {
-  local name="$1" host_port="$2"
-  echo "-d --name $name --network $NETWORK -p ${host_port}:40401 \
+  local name="$1" grpc_host="$2" http_host="$3" admin_host="$4"
+  echo "-d --name $name --network $NETWORK \
+    -p ${grpc_host}:40401 -p ${http_host}:40403 -p ${admin_host}:40405 \
     -v ${name}-data:/var/lib/rnode \
     -v ${CONTRACTS_DIR}:/contracts:ro"
 }
@@ -111,7 +115,8 @@ rnode_run_common() {
   echo "run --host $name --api-host 0.0.0.0 --data-dir /var/lib/rnode \
     --protocol-port 40400 --discovery-port 40404 \
     --api-port-grpc-external 40401 --api-port-grpc-internal 40402 \
-    --api-port-http 40403 --api-port-admin-http 40405"
+    --api-port-http 40403 --api-port-admin-http 40405 \
+    --api-enable-devnet-cors"
 }
 
 cmd_up() {
@@ -140,7 +145,7 @@ cmd_up() {
   # Validator 0 = bootstrap: creates + approves genesis, autoproposes.
   echo "==> starting $BOOTSTRAP (validator 0, standalone, creates genesis)"
   # shellcheck disable=SC2046
-  docker run $(docker_opts "$BOOTSTRAP" "$GRPC_BASE") \
+  docker run $(docker_opts "$BOOTSTRAP" "$GRPC_BASE" "$HTTP_BASE" "$ADMIN_BASE") \
     -v "${genesis_dir}:/genesis:ro" \
     "$IMAGE" $(rnode_run_common "$BOOTSTRAP") -s --autopropose \
       --bonds-file /genesis/bonds.txt --wallets-file /genesis/wallets.txt \
@@ -152,13 +157,15 @@ cmd_up() {
   echo "==> bootstrap id: $id"
 
   # Validators 1..n-1: bonded in genesis, autopropose with their own key.
-  local i name host_port
+  local i name host_port http_port admin_port
   for (( i = 1; i < n; i++ )); do
     name="$(validator_name "$i")"
     host_port=$((GRPC_BASE + i * 1000))
+    http_port=$((HTTP_BASE + i * 1000))
+    admin_port=$((ADMIN_BASE + i * 1000))
     echo "==> starting $name (validator $i, bootstraps from $BOOTSTRAP)"
     # shellcheck disable=SC2046
-    docker run $(docker_opts "$name" "$host_port") \
+    docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
       "$IMAGE" $(rnode_run_common "$name") --autopropose \
         --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404" \
         --validator-private-key "${VALIDATOR_PRIV[$i]}"
@@ -168,9 +175,11 @@ cmd_up() {
   for (( i = 1; i <= m; i++ )); do
     name="$(observer_name "$i")"
     host_port=$((GRPC_BASE + (n + i) * 1000))
+    http_port=$((HTTP_BASE + (n + i) * 1000))
+    admin_port=$((ADMIN_BASE + (n + i) * 1000))
     echo "==> starting $name (observer $i, bootstraps from $BOOTSTRAP)"
     # shellcheck disable=SC2046
-    docker run $(docker_opts "$name" "$host_port") \
+    docker run $(docker_opts "$name" "$host_port" "$http_port" "$admin_port") \
       "$IMAGE" $(rnode_run_common "$name") \
         --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404"
   done
@@ -180,6 +189,10 @@ cmd_up() {
   echo "    tools/devnet.sh deploy <contract.rho>   # signed deploy to $BOOTSTRAP"
   echo "    tools/devnet.sh query <name>            # listen for data at a public name"
   echo "    tools/devnet.sh status | logs <node> | down"
+  echo ""
+  echo "    Public HTTP API:  http://localhost:${HTTP_BASE}/api/v1/status"
+  echo "    OpenAPI document: http://localhost:${HTTP_BASE}/api/v1/openapi.json"
+  echo "    Admin HTTP API:   http://localhost:${ADMIN_BASE}/api/v1/propose"
 }
 
 cmd_down() {

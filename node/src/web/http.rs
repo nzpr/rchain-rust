@@ -67,6 +67,7 @@ pub struct HttpState {
 #[derive(Clone)]
 pub struct AdminState {
     pub admin_web_api: Arc<dyn AdminWebApi>,
+    pub enable_devnet_cors: bool,
 }
 
 /// `GET /version` (port of `VersionInfo.service`): the node version string.
@@ -558,13 +559,19 @@ pub fn router(state: HttpState) -> Router {
 
 /// Build the admin HTTP routes (port of `acquireAdminHttpServer`'s `/api` + `/api/v1` admin routes).
 pub fn admin_router(state: AdminState) -> Router {
+    // Restrictive CORS (no allowed origins) by default, so a browser on another origin cannot
+    // trigger block production via the loopback admin server (H-3). Devnet / browser-wallet access
+    // opts into permissive CORS via `api-server.enable-devnet-cors`.
+    let cors = if state.enable_devnet_cors {
+        CorsLayer::permissive()
+    } else {
+        CorsLayer::new()
+    };
     Router::new()
         .route("/api/propose", post(admin_propose))
         .route("/api/v1/propose", post(admin_propose))
         .route("/api/v1/openapi.json", get(api_v1_openapi))
-        // Restrictive CORS (no allowed origins) so a browser on another origin cannot trigger
-        // block production via the loopback admin server (H-3).
-        .layer(CorsLayer::new())
+        .layer(cors)
         .with_state(state)
 }
 
@@ -604,6 +611,7 @@ pub async fn acquire_admin_http_server(
     host: &str,
     port: Port,
     admin_web_api: Arc<dyn AdminWebApi>,
+    enable_devnet_cors: bool,
     max_connection_idle: Duration,
 ) -> Result<(), String> {
     let port = u16::from(port); // single discharge at the bind boundary
@@ -613,7 +621,11 @@ pub async fn acquire_admin_http_server(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| e.to_string())?;
-    let app = admin_router(AdminState { admin_web_api }).layer(TimeoutLayer::new(max_connection_idle));
+    let app = admin_router(AdminState {
+        admin_web_api,
+        enable_devnet_cors,
+    })
+    .layer(TimeoutLayer::new(max_connection_idle));
     axum::serve(listener, app).await.map_err(|e| e.to_string())
 }
 
