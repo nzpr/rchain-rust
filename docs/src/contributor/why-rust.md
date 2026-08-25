@@ -24,6 +24,15 @@ leaks and use-after-free unrepresentable, with **no tracing garbage collector** 
 stop-the-world pause and no heap pressure to tune away. Resource lifetime becomes a compile-time,
 statically checked property rather than a runtime, best-effort one.
 
+### The practical upshot — a validator on modest hardware
+
+The payoff is operational, not just theoretical. Roughly **69,000 lines of Rust** across 351 source
+files compile to a single tight **native binary** — no JVM to boot, no tracing GC to pause, no
+`-Xmx4g -Xss2m` to tune. The stop-the-world pauses and heap pressure that made the JVM node's runtime
+heavy and its latency unpredictable are gone by construction, so a validator runs comfortably — and
+with deterministic resource use — on any reasonably modern desktop PC or high-performance laptop with
+an NVMe SSD. See [Running a validator: hardware requirements](../node/validator-requirements.md).
+
 ## 2. Rust natively expresses the calculus hierarchy
 
 The second reason is deeper, and it is about what the node *is*, not just how it runs.

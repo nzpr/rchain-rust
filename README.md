@@ -41,6 +41,10 @@ JVM `Memory`/`GarbageCollector` diagnostics and needed `SBT_OPTS="-Xmx4g -Xss2m"
 ownership model and lack of a tracing GC eliminate the leak and the stop-the-world pause by
 construction.
 
+**The upshot:** ~69,000 lines of Rust compile to a single tight **native binary** — no JVM, no GC, no
+heap tuning — so a validator runs comfortably on any reasonably modern desktop or high-performance
+laptop with an NVMe SSD (see [hardware requirements](docs/src/node/validator-requirements.md)).
+
 **The calculus hierarchy.** Rust natively expresses the λ-calculus (closures), the π-calculus
 (channels and `Send`/`Sync` name mobility), and the ρ-calculus (the reflective π-calculus: a name is
 a quoted process, expressed here as the sortable `Par` value). The port's type discipline embeds ρ as
