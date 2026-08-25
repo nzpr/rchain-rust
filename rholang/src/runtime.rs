@@ -294,7 +294,14 @@ impl RhoRuntime {
     }
 
     pub async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
-        self.space.reset(root).await
+        self.space.reset(root).await?;
+        // The reset replaces the hot store, dropping the in-memory system-process installs (they
+        // are not checkpointed). Re-install so deploys/evaluations that run against this root still
+        // reach the fixed-channel system contracts.
+        let ts: RhoTuplespace = self.space.clone();
+        install_system_processes(&ts, &self.proc_defs)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Capture a soft (in-memory) checkpoint for rollback (port of `createSoftCheckpoint`).
@@ -385,6 +392,7 @@ pub struct ReplayRhoRuntime {
     cost: Arc<CostAccounting>,
     block_data: Arc<Mutex<BlockData>>,
     _history: RhoHistoryRepository,
+    proc_defs: Arc<Vec<(Par, i32, bool, i64)>>,
 }
 
 impl ReplayRhoRuntime {
@@ -402,6 +410,7 @@ impl ReplayRhoRuntime {
             cost: core.cost,
             block_data: core.block_data,
             _history: history,
+            proc_defs: Arc::new(core.proc_defs),
         })
     }
 
@@ -472,7 +481,12 @@ impl ReplayRhoRuntime {
     }
 
     pub async fn reset(&self, root: Blake2b256Hash) -> Result<(), String> {
-        self.space.reset(root).await
+        self.space.reset(root).await?;
+        // Re-install the system processes after the reset (see `RhoRuntime::reset`).
+        let ts: RhoTuplespace = self.space.clone();
+        install_system_processes(&ts, &self.proc_defs)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Capture a soft (in-memory) checkpoint for rollback (port of `createSoftCheckpoint`).

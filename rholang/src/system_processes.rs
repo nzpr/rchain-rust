@@ -1294,8 +1294,11 @@ impl SystemProcesses {
                                 "bond expects deployerId, amount and return channel",
                             ));
                         };
-                        let deployer_id = RhoByteArray::unapply(deployer_id)
-                            .ok_or_else(|| illegal_arg("bond expects a deployerId byte array"))?;
+                        // Capability, not data: only the unforgeable `GDeployerId` carried by the
+                        // normalizer's `rho:rchain:deployerId` binding satisfies this unapply, so a
+                        // program-authored byte array can no longer bond someone else's key.
+                        let deployer_id = RhoDeployerId::unapply(deployer_id)
+                            .ok_or_else(|| illegal_arg("bond expects a deployerId"))?;
                         let amount = RhoNumber::unapply(amount)
                             .ok_or_else(|| illegal_arg("bond expects a number amount"))?;
                         let amount =
@@ -1315,8 +1318,9 @@ impl SystemProcesses {
                         let [deployer_id, ret] = rest else {
                             return Err(illegal_arg("withdraw expects deployerId and return channel"));
                         };
-                        let deployer_id = RhoByteArray::unapply(deployer_id)
-                            .ok_or_else(|| illegal_arg("withdraw expects a deployerId byte array"))?;
+                        // Capability, not data (see `bond`).
+                        let deployer_id = RhoDeployerId::unapply(deployer_id)
+                            .ok_or_else(|| illegal_arg("withdraw expects a deployerId"))?;
                         let validator = Validator::try_from(deployer_id)
                             .map_err(|e| illegal_arg(&e.to_string()))?;
                         let out = match native.withdraw(&validator).await.map_err(|e| illegal_arg(&e))? {
@@ -1369,30 +1373,26 @@ impl SystemProcesses {
                             .await
                     }
                     "deposit" => {
-                        let [addr, amount, ret] = rest else {
-                            return Err(illegal_arg("deposit expects an address, amount and return channel"));
-                        };
-                        let addr = RhoString::unapply(addr)
-                            .ok_or_else(|| illegal_arg("deposit expects a string address"))?;
-                        let amount = RhoNumber::unapply(amount)
-                            .ok_or_else(|| illegal_arg("deposit expects a number amount"))?;
-                        let amount =
-                            NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
-                        let current = match native.vault_balance(addr).await.map_err(|e| illegal_arg(&e))? {
-                            Some(b) => b,
-                            None => NonNegI64::zero(),
-                        };
-                        let new_balance = NonNegI64::try_from(i64::from(current) + i64::from(amount))
-                            .map_err(|e| illegal_arg(&e.to_string()))?;
-                        native.set_vault_balance(addr, new_balance);
-                        cc.produce(&rand, &[RhoNil::apply()], ret).await
+                        // Unauthenticated mint removed (issue #4): the Scala RevVault mints REV
+                        // only via the genesis `init` path; a deploy callable `deposit` would let
+                        // any deploy create REV from nothing.
+                        return Err(illegal_arg(
+                            "revVault: deposit is not callable (REV is minted at genesis only)",
+                        ));
                     }
                     "transfer" => {
-                        let [from, to, amount, ret] = rest else {
-                            return Err(illegal_arg("transfer expects from, to, amount and return channel"));
+                        let [deployer_id, to, amount, ret] = rest else {
+                            return Err(illegal_arg(
+                                "transfer expects deployerId, to, amount and return channel",
+                            ));
                         };
-                        let from = RhoString::unapply(from)
-                            .ok_or_else(|| illegal_arg("transfer expects a string from-address"))?;
+                        // Capability, not data: the `from` account is derived from the caller's
+                        // unforgeable deployerId, so a deploy can only spend its own vault.
+                        let deployer_id = RhoDeployerId::unapply(deployer_id)
+                            .ok_or_else(|| illegal_arg("transfer expects a deployerId"))?;
+                        let from = RevAddress::from_deployer_id(deployer_id)
+                            .ok_or_else(|| illegal_arg("transfer: invalid deployerId"))?
+                            .to_base58();
                         let to = RhoString::unapply(to)
                             .ok_or_else(|| illegal_arg("transfer expects a string to-address"))?;
                         let amount = RhoNumber::unapply(amount)
@@ -1400,7 +1400,7 @@ impl SystemProcesses {
                         let amount =
                             NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
                         let from_balance =
-                            match native.vault_balance(from).await.map_err(|e| illegal_arg(&e))? {
+                            match native.vault_balance(&from).await.map_err(|e| illegal_arg(&e))? {
                                 Some(b) => b,
                                 None => NonNegI64::zero(),
                             };
@@ -1416,24 +1416,29 @@ impl SystemProcesses {
                             .map_err(|e| illegal_arg(&e.to_string()))?;
                         let new_to = NonNegI64::try_from(i64::from(to_balance) + i64::from(amount))
                             .map_err(|e| illegal_arg(&e.to_string()))?;
-                        native.set_vault_balance(from, new_from);
+                        native.set_vault_balance(&from, new_from);
                         native.set_vault_balance(to, new_to);
                         cc.produce(&rand, &[RhoNil::apply()], ret).await
                     }
                     "findOrCreate" => {
-                        let [addr, ret] = rest else {
-                            return Err(illegal_arg("findOrCreate expects an address and return channel"));
+                        let [deployer_id, ret] = rest else {
+                            return Err(illegal_arg("findOrCreate expects deployerId and return channel"));
                         };
-                        let addr = RhoString::unapply(addr)
-                            .ok_or_else(|| illegal_arg("findOrCreate expects a string address"))?;
+                        // Capability, not data: the vault is created for the caller's own
+                        // deployer-derived address only.
+                        let deployer_id = RhoDeployerId::unapply(deployer_id)
+                            .ok_or_else(|| illegal_arg("findOrCreate expects a deployerId"))?;
+                        let addr = RevAddress::from_deployer_id(deployer_id)
+                            .ok_or_else(|| illegal_arg("findOrCreate: invalid deployerId"))?
+                            .to_base58();
                         native
-                            .find_or_create_vault(addr)
+                            .find_or_create_vault(&addr)
                             .await
                             .map_err(|e| illegal_arg(&e))?;
                         // In the simplified address-keyed model the vault identifier is the address.
                         let out = RhoTupleN::apply(vec![
                             RhoBoolean::apply(true),
-                            RhoString::apply(addr.to_string()),
+                            RhoString::apply(addr),
                         ]);
                         cc.produce(&rand, &[out], ret).await
                     }
@@ -1643,36 +1648,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rev_vault_deposit_transfer_and_get_balance() {
+    async fn rev_vault_transfer_uses_deployer_capability_and_deposit_is_rejected() {
         let mock = Arc::new(MockSpace {
             produced: Mutex::new(Vec::new()),
         });
-        let (_sp, defs) = mock_system_processes(&mock);
+        // Build the system processes with an explicit native store so vault balances can be
+        // seeded by deployer-derived address.
+        let charging = ChargingRSpace::new(
+            mock.clone(),
+            Arc::new(crate::accounting::CostAccounting::from_initial(
+                crate::accounting::Costs::unsafe_max(),
+            )),
+        );
+        let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
+        let block_data = Arc::new(Mutex::new(BlockData::empty()));
+        let native_store = Arc::new(rchain_rspace::native_store::InMemNativeStore::empty());
+        let native_state = Arc::new(NativeSystemState::new(native_store));
+        let sp = SystemProcesses::new(charging, dispatcher, block_data, native_state.clone());
+        let defs = sp.definitions();
         let vault = defs
             .iter()
             .find(|d| d.body_ref == BodyRefs::REV_VAULT)
             .expect("revVault definition");
 
-        let alice = "alice".to_string();
-        let bob = "bob".to_string();
+        let alice_id = RhoDeployerId::apply(vec![1; 65]);
+        let alice = RevAddress::from_deployer_id(&[1; 65]).expect("alice address").to_base58();
+        let bob = RevAddress::from_deployer_id(&[2; 65]).expect("bob address").to_base58();
+        native_state.set_vault_balance(&alice, NonNegI64::try_from(100).unwrap());
+        native_state.set_vault_balance(&bob, NonNegI64::try_from(50).unwrap());
 
-        // deposit(alice, 100, _) and deposit(bob, 50, _)
-        for (addr, amt) in [(&alice, 100), (&bob, 50)] {
-            let ret = FixedChannels::stdout();
-            (vault.handler)(vec![lpw(vec![
-                RhoString::apply("deposit".to_string()),
-                RhoList::apply(vec![RhoString::apply(addr.clone()), RhoNumber::apply(amt), ret]),
-            ])])
-            .await
-            .unwrap();
-        }
+        // deposit is a genesis-only mint now; a deploy call must be rejected.
+        let ret = FixedChannels::stdout();
+        let err = (vault.handler)(vec![lpw(vec![
+            RhoString::apply("deposit".to_string()),
+            RhoList::apply(vec![RhoString::apply(alice.clone()), RhoNumber::apply(100), ret]),
+        ])])
+        .await
+        .expect_err("deposit must be rejected");
+        assert!(err.to_string().contains("deposit is not callable"), "{err}");
 
-        // transfer(alice, bob, 30, _)
+        // transfer(*aliceDeployerId, bob, 30, _) — the from-account is derived from the caller's
+        // deployerId, not taken as a forgeable address string.
         let ret = FixedChannels::stdout();
         (vault.handler)(vec![lpw(vec![
             RhoString::apply("transfer".to_string()),
             RhoList::apply(vec![
-                RhoString::apply(alice.clone()),
+                alice_id,
                 RhoString::apply(bob.clone()),
                 RhoNumber::apply(30),
                 ret,
@@ -1681,7 +1702,7 @@ mod tests {
         .await
         .unwrap();
 
-        // getBalance(alice, ret) and getBalance(bob, ret)
+        // getBalance(alice, ret) and getBalance(bob, ret) — reads stay address-keyed.
         let alice_ret = FixedChannels::stdout_ack();
         (vault.handler)(vec![lpw(vec![
             RhoString::apply("getBalance".to_string()),
@@ -1698,19 +1719,34 @@ mod tests {
         .unwrap();
 
         let produced = mock.produced.lock().unwrap_or_else(|p| p.into_inner());
-        // 2 deposits + 1 transfer + 2 getBalance = 5 produces.
-        assert_eq!(produced.len(), 5);
+        // 1 transfer + 2 getBalance = 3 produces (deposit produced nothing).
+        assert_eq!(produced.len(), 3);
         // The last two are the getBalance replies.
-        assert_eq!(produced[3].0.as_par(), &alice_ret);
+        assert_eq!(produced[1].0.as_par(), &alice_ret);
         assert_eq!(
-            RhoNumber::unapply(produced[3].1.pars[0].as_par()).expect("alice balance"),
+            RhoNumber::unapply(produced[1].1.pars[0].as_par()).expect("alice balance"),
             70
         );
-        assert_eq!(produced[4].0.as_par(), &bob_ret);
+        assert_eq!(produced[2].0.as_par(), &bob_ret);
         assert_eq!(
-            RhoNumber::unapply(produced[4].1.pars[0].as_par()).expect("bob balance"),
+            RhoNumber::unapply(produced[2].1.pars[0].as_par()).expect("bob balance"),
             80
         );
+
+        // A forgeable byte array is not a deployerId: transfer must reject it.
+        let ret = FixedChannels::stdout();
+        let err = (vault.handler)(vec![lpw(vec![
+            RhoString::apply("transfer".to_string()),
+            RhoList::apply(vec![
+                RhoByteArray::apply(vec![1; 65]),
+                RhoString::apply(bob),
+                RhoNumber::apply(1),
+                ret,
+            ]),
+        ])])
+        .await
+        .expect_err("transfer with a byte array must be rejected");
+        assert!(err.to_string().contains("deployerId"), "{err}");
     }
 
     #[tokio::test]
