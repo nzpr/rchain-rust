@@ -10,9 +10,12 @@ use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
+use rchain_crypto::private_key::PrivateKey;
+use rchain_crypto::signatures::secp256k1::Secp256k1;
+use rchain_crypto::signatures::signed::Signed;
 use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
-use rchain_models::casper::protocol::casper_message::BlockMessage;
+use rchain_models::casper::protocol::casper_message::{BlockMessage, DeployData, SignedDeployData};
 use rchain_models::validator::Validator;
 use rchain_shared::refined::{BlockHeight, NonNegI64};
 use rchain_sdk::consensus::is_super_majority;
@@ -162,6 +165,7 @@ impl Proposer {
         shard_id: String,
         min_phlo_price: i64,
         epoch_length: i32,
+        dummy_deploy_opt: Option<(PrivateKey, String)>,
         dag: Arc<dyn BlockDagStorage>,
         block_store: BlockStore,
         runtime: Arc<RuntimeManager>,
@@ -228,6 +232,7 @@ impl Proposer {
             let block_store = block_store.clone();
             let block_index = block_index.clone();
             let shard_id = shard_id.clone();
+            let dummy_deploy_opt = dummy_deploy_opt.clone();
             Arc::new(move |vi: &ValidatorIdentity| {
                 let runtime = runtime.clone();
                 let dag = dag.clone();
@@ -235,6 +240,7 @@ impl Proposer {
                 let block_index = block_index.clone();
                 let vi = vi.clone();
                 let shard_id = shard_id.clone();
+                let dummy_deploy_opt = dummy_deploy_opt.clone();
                 Box::pin(async move {
                     create_block(
                         runtime.as_ref(),
@@ -244,6 +250,7 @@ impl Proposer {
                         &vi,
                         &shard_id,
                         epoch_length,
+                        dummy_deploy_opt.as_ref(),
                     )
                     .await
                 })
@@ -317,6 +324,7 @@ async fn create_block<'a, F, Fut>(
     validator_identity: &ValidatorIdentity,
     shard_id: &str,
     epoch_length: i32,
+    dummy_deploy_opt: Option<&(PrivateKey, String)>,
 ) -> Result<BlockCreatorResult, String>
 where
     F: Fn(BlockHash) -> Fut + Sync,
@@ -426,6 +434,41 @@ where
         let expired = d.data.valid_after_block_number < next_block_num - DEPLOY_LIFESPAN;
         let replay_attack = dag.lookup_by_deploy_id(&id).await?.is_some();
         if !(future || expired || replay_attack) {
+            deploys.push(id);
+        }
+    }
+
+    // Dev-mode dummy deploy: when there is nothing pooled to include, inject a signed `Nil` deploy so
+    // `--autopropose` can keep producing blocks (port of Scala `Proposer.dummyDeployOpt`).
+    if deploys.is_empty() {
+        if let Some((key, term)) = dummy_deploy_opt {
+            eprintln!(
+                "No pooled deploys; injecting dummy deploy for block #{}",
+                i64::from(next_block_num)
+            );
+            let data = DeployData {
+                term: term.clone(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0),
+                phlo_price: 1,
+                phlo_limit: 90000,
+                valid_after_block_number: i64::from(next_block_num) - 1,
+                shard_id: shard_id.to_string(),
+            };
+            let signed_deploy = {
+                // `Signed` holds a `&'static dyn SignaturesAlg` (not `Sync`); drop it before the
+                // `.await` below so the future stays `Send`.
+                let signed = Signed::new(data, &Secp256k1, key).map_err(|e| e.to_string())?;
+                SignedDeployData {
+                    data: signed.data,
+                    deployer: signed.pk.bytes().to_vec(),
+                    sig: signed.sig,
+                    sig_algorithm: signed.sig_algorithm.name().to_string(),
+                }
+            };
+            let id = crate::multi_parent_casper::add_deploy(dag, &signed_deploy).await?;
             deploys.push(id);
         }
     }

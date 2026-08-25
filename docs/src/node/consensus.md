@@ -10,6 +10,11 @@ A **block** is a validator's message: it bundles a set of deploys (the transacti
 pointer to the resulting state, and — crucially — its **justifications**: the hashes of the other
 blocks the validator has seen and is building on.
 
+Block production is **deploy-driven**: a validator proposes only when it has new work — user deploys,
+slashes, or an epoch change — or when it attests (an empty block) to advance finality. An idle network
+produces no blocks. (The devnet's `--autopropose` adds a periodic dummy-deploy tick on top of this, a
+dev-mode convenience — see [Local devnet](devnet.md).)
+
 A validator's **justifications** are its view of the network. Two blocks that justify each other's
 predecessors are *consistent*; blocks that justify conflicting histories are in competition. The
 collection of all blocks, joined by justification edges, is a **DAG** — the *block-DAG* — rather than a

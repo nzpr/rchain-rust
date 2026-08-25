@@ -27,6 +27,7 @@ tools/devnet.sh query <name>                 listen for data at a public name
 tools/devnet.sh propose                      force the bootstrap to propose a block
 tools/devnet.sh status                       docker ps for the devnet
 tools/devnet.sh logs <node>                  tail a node's logs
+tools/devnet.sh diagnose                     per-node health check (PASS/FAIL)
 tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
 ```
 
@@ -64,6 +65,25 @@ tools/devnet.sh down -v
 Genesis is written to a temp dir and mounted read-only into the bootstrap: `bonds.txt` (one
 `<pubkey> <stake>` line per validator) and `wallets.txt` (a funded deployer vault so deploys can pay
 phlo). Contracts in `examples/` are mounted read-only at `/contracts` inside every node.
+
+Blocks are produced **on their own**: every node runs with `--dev-mode --deployer-private-key`, so
+`--autopropose` injects a signed `Nil` dummy deploy whenever the pool is empty and keeps proposing.
+`up` blocks until `latestBlockNumber` is advancing.
+
+## Casper fidelity & gaps
+
+The devnet runs the real CBC-Casper data path — genesis bonding, deploy-driven proposals, a
+cross-justified block-DAG, the monotone fringe estimator, and `> 2/3`-stake finality — with these
+inputs simplified (theory in [Consensus (Casper)](consensus.md)):
+
+- **Equal stake ⇒ unanimous finality.** The validators have equal stake `100` each (total `300`), so
+  the strict `> 2/3` threshold requires *all* validators to attest before a block finalizes (2 of 3 is
+  exactly 2/3, not a supermajority). Production's uneven stakes let a proper subset reach `> 2/3`.
+- **Dummy `Nil` deploys** stand in for real user traffic, and **autopropose is a tight loop** (no
+  backoff), so the block rate is unbounded rather than a production cadence.
+- **Single shard** (`root`); **no Byzantine behavior** (all validators honest — the slash path exists
+  but is never exercised); **no partitions/latency** (local Docker bridge); **throwaway keys** with no
+  economic security; a small fixed validator set (≤3).
 
 ## Ports
 

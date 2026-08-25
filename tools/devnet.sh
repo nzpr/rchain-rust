@@ -15,6 +15,7 @@
 #   tools/devnet.sh propose                      force the bootstrap to propose a block
 #   tools/devnet.sh status                       docker ps for the devnet
 #   tools/devnet.sh logs <node>                  tail a node's logs
+#   tools/devnet.sh diagnose                     per-node health check (PASS/FAIL)
 #   tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
 #
 # Nodes publish Deploy gRPC (in-container 40401), the public HTTP API (in-container 40403), and the
@@ -60,7 +61,7 @@ HTTP_BASE=40403   # host port mapped to the bootstrap's public HTTP API (in-cont
 ADMIN_BASE=40405  # host port mapped to the bootstrap's admin HTTP API (in-container 40405)
 
 usage() {
-  sed -n '2,24p' "$0" >&2
+  sed -n '2,25p' "$0" >&2
   exit 2
 }
 
@@ -99,6 +100,25 @@ bootstrap_id() {
     | awk -F'=' '{print $NF}'
 }
 
+# Wait until the bootstrap serves /api/v1/status and is producing blocks (latestBlockNumber > 0).
+# With `--dev-mode --deployer-private-key` this happens without any user deploy.
+wait_for_http() {
+  local url="http://localhost:${HTTP_BASE}/api/v1/status"
+  local body block_num
+  for _ in $(seq 1 120); do
+    if body="$(curl -fsS --max-time 5 "$url" 2>/dev/null)"; then
+      block_num="$(printf '%s' "$body" | sed -n 's/.*"latestBlockNumber":\([0-9]*\).*/\1/p')"
+      if [[ -n "$block_num" && "$block_num" -gt 0 ]]; then
+        echo "==> $BOOTSTRAP serving /api/v1/status (latestBlockNumber=$block_num)"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "timed out waiting for $BOOTSTRAP to serve /api/v1/status with latestBlockNumber > 0" >&2
+  return 1
+}
+
 # `docker run` flags shared by every node (container name/network/ports + data + contracts mounts).
 # Publishes deploy gRPC (40401), the public HTTP API (40403), and the admin HTTP API (40405).
 docker_opts() {
@@ -110,13 +130,16 @@ docker_opts() {
 }
 
 # `rnode run` flags shared by every node (identity/ports/data-dir).
+# `--dev-mode --deployer-private-key` makes autopropose inject a signed `Nil` dummy deploy whenever the
+# pool is empty, so each node keeps producing blocks on its own (port of Scala `dev.deployer-private-key`).
 rnode_run_common() {
   local name="$1"
   echo "run --host $name --api-host 0.0.0.0 --data-dir /var/lib/rnode \
     --protocol-port 40400 --discovery-port 40404 \
     --api-port-grpc-external 40401 --api-port-grpc-internal 40402 \
     --api-port-http 40403 --api-port-admin-http 40405 \
-    --api-enable-devnet-cors"
+    --api-enable-devnet-cors \
+    --dev-mode --deployer-private-key ${DEPLOYER_PRIV}"
 }
 
 cmd_up() {
@@ -184,6 +207,8 @@ cmd_up() {
         --bootstrap "rnode://${id}@${BOOTSTRAP}?protocol=40400&discovery=40404"
   done
 
+  wait_for_http
+
   echo ""
   echo "==> up. Interact with:"
   echo "    tools/devnet.sh deploy <contract.rho>   # signed deploy to $BOOTSTRAP"
@@ -215,6 +240,75 @@ cmd_status() {
 
 cmd_logs() {
   docker logs -f "${1:?node name required}"
+}
+
+# Extract the host port mapped to a container port (e.g. "0.0.0.0:40403" -> "40403").
+host_port_for() {
+  local c="$1" container_port="$2"
+  docker port "$c" "$container_port" 2>/dev/null | head -n1 | sed -n 's/.*:\([0-9]*\)$/\1/p'
+}
+
+# check <label> <ok?> — print PASS/FAIL and increment the global $FAILURES counter.
+check() {
+  local label="$1" ok="$2"
+  if [[ "$ok" == "0" ]]; then
+    echo "  PASS  $label"
+  else
+    echo "  FAIL  $label"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
+# diagnose: per-node health report (state, ports, sockets, reachability, block number); non-zero exit
+# on any failure.
+cmd_diagnose() {
+  FAILURES=0
+  local names=("$BOOTSTRAP") i
+  for (( i = 1; i <= MAX_VALIDATORS; i++ )); do names+=("$(validator_name "$i")"); done
+  for (( i = 1; i <= 3; i++ )); do names+=("$(observer_name "$i")"); done
+
+  for c in "${names[@]}"; do
+    docker inspect "$c" >/dev/null 2>&1 || continue
+    echo "== $c =="
+
+    local state
+    state="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || true)"
+    [[ "$state" == "running" ]]; check "container running" $?
+
+    local grpc_host http_host admin_host
+    grpc_host="$(host_port_for "$c" 40401)"
+    http_host="$(host_port_for "$c" 40403)"
+    admin_host="$(host_port_for "$c" 40405)"
+    [[ -n "$grpc_host" ]]; check "deploy gRPC published (40401)" $?
+    [[ -n "$http_host" ]]; check "public HTTP published (40403)" $?
+    [[ -n "$admin_host" ]]; check "admin HTTP published (40405)" $?
+
+    # In-container listening sockets (best-effort via /proc/net/tcp; ports 40403=0x9DD3, 40405=0x9DD5).
+    local tcp
+    tcp="$(docker exec "$c" sh -c 'cat /proc/net/tcp /proc/net/tcp6 2>/dev/null || true' 2>/dev/null || true)"
+    grep -q ':9DD3' <<<"$tcp"; check "in-container 40403 listening" $?
+    grep -q ':9DD5' <<<"$tcp"; check "in-container 40405 listening" $?
+
+    # Host HTTP reachability + block number + peer counts.
+    local body block peers nodes
+    if body="$(curl -fsS --max-time 5 "http://localhost:${http_host}/api/v1/status" 2>/dev/null)"; then
+      check "GET /api/v1/status reachable" 0
+      block="$(printf '%s' "$body" | sed -n 's/.*"latestBlockNumber":\([0-9]*\).*/\1/p')"
+      peers="$(printf '%s' "$body" | sed -n 's/.*"peers":\([0-9]*\).*/\1/p')"
+      nodes="$(printf '%s' "$body" | sed -n 's/.*"nodes":\([0-9]*\).*/\1/p')"
+      echo "         latestBlockNumber=$block peers=$peers nodes=$nodes"
+    else
+      check "GET /api/v1/status reachable" 1
+    fi
+  done
+
+  echo ""
+  if (( FAILURES > 0 )); then
+    echo "==> $FAILURES check(s) FAILED"
+    return 1
+  fi
+  echo "==> all checks passed"
+  return 0
 }
 
 # Run `rnode` inside a node container (reaches deploy 40401 + propose/repl 40402 via localhost).
@@ -259,6 +353,7 @@ case "${1:-}" in
   down) cmd_down "${2:-}" ;;
   status) cmd_status ;;
   logs) cmd_logs "${2:-}" ;;
+  diagnose) cmd_diagnose ;;
   deploy) shift; cmd_deploy "$@" ;;
   eval) shift; cmd_eval "$@" ;;
   query) shift; cmd_query "$@" ;;

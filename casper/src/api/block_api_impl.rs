@@ -217,6 +217,9 @@ impl BlockApiImpl {
 impl BlockApi for BlockApiImpl {
     async fn status(&self) -> Status {
         let net = (self.network_status)();
+        // Latest block number from the DAG (height map), not a hardcoded 0 — the devnet's autopropose
+        // (dummy deploys) advances it continuously.
+        let latest_block_number = self.dag.get_representation().await.latest_block_number();
         Status {
             version: VersionInfo {
                 api: 1.to_string(),
@@ -228,7 +231,7 @@ impl BlockApi for BlockApiImpl {
             peers: net.peers,
             nodes: net.nodes,
             min_phlo_price: self.min_phlo_price,
-            latest_block_number: 0,
+            latest_block_number,
         }
     }
 

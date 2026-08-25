@@ -501,7 +501,7 @@ committed and pushed to `origin/dev`.
 | S22 | `casper/api/block_report_api.rs` | `block_lock_map` bounded (`MAX_LOCKED_BLOCKS = 4096`, oldest evicted). |
 | S23 | `casper/validate.rs` | `repeat_deploy` keys the dedup set on `normalize_signature_low_s` (malleability). |
 | S24 | `node/api/grpc/tonic.rs` + `node/web/{http,transaction}.rs` | `getEventByHash` and `/api/transactions/:hash` gated on `enable-reporting`. |
-| S25 | `node/web/http.rs` | `/api/v1/propose` `GET → POST`; admin CORS restricted; report/replay routes rate-limited. |
+| S25 | `node/web/http.rs` | `/api/v1/propose` `GET → POST`; admin CORS gated by `--api-enable-devnet-cors`; admin HTTP binds `api-server.host` (matches Scala — reverts the earlier loopback-only bind so a browser wallet can reach `/api/propose` through a published port); report/replay routes rate-limited. |
 | S26 | `node/configuration/configuration.rs` | `data_dir` escaped before HOCON interpolation. |
 
 ### Documented (assessed faithful / residual)

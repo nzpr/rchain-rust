@@ -204,3 +204,35 @@ exposes `propose` and `proposeResult`. The protobuf definitions live in
   reporting routes are unavailable unless you enable them.
 - **One node vs many.** Non-bootstrap nodes offset their host ports by `1000·i`; for a single-validator
   devnet the bootstrap numbers above are the only ones you need.
+
+## 8. Simulating Casper: how blocks are produced
+
+CBC-Casper here is **deploy-driven** — there is no heartbeat or block timer. A validator proposes a
+block only when it has new work to record: new user deploys, slashes, or an epoch change — plus
+*attestation* blocks that carry no deploys but attest to other validators' blocks to advance finality.
+An idle *non-dev-mode* node produces no blocks.
+
+The devnet opts every node into **dev-mode** (`--dev-mode --deployer-private-key`), so `--autopropose`
+injects a signed `Nil` **dummy deploy** whenever the pool is empty and keeps producing blocks on its
+own — no manual deploys needed. `up` waits until `latestBlockNumber` is advancing before returning:
+
+```sh
+tools/devnet.sh up --validators 3     # 3 validators, each self-producing dummy-deploy blocks
+```
+
+Observe consensus and finality over the public HTTP API (`http://localhost:40403`):
+
+- `GET /api/v1/status` — `latestBlockNumber` climbing on its own.
+- `GET /api/v1/blocks` — recent blocks. The `sender` and `justifications` fields show multiple
+  proposers cross-justifying each other's blocks (the block-DAG, not a single chain).
+- `GET /api/v1/block/{blockHash}` — one block plus the deploys it carries.
+- `GET /api/last-finalized-block` — the finalized fringe (a legacy `/api/` route, not under `/v1`).
+- `GET /api/is-finalized/{blockHash}` — whether a specific block has passed the `> 2/3` stake
+  threshold.
+
+To exercise the real deploy path (submit a signed user deploy and poll its status), use
+`tools/devnet.sh deploy hello.rho` and `tools/devnet-test.sh`, which cover it end-to-end.
+
+The devnet is a *reasonable simulation of production, gaps stated*: single shard (`root`), equal stake
+⇒ unanimous finality, dummy `Nil` deploys, no Byzantine behavior. The full fidelity note is in
+[Local devnet (Docker)](../node/devnet.md).

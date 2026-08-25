@@ -21,7 +21,7 @@ RUN cargo build --release -p rchain-node --bin rnode
 FROM debian:trixie-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/rnode /usr/local/bin/rnode
@@ -30,6 +30,10 @@ COPY --from=builder /app/target/release/rnode /usr/local/bin/rnode
 RUN useradd --create-home rnode \
     && mkdir -p /var/lib/rnode \
     && chown -R rnode:rnode /var/lib/rnode
+
+# Healthy once the public HTTP API answers /api/status.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=5 \
+    CMD curl -fsS http://localhost:40403/api/status || exit 1
 
 USER rnode
 WORKDIR /var/lib/rnode

@@ -58,6 +58,7 @@ use rchain_comm::transport::grpc_transport_server::TransportLayerServer;
 use rchain_comm::transport::transport_layer::TransportLayer;
 use rchain_comm::who_am_i;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_crypto::private_key::PrivateKey;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, CasperMessage, SignedDeployData};
@@ -75,6 +76,7 @@ use rchain_rspace::factory::create_history_repository;
 use rchain_rspace::hot_store::InMemHotStore;
 use rchain_rspace::rspace::RSpace;
 use rchain_rspace::state::instances::{RSpaceExporterStore, RSpaceImporterStore};
+use rchain_shared::base16;
 use rchain_shared::lmdb::LmdbDirStoreManager;
 use rchain_shared::log::{Log, LogSource};
 use rchain_shared::refined::Port;
@@ -91,6 +93,11 @@ use crate::diagnostics::NewPrometheusReporter;
 use crate::instances::proposer_instance;
 use crate::web::http::{acquire_admin_http_server, acquire_http_server, StatusProvider};
 use crate::web::transaction::TransactionAPIImpl;
+
+/// Interval between `--autopropose` timer ticks. Together with the dev-mode dummy deploy this makes a
+/// fresh devnet produce blocks on its own (a lone validator has no peer/deploy to kick the
+/// event-driven propose, so a timer is the missing trigger).
+const AUTOPROPOSE_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Build the real block-reporting casper: each `trace` constructs a fresh, isolated reporting
 /// `ReplayRSpace` over the persistent store (the factory clones the store manager, which shares the
@@ -398,12 +405,14 @@ impl NodeProgram {
         });
 
         let admin = tokio::spawn({
+            let host = host.clone();
             async move {
-                // The admin HTTP server hosts the unauthenticated `/api/propose`. Bind it to
-                // loopback only (mirroring the gRPC internal server) so block production cannot be
-                // triggered from the network (H-3, documented deviation from Scala's `0.0.0.0`).
+                // The admin HTTP server hosts the unauthenticated `/api/propose`. Bind it to the same
+                // `api-server.host` as the public server (matching Scala) so a browser wallet can
+                // reach it through a published port; `--api-enable-devnet-cors` gates cross-origin
+                // access. In the devnet `--api-host 0.0.0.0` makes it host-reachable.
                 acquire_admin_http_server(
-                    "127.0.0.1",
+                    &host,
                     port_admin_http,
                     admin_web_api,
                     enable_devnet_cors,
@@ -707,6 +716,21 @@ pub async fn setup_node_program(
                     let (otx, _orx) = tokio::sync::oneshot::channel();
                     let _ = tx.try_send((true, otx));
                 });
+
+                // Periodic timer: the event-driven tap only fires on a validated block or a deploy,
+                // and a lone validator has neither after genesis. Tick every AUTOPROPOSE_INTERVAL so
+                // `--autopropose` (with the dev-mode dummy deploy) produces blocks on its own.
+                let timer_tx = pp.queue_tx.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(AUTOPROPOSE_INTERVAL);
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    loop {
+                        interval.tick().await;
+                        let (otx, _orx) = tokio::sync::oneshot::channel();
+                        let _ = timer_tx.try_send((true, otx));
+                    }
+                });
+
                 Some(tap)
             }
             None => None,
@@ -817,11 +841,21 @@ pub async fn setup_node_program(
                 })
             })
         };
+        // Dev-mode dummy deploy: if `dev.deployer-private-key` is set (requires `--dev-mode`), inject a
+        // signed `Nil` deploy whenever the pool is empty so `--autopropose` keeps producing blocks.
+        let dummy_deploy_opt = conf
+            .dev
+            .deployer_private_key
+            .as_deref()
+            .and_then(|hex| base16::decode(hex))
+            .map(|bytes| (PrivateKey::new(bytes), "Nil".to_string()));
+
         let proposer = Proposer::apply(
             validator,
             conf.casper.shard_name.clone(),
             conf.casper.min_phlo_price,
             conf.casper.genesis_block_data.epoch_length,
+            dummy_deploy_opt,
             parts.dag.clone(),
             parts.block_store.clone(),
             parts.runtime_manager.clone(),
