@@ -21,7 +21,7 @@ use rchain_block_storage::dag::codecs::{
 };
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
 use rchain_block_storage::syntax::put_block;
-use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus, ProposeFunction};
+use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus, NetworkStatusFn, ProposeFunction};
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::block_random_seed::BlockRandomSeed;
 use rchain_casper::block_metadata_store::BlockMetadataStore;
@@ -695,8 +695,14 @@ pub async fn setup_node_program(
     id: &NodeIdentifier,
     log: Arc<dyn Log>,
 ) -> Result<NodeProgram, String> {
-    let (mut program, mut parts) = setup(conf, id).await?;
     let comm_state = create_comm_state(conf, id, log.clone()).await?;
+    let (mut program, mut parts) = setup(
+        conf,
+        id,
+        comm_state.connections.clone(),
+        comm_state.discovery.clone(),
+    )
+    .await?;
     let importer = create_rspace_importer(&parts.store_manager).await?;
     let exporter = create_rspace_exporter(&parts.store_manager).await?;
 
@@ -880,7 +886,12 @@ pub async fn setup_node_program(
 
 /// Assemble the node program (port of `Setup.setupNodeProgram`, minus the comm/discovery/proposer/
 /// block-stream pieces).
-pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram, SetupParts), String> {
+pub async fn setup(
+    conf: &NodeConf,
+    id: &NodeIdentifier,
+    connections: ConnectionsCell,
+    discovery: Arc<dyn NodeDiscovery>,
+) -> Result<(NodeProgram, SetupParts), String> {
     let store_manager = rnode_key_value_store_manager(&conf.storage.data_dir);
 
     // Block store + DAG storage.
@@ -1031,12 +1042,23 @@ pub async fn setup(conf: &NodeConf, id: &NodeIdentifier) -> Result<(NodeProgram,
 
     let network_id = conf.protocol_server.network_id.clone();
     let shard_id = conf.casper.shard_name.clone();
-    let network_status: Box<dyn Fn() -> NetworkStatus + Send + Sync> = Box::new({
+    let network_status: NetworkStatusFn = Box::new({
         let id = id.clone();
-        move || NetworkStatus {
-            address: id.to_string(),
-            peers: 0,
-            nodes: 0,
+        let connections = connections.clone();
+        let discovery = discovery.clone();
+        move || {
+            let id = id.clone();
+            let connections = connections.clone();
+            let discovery = discovery.clone();
+            Box::pin(async move {
+                let peers = connections.read().await.len() as i32;
+                let nodes = discovery.peers().len() as i32;
+                NetworkStatus {
+                    address: id.to_string(),
+                    peers,
+                    nodes,
+                }
+            })
         }
     });
 
@@ -1132,6 +1154,15 @@ mod tests {
     use crate::configuration::configuration::parse_defaults;
     use crate::configuration::hocon::node_conf_from_hocon;
 
+    struct NoopDiscovery;
+    #[async_trait::async_trait]
+    impl NodeDiscovery for NoopDiscovery {
+        async fn discover(&self) {}
+        fn peers(&self) -> Vec<rchain_comm::peer_node::PeerNode> {
+            Vec::new()
+        }
+    }
+
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "rchain-{name}-{}-{}",
@@ -1158,7 +1189,11 @@ mod tests {
 
         let id = NodeIdentifier::new(vec![1u8]);
 
-        let (program, _parts) = setup(&conf, &id).await.expect("setup should assemble");
+        let connections: ConnectionsCell = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+        let discovery: Arc<dyn NodeDiscovery> = Arc::new(NoopDiscovery);
+        let (program, _parts) = setup(&conf, &id, connections, discovery)
+            .await
+            .expect("setup should assemble");
         assert_eq!(program.host, "127.0.0.1");
         assert_eq!(
             u16::from(program.port_http),

@@ -51,6 +51,11 @@ pub struct NetworkStatus {
 pub type ProposeFunction =
     Box<dyn Fn(bool) -> Pin<Box<dyn Future<Output = ProposerResult> + Send + 'static>> + Send + Sync>;
 
+/// A network-status provider (port of `getNetworkStatus`). Async so it can read the live connection
+/// cell and Kademlia discovery table (peers/nodes) rather than returning a fixed value.
+pub type NetworkStatusFn =
+    Box<dyn Fn() -> Pin<Box<dyn Future<Output = NetworkStatus> + Send + 'static>> + Send + Sync>;
+
 /// The concrete `BlockApi` (port of `BlockApiImpl`).
 pub struct BlockApiImpl {
     dag: Arc<dyn BlockDagStorage>,
@@ -61,7 +66,7 @@ pub struct BlockApiImpl {
     shard_id: String,
     min_phlo_price: i64,
     version: String,
-    network_status: Box<dyn Fn() -> NetworkStatus + Send + Sync>,
+    network_status: NetworkStatusFn,
     is_node_read_only: bool,
     max_depth_limit: i32,
     dev_mode: bool,
@@ -82,7 +87,7 @@ impl BlockApiImpl {
         shard_id: String,
         min_phlo_price: i64,
         version: String,
-        network_status: Box<dyn Fn() -> NetworkStatus + Send + Sync>,
+        network_status: NetworkStatusFn,
         is_node_read_only: bool,
         max_depth_limit: i32,
         dev_mode: bool,
@@ -216,7 +221,7 @@ impl BlockApiImpl {
 #[async_trait]
 impl BlockApi for BlockApiImpl {
     async fn status(&self) -> Status {
-        let net = (self.network_status)();
+        let net = (self.network_status)().await;
         // Latest block number from the DAG (height map), not a hardcoded 0 — the devnet's autopropose
         // (dummy deploys) advances it continuously.
         let latest_block_number = self.dag.get_representation().await.latest_block_number();
