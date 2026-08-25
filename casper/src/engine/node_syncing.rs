@@ -186,15 +186,36 @@ impl<I: RSpaceImporter + Send + 'static> NodeSyncing<I> {
             let comm_util = self.comm_util.clone();
             let log = self.log.clone();
             let finished = self.finished.clone();
-            let importer = self.importer.take().expect("importer already taken");
-            let incoming_blocks_rx = self
-                .incoming_blocks_rx
-                .take()
-                .expect("incoming-blocks receiver already taken");
-            let tuple_space_rx = self
-                .tuple_space_rx
-                .take()
-                .expect("tuple-space receiver already taken");
+            let importer = match self.importer.take() {
+                Some(importer) => importer,
+                None => {
+                    self.log
+                        .error(self.log_source, "LFS sync requested twice; importer already taken");
+                    return Err("LFS sync already started: importer already taken".to_string());
+                }
+            };
+            let incoming_blocks_rx = match self.incoming_blocks_rx.take() {
+                Some(rx) => rx,
+                None => {
+                    self.log.error(
+                        self.log_source,
+                        "LFS sync requested twice; incoming-blocks receiver already taken",
+                    );
+                    return Err(
+                        "LFS sync already started: incoming-blocks receiver already taken".to_string(),
+                    );
+                }
+            };
+            let tuple_space_rx = match self.tuple_space_rx.take() {
+                Some(rx) => rx,
+                None => {
+                    self.log.error(
+                        self.log_source,
+                        "LFS sync requested twice; tuple-space receiver already taken",
+                    );
+                    return Err("LFS sync already started: tuple-space receiver already taken".to_string());
+                }
+            };
             tokio::spawn(async move {
                 let source = LogSource::new("casper.engine.NodeSyncing");
                 match run_approved_state_sync(
