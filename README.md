@@ -43,7 +43,9 @@ construction.
 
 **The upshot:** ~69,000 lines of Rust compile to a single tight **native binary** — no JVM, no GC, no
 heap tuning — so a validator runs comfortably on any reasonably modern desktop or high-performance
-laptop with an NVMe SSD (see [hardware requirements](docs/src/node/validator-requirements.md)).
+laptop with an NVMe SSD (see [hardware requirements](docs/src/node/validator-requirements.md)). That
+puts validator operation within consumer-grade hardware — genuinely decentralized — and the native
+code also buys throughput, even while full ρ-calculus concurrency is still a work in progress.
 
 **The calculus hierarchy.** Rust natively expresses the λ-calculus (closures), the π-calculus
 (channels and `Send`/`Sync` name mobility), and the ρ-calculus (the reflective π-calculus: a name is
