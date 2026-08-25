@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
@@ -17,6 +18,7 @@ use rchain_models::block::state_hash::StateHash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::casper::protocol::casper_message::{BlockMessage, DeployData, SignedDeployData};
 use rchain_models::validator::Validator;
+use rchain_shared::log::{Log, LogSource};
 use rchain_shared::refined::{BlockHeight, NonNegI64};
 use rchain_sdk::consensus::is_super_majority;
 
@@ -57,6 +59,8 @@ pub struct Proposer {
         Arc<dyn Fn(&BlockMessage) -> BoxFuture<Result<(), ValidateError>> + Send + Sync>,
     propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
     validator: ValidatorIdentity,
+    log: Arc<dyn Log>,
+    consecutive_failures: Arc<AtomicU64>,
 }
 
 impl Proposer {
@@ -72,6 +76,8 @@ impl Proposer {
         >,
         propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
         validator: ValidatorIdentity,
+        log: Arc<dyn Log>,
+        consecutive_failures: Arc<AtomicU64>,
     ) -> Self {
         Proposer {
             get_latest_seq_number,
@@ -80,6 +86,8 @@ impl Proposer {
             validate_block,
             propose_effect,
             validator,
+            log,
+            consecutive_failures,
         }
     }
 
@@ -102,6 +110,7 @@ impl Proposer {
             )),
             BlockCreatorResult::Created(block) => match (self.validate_block)(&block).await {
                 Ok(()) => {
+                    self.consecutive_failures.store(0, Ordering::Relaxed);
                     (self.propose_effect)(&block).await;
                     Ok((
                         ProposeResult {
@@ -110,12 +119,35 @@ impl Proposer {
                         Some(block),
                     ))
                 }
-                Err(ValidateError::ValidationFailed(_, status)) => Err(format!(
-                    "Validation of self created block failed with reason: {status:?}, cancelling propose."
-                )),
-                Err(ValidateError::Internal(e)) => Err(format!(
-                    "Validation of self created block failed with internal error: {e}, cancelling propose."
-                )),
+                Err(ValidateError::ValidationFailed(_, status)) => {
+                    // Defence in depth: a self-created block that fails its own validation means the
+                    // node's state accounting is inconsistent — surface it loudly (with the exact
+                    // status + block/seq) and count it so the caller can halt autopropose.
+                    self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+                    self.log.error(
+                        LogSource::new("casper.blocks.Proposer"),
+                        &format!(
+                            "Self-created block #{} (seq {}) failed validation: {status:?} — node state accounting is inconsistent.",
+                            block.block_number, block.seq_num
+                        ),
+                    );
+                    Err(format!(
+                        "Validation of self created block failed with reason: {status:?}, cancelling propose."
+                    ))
+                }
+                Err(ValidateError::Internal(e)) => {
+                    self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+                    self.log.error(
+                        LogSource::new("casper.blocks.Proposer"),
+                        &format!(
+                            "Self-created block #{} (seq {}) failed validation with internal error: {e}",
+                            block.block_number, block.seq_num
+                        ),
+                    );
+                    Err(format!(
+                        "Validation of self created block failed with internal error: {e}, cancelling propose."
+                    ))
+                }
             },
         }
     }
@@ -146,7 +178,7 @@ impl Proposer {
                     message: result.propose_status.to_string(),
                 },
                 Err(e) => ProposerResult::Failure {
-                    status: ProposeStatus::BugError,
+                    status: ProposeStatus::BugError(e.clone()),
                     seq_number: next_seq,
                     message: e.clone(),
                 },
@@ -171,6 +203,8 @@ impl Proposer {
         runtime: Arc<RuntimeManager>,
         block_index: F,
         propose_effect: Arc<dyn Fn(&BlockMessage) -> BoxFuture<()> + Send + Sync>,
+        log: Arc<dyn Log>,
+        consecutive_failures: Arc<AtomicU64>,
     ) -> Proposer
     where
         F: Fn(BlockHash) -> Fut + Send + Sync + 'static,
@@ -306,6 +340,8 @@ impl Proposer {
             validate_block,
             propose_effect,
             validator_identity,
+            log,
+            consecutive_failures,
         )
     }
 }
@@ -513,7 +549,18 @@ mod tests {
             "67e56582298859ddae725f972992a07c6c4fb9f62a8fff58ce3ca926a1063530",
         )
         .unwrap();
-        Proposer::new(get_seq, check_active, create_block, validate, effect, validator)
+        let log: Arc<dyn Log> = Arc::new(rchain_shared::log::NopLog);
+        let consecutive_failures = Arc::new(AtomicU64::new(0));
+        Proposer::new(
+            get_seq,
+            check_active,
+            create_block,
+            validate,
+            effect,
+            validator,
+            log,
+            consecutive_failures,
+        )
     }
 
     fn block() -> BlockMessage {

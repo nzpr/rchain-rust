@@ -51,9 +51,9 @@ pub fn create(
                 let r = proposer.propose(is_async, propose_id_def).await;
                 let r = match r {
                     Ok(r) => r,
-                    Err(_) => (
+                    Err(e) => (
                         ProposeResult {
-                            propose_status: ProposeStatus::BugError,
+                            propose_status: ProposeStatus::BugError(e),
                         },
                         None,
                     ),

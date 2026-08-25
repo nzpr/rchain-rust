@@ -9,7 +9,7 @@ use rchain_models::casper::protocol::casper_message::BlockMessage;
 pub enum ProposeStatus {
     ProposeSuccess,
     InternalDeployError,
-    BugError,
+    BugError(String),
     NotBonded,
     NotEnoughNewBlocks,
     TooFarAheadOfLastFinalized,
@@ -18,20 +18,19 @@ pub enum ProposeStatus {
 
 impl fmt::Display for ProposeStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            ProposeStatus::ProposeSuccess => "Propose succeed: Valid",
-            ProposeStatus::NoNewDeploys => "Proposal failed: NoNewDeploys",
-            ProposeStatus::InternalDeployError => "Proposal failed: internal deploy error",
-            ProposeStatus::NotBonded => "Proposal failed: ReadOnlyMode",
+        match self {
+            ProposeStatus::ProposeSuccess => write!(f, "Propose succeed: Valid"),
+            ProposeStatus::NoNewDeploys => write!(f, "Proposal failed: NoNewDeploys"),
+            ProposeStatus::InternalDeployError => write!(f, "Proposal failed: internal deploy error"),
+            ProposeStatus::NotBonded => write!(f, "Proposal failed: ReadOnlyMode"),
             ProposeStatus::NotEnoughNewBlocks => {
-                "Proposal failed: Must wait for more blocks from other validators"
+                write!(f, "Proposal failed: Must wait for more blocks from other validators")
             }
             ProposeStatus::TooFarAheadOfLastFinalized => {
-                "Proposal failed: too far ahead of the last finalized block"
+                write!(f, "Proposal failed: too far ahead of the last finalized block")
             }
-            ProposeStatus::BugError => "Proposal failed: BugError",
-        };
-        write!(f, "{s}")
+            ProposeStatus::BugError(reason) => write!(f, "Proposal failed: BugError ({reason})"),
+        }
     }
 }
 

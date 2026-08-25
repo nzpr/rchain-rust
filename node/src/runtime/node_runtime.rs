@@ -7,6 +7,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -98,6 +99,10 @@ use crate::web::transaction::TransactionAPIImpl;
 /// fresh devnet produce blocks on its own (a lone validator has no peer/deploy to kick the
 /// event-driven propose, so a timer is the missing trigger).
 const AUTOPROPOSE_INTERVAL: Duration = Duration::from_secs(2);
+
+/// After this many consecutive self-validation failures the autopropose timer halts, so a node with
+/// inconsistent state accounting stops producing blocks instead of silently spinning on `BugError`.
+const AUTOPROPOSE_MAX_CONSECUTIVE_FAILURES: u64 = 3;
 
 /// Build the real block-reporting casper: each `trace` constructs a fresh, isolated reporting
 /// `ReplayRSpace` over the persistent store (the factory clones the store manager, which shares the
@@ -713,6 +718,10 @@ pub async fn setup_node_program(
     // enqueue a propose on each validated block.
     let proposer_parts = parts.proposer.take();
 
+    // Shared consecutive-failure counter: the proposer resets it on success and bumps it on a
+    // self-validation failure; the autopropose timer reads it to halt after a burst of failures.
+    let consecutive_failures: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
     // Autopropose tap: fire an (async) propose on each validated block.
     let autopropose: Option<Arc<dyn Fn() + Send + Sync>> = if conf.autopropose {
         match &proposer_parts {
@@ -725,13 +734,26 @@ pub async fn setup_node_program(
 
                 // Periodic timer: the event-driven tap only fires on a validated block or a deploy,
                 // and a lone validator has neither after genesis. Tick every AUTOPROPOSE_INTERVAL so
-                // `--autopropose` (with the dev-mode dummy deploy) produces blocks on its own.
+                // `--autopropose` (with the dev-mode dummy deploy) produces blocks on its own. Halt
+                // after a burst of consecutive self-validation failures instead of spinning forever.
                 let timer_tx = pp.queue_tx.clone();
+                let timer_failures = consecutive_failures.clone();
+                let timer_log = log.clone();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(AUTOPROPOSE_INTERVAL);
                     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     loop {
                         interval.tick().await;
+                        let failures = timer_failures.load(Ordering::Relaxed);
+                        if failures >= AUTOPROPOSE_MAX_CONSECUTIVE_FAILURES {
+                            timer_log.error(
+                                LogSource::new("coop.rchain.node.runtime.Setup"),
+                                &format!(
+                                    "block production halted after {failures} consecutive self-validation failures"
+                                ),
+                            );
+                            break;
+                        }
                         let (otx, _orx) = tokio::sync::oneshot::channel();
                         let _ = timer_tx.try_send((true, otx));
                     }
@@ -867,6 +889,8 @@ pub async fn setup_node_program(
             parts.runtime_manager.clone(),
             block_index,
             propose_effect,
+            log.clone(),
+            consecutive_failures.clone(),
         );
         let proposer_stream = proposer_instance::create(
             proposer_parts.queue_rx,
