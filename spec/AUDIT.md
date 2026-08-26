@@ -563,3 +563,47 @@ Note `Cargo.lock` is gitignored in this repo, so the audited dependency set is n
 fresh build re-resolves within the `node/Cargo.toml` constraints (which already force the patched
 versions).
 
+## 13. Full red-team audit (pass 4)
+
+Four parallel red-team agents re-audited the workspace against four axes — fragile code, exploits/DoS,
+atomicity/determinism, and production-blockchain patterns — cross-checked against §5/§9/§10/§11/§12 to
+avoid re-reporting known items, and focused on regressions from `58ca075ec`..`5186361dc`. Severity
+reuses §11's P0–P3 model. Findings are deduplicated across clusters.
+
+### Critical (P0)
+
+- **R13 (F1) — decompressed-blob memory amplification on the `stream` path.** `comm/src/transport/grpc_transport_receiver.rs:173-217` buffers up to `max_stream_message_size` (default 256 MiB) per stream, then `tokio::spawn(handle_streamed)` with no concurrency bound; `handle_streamed` blocks on a 50-capacity queue holding its up-to-256-MiB blob. A peer sending LZ4-compressed zeros saturates memory with a few dozen streams. **Deferred:** hold a global semaphore across the spawn, count decompressed bytes against a budget, use `try_send`, and lower the default to a real block-size bound.
+
+### High (P1)
+
+- **R14 (F2) — unbounded concurrent TLS handshakes.** `grpc_transport_receiver.rs:248-263` spawns one accept task per TCP connection with no timeout; the 128-slot channel bounds only *completed* handshakes. A peer opening thousands of idle connections holds sockets/rustls state until TCP timeouts. **Deferred:** acquire a handshake semaphore before `spawn` + wrap `accept` in a timeout.
+- **R15 (C1) — unbounded block-validation pipeline.** `node/src/runtime/node_runtime.rs:533` feeds replay validation through an `unbounded_channel`; the bounded ingress (S18) is upstream of it, so a peer streaming valid-signed blocks fills memory faster than replay drains. **Deferred:** bound the channel (`mpsc::channel(cap)` + `try_send`).
+- **R16 (C2) — unbounded `StoreItemsMessageRequest.take`.** `casper/src/engine/node_running.rs:307` bounds only the *sign* of `skip`/`take`; `take=i32::MAX` triggers a full-trie traversal + giant reply, repeatable per peer. **Deferred:** cap `take` (≤ a few thousand) and rate-limit per peer.
+- **R17 (A1/C8) — faucet rate limit is global, no per-source/address budget.** `node/src/web/http.rs:44,127-136` + `web_api_impl.rs:89` use one shared `RateLimiter` (1/s); a single caller drains the genesis dev wallet at 0.3 REV/s and monopolizes the budget. **Deferred:** per-source buckets + a per-day drip cap + a wallet floor.
+- **R18 (E1) — `CostAccounting.log` grows unboundedly.** `rholang/src/accounting.rs:342,390` appends a `Cost` (with a heap `String` op) per `charge` and never clears; `total_charged()` (`:363`) re-sums the whole log per deploy, becoming O(n) and able to wrap i64. **Fixed** — replaced the `Vec` with a running `AtomicI64` total.
+
+### Medium (P2)
+
+- **R19 (C6/A2/E5) — `exploratory_deploy` reads the non-finalized chain tip.** `casper/src/api/block_api_impl.rs:626-638` (commit `5186361dc`) reads `height_map.iter().next_back()` (first hash at max height, i.e. an arbitrary fork) instead of `last_finalized_block`. A byzantine tip block can spoof wallet `getBalance`/explore results, and forks make reads node-dependent. **Fixed** — restored `last_finalized_block` as the no-hash default; latest-tip reads remain available via `explore-deploy-by-block-hash` with an explicit hash.
+- **R20 (A3/E6) — `revVault transfer` unchecked i64 add + self-transfer guard before the balance check.** `rholang/src/system_processes.rs` — `i64::from(to_balance) + i64::from(amount)` overflows on extreme balances; and the self-transfer guard (commit `204d98656`) returns success before checking `amount ≤ balance`. **Fixed** — `checked_add`/i128 accumulation, and the guard now sits after the balance check.
+- **R21 (E3) — arithmetic panic on `EMult`/`EPlus`/`EMinus`/`ENeg`.** `rholang/src/reduce.rs:265,367,395,247` use raw `l*r`/`l+r`/`l-r`/`-hs` on `GInt`; `i64::MAX * 2` panics the reducer in debug builds. **Fixed** — `wrapping_*` (release wrap is Scala-faithful; the debug panic was not).
+- **R22 (E4) — number-channel merge/diff unchecked i64.** `rholang/src/merging.rs:100,304` (`init_num + diff`, `end_val - prev`) wrap/panic and write a corrupted value into the trie. **Fixed** — `checked_add`/`checked_sub` with an error.
+- **R23 (E2) — `slice` charges output length but walks input uncharged.** `rholang/src/reduce.rs:1044,1048` — a recursive contract slicing a large string gets ~16M:1 op/phlo amplification. **Deferred:** charge the cloned/input size.
+- **R24 (F4) — SSRF filter classifies only IPv4 literals.** `comm/src/rp/handle_messages.rs:27-40` + Kademlia lookup-insertion (`kademlia_node_discovery.rs:45-50`) connect to attacker-chosen hostnames/IPv6. **Deferred:** resolve-and-reject private/loopback/link-local on both the lookup-insertion and forged-sender paths.
+- **R25 (F3) — global channel cache mutex held across an unbounded connect.** `comm/src/transport/grpc_transport_client.rs:94-108` serializes all outbound channel creation behind one lock that spans `TcpStream::connect`+TLS (no timeout). **Deferred:** don't hold the lock across connect; add a connect timeout.
+- **R26 (F5) — `stream` size cap counts only data bytes.** `grpc_transport_receiver.rs:173-184` — empty `Chunk.content_data` never advances `received`, so unbounded empty chunks grow the per-stream buffer. **Deferred:** cap chunk count + add a read deadline.
+- **R27 (C3) — `phlo_price` checked after replay.** `casper/src/multi_parent_casper.rs:351` — a below-min-price block is fully replayed before rejection, so `phlo_price=0` deploys give free replay DoS. **Deferred:** move the cheap `phlo_price` predicate into `block_summary` ahead of replay.
+- **R28 (C4) — deploy pool never expires future-dated deploys.** `casper/src/dag.rs:122` — ingress never bounds `valid_after_block_number`, so deploys anchored at `i64::MAX` fill `MAX_POOLED_DEPLOYS` permanently. **Deferred:** reject/expire deploys more than `DEPLOY_LIFESPAN` in the future.
+- **R29 (C5) — block-receiver maps unbounded.** `casper/src/blocks/block_receiver.rs:105` — valid-signed blocks with unresolvable justifications are retained forever. **Deferred:** cap/age-out entries whose deps are unknown.
+- **R30 (C7) — `PeerRateLimiter` never evicts.** `casper/src/engine/node_running.rs:90` — `BTreeMap<Vec<u8>,(Instant,u32)>` grows with connection churn. **Deferred:** prune stale keys.
+
+### Low (P3)
+
+- **R31 (F6)** — attacker-influenced UPnP gateway can set the advertised external host (hostname bypasses `is_ssrf_unsafe_host`). `comm/src/upnp/gateway.rs:119-136`.
+- **R32 (F7)** — attacker-controlled large `sender.host` retained in the connections table. `comm/src/rp/handle_messages.rs:70-93`.
+- **R33 (A4)** — faucet to the deployer's own address is a no-op that still consumes the rate budget and submits a deploy.
+- **R34 (A5)** — `/api/faucet` routes are mounted unconditionally on the public router; the dev-mode gate is only inside the handler.
+- **R35 (A6)** — a faucet drip is silently dropped once the tip passes `height+50` (`DEPLOY_LIFESPAN`), after `200` was already returned.
+- **R36 (A7)** — the single `deploy_rate_limiter` is shared by deploy + explore-deploy, so explore floods starve deploys.
+- **R37 (E7)** — play sorts channel data by `Datum.source` but replay keeps store order; correct today, but an undocumented play-vs-replay fragility.
+

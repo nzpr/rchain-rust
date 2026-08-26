@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
+use rchain_block_storage::syntax::put_block;
 use rchain_crypto::private_key::PrivateKey;
 use rchain_crypto::signatures::secp256k1::Secp256k1;
 use rchain_crypto::signatures::signed::Signed;
@@ -324,6 +325,16 @@ impl Proposer {
                         .await
                         {
                             Ok(meta) => {
+                                // Persist the block body BEFORE recording it in the DAG. `insert`
+                                // writes the deploy index + DAG state but not the full block, so a
+                                // read landing between the two would otherwise hit "missing block".
+                                put_block(&block_store, block.clone())
+                                    .await
+                                    .map_err(|e| {
+                                        ValidateError::Internal(format!(
+                                            "failed to store block body: {e}"
+                                        ))
+                                    })?;
                                 dag.insert(meta, block.clone())
                                     .await
                                     .map_err(|e| {

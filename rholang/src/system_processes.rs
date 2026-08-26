@@ -1399,12 +1399,6 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("transfer expects a number amount"))?;
                         let amount =
                             NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
-                        // Self-transfer is a no-op: the Scala purse split/deposit nets to zero.
-                        // Without this guard the read-then-write below would double the balance when
-                        // `from == to` (both writes target the same vault leaf).
-                        if from.as_str() == to {
-                            return cc.produce(&rand, &[RhoNil::apply()], ret).await;
-                        }
                         let from_balance =
                             match native.vault_balance(&from).await.map_err(|e| illegal_arg(&e))? {
                                 Some(b) => b,
@@ -1413,6 +1407,13 @@ impl SystemProcesses {
                         if i64::from(from_balance) < i64::from(amount) {
                             return Err(illegal_arg("transfer: insufficient balance"));
                         }
+                        // Self-transfer is a no-op AFTER the balance check: the Scala purse
+                        // split/deposit nets to zero, but an amount above the balance must still
+                        // fail. Without this guard the read-then-write below would double the balance
+                        // when `from == to` (both writes target the same vault leaf).
+                        if from.as_str() == to {
+                            return cc.produce(&rand, &[RhoNil::apply()], ret).await;
+                        }
                         let to_balance =
                             match native.vault_balance(to).await.map_err(|e| illegal_arg(&e))? {
                                 Some(b) => b,
@@ -1420,8 +1421,13 @@ impl SystemProcesses {
                             };
                         let new_from = NonNegI64::try_from(i64::from(from_balance) - i64::from(amount))
                             .map_err(|e| illegal_arg(&e.to_string()))?;
-                        let new_to = NonNegI64::try_from(i64::from(to_balance) + i64::from(amount))
-                            .map_err(|e| illegal_arg(&e.to_string()))?;
+                        // Accumulate in checked i64 so `to_balance + amount` cannot overflow (both are
+                        // non-negative, so only an i64::MAX-exceeding sum overflows).
+                        let new_to_i64 = i64::from(to_balance)
+                            .checked_add(i64::from(amount))
+                            .ok_or_else(|| illegal_arg("transfer: destination balance overflow"))?;
+                        let new_to =
+                            NonNegI64::try_from(new_to_i64).map_err(|e| illegal_arg(&e.to_string()))?;
                         native.set_vault_balance(&from, new_from);
                         native.set_vault_balance(to, new_to);
                         cc.produce(&rand, &[RhoNil::apply()], ret).await
@@ -1805,6 +1811,21 @@ mod tests {
             .expect("read balance")
             .expect("vault exists");
         assert_eq!(i64::from(balance), 100, "self-transfer must not change the balance");
+
+        // An amount above the balance must still fail (the guard sits after the balance check).
+        let ret2 = FixedChannels::stdout();
+        let err = (vault.handler)(vec![lpw(vec![
+            RhoString::apply("transfer".to_string()),
+            RhoList::apply(vec![
+                RhoDeployerId::apply(vec![1; 65]),
+                RhoString::apply(alice.clone()),
+                RhoNumber::apply(200),
+                ret2,
+            ]),
+        ])])
+        .await
+        .expect_err("self-transfer above balance must be rejected");
+        assert!(err.to_string().contains("insufficient balance"), "{err}");
     }
 
     #[tokio::test]

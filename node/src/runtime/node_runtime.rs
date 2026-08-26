@@ -21,7 +21,6 @@ use rchain_block_storage::dag::codecs::{
     SignedDeployDataCodec,
 };
 use rchain_block_storage::dag::dag_storage::{BlockDagStorage, DeployId};
-use rchain_block_storage::syntax::put_block;
 use rchain_casper::api::block_api_impl::{BlockApiImpl, NetworkStatus, NetworkStatusFn, ProposeFunction};
 use rchain_casper::api::block_report_api::BlockReportApi;
 use rchain_casper::block_random_seed::BlockRandomSeed;
@@ -855,14 +854,13 @@ pub async fn setup_node_program(
         let propose_effect: Arc<
             dyn Fn(&BlockMessage) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + Sync,
         > = {
-            let block_store = parts.block_store.clone();
+            // The block body is persisted by `Proposer::validate_block` (before the DAG insert);
+            // here we only broadcast the block hash to peers.
             let comm_util = comm_state.comm_util.clone();
             Arc::new(move |block: &BlockMessage| {
-                let block_store = block_store.clone();
                 let comm_util = comm_util.clone();
                 let block = block.clone();
                 Box::pin(async move {
-                    let _ = put_block(&block_store, block.clone()).await;
                     comm_util
                         .send_block_hash(&block.block_hash, block.sender.as_bytes())
                         .await;

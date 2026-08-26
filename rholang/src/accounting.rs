@@ -7,7 +7,6 @@
 //! [`CostAccounting`] state cell.
 
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Mutex;
 
 use num_bigint::BigInt;
 
@@ -339,7 +338,10 @@ where
 #[derive(Default)]
 pub struct CostAccounting {
     value: AtomicI64,
-    log: Mutex<Vec<Cost>>,
+    /// Running total phlo charged since construction. Kept as an atomic sum rather than a log of
+    /// `Cost`s, so a long-running node does not accumulate an unbounded `Vec` (each entry carried a
+    /// heap `String`) and `total_charged` stays O(1).
+    total: AtomicI64,
 }
 
 impl CostAccounting {
@@ -350,7 +352,7 @@ impl CostAccounting {
     pub fn from_initial(init: Cost) -> Self {
         CostAccounting {
             value: AtomicI64::new(init.value),
-            log: Mutex::new(Vec::new()),
+            total: AtomicI64::new(0),
         }
     }
 
@@ -360,7 +362,7 @@ impl CostAccounting {
 
     /// Total phlo charged so far (the sum of every `charge`d amount, i.e. consumed phlo).
     pub fn total_charged(&self) -> i64 {
-        self.log.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|c| c.value).sum()
+        self.total.load(Ordering::SeqCst)
     }
 
     /// Set the current cost balance (port of `_cost.set`).
@@ -387,7 +389,7 @@ impl CostAccounting {
             }
         }) {
             Ok(prev) => {
-                self.log.lock().unwrap_or_else(|p| p.into_inner()).push(amount);
+                self.total.fetch_add(amount_value, Ordering::SeqCst);
                 if prev - amount_value < 0 {
                     Err(RholangError::OutOfPhlogistonsError)
                 } else {

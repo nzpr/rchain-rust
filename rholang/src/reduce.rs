@@ -244,7 +244,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
         Expr::ENeg(p) => {
             let v = eval_single_expr(p, env, cost)?;
             match v {
-                Expr::GInt(hs) => Ok(Expr::GInt(-hs)),
+                Expr::GInt(hs) => Ok(Expr::GInt(hs.wrapping_neg())),
                 Expr::GBigInt(hs) => {
                     let r = -hs;
                     cost.charge(Costs::big_int_negation(&r))?;
@@ -262,7 +262,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             match (&v1, &v2) {
                 (Expr::GInt(l), Expr::GInt(r)) => {
                     cost.charge(Costs::multiplication_cost())?;
-                    Ok(Expr::GInt(l * r))
+                    Ok(Expr::GInt(l.wrapping_mul(*r)))
                 }
                 (Expr::GBigInt(l), Expr::GBigInt(r)) => {
                     cost.charge(Costs::big_int_multiplication(l, r))?;
@@ -364,7 +364,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             match (&v1, &v2) {
                 (Expr::GInt(l), Expr::GInt(r)) => {
                     cost.charge(Costs::sum_cost())?;
-                    Ok(Expr::GInt(l + r))
+                    Ok(Expr::GInt(l.wrapping_add(*r)))
                 }
                 (Expr::GBigInt(l), Expr::GBigInt(r)) => {
                     cost.charge(Costs::big_int_sum(l, r))?;
@@ -392,7 +392,7 @@ fn eval_expr_to_expr(expr: &Expr, env: &Env<Par>, cost: &CostAccounting) -> Resu
             match (&v1, &v2) {
                 (Expr::GInt(l), Expr::GInt(r)) => {
                     cost.charge(Costs::subtraction_cost())?;
-                    Ok(Expr::GInt(l - r))
+                    Ok(Expr::GInt(l.wrapping_sub(*r)))
                 }
                 (Expr::GBigInt(l), Expr::GBigInt(r)) => {
                     cost.charge(Costs::big_int_subtraction(l, r))?;

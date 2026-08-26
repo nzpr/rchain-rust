@@ -97,7 +97,9 @@ pub async fn calculate_number_channel_merge(
         None => 0,
     };
 
-    let new_val = init_num + diff;
+    let new_val = init_num
+        .checked_add(diff)
+        .ok_or_else(|| "number channel merge overflow".to_string())?;
 
     let unique_added: BTreeSet<&Vec<u8>> = changes.added.iter().collect();
     let new_rnd = if unique_added.len() == 1 {
@@ -301,7 +303,7 @@ pub fn calculate_num_channel_diff(
         let mut diff_map = BTreeMap::new();
         for (ch, end_val) in end_vals {
             if let Some(prev) = prev_vals.get(ch) {
-                diff_map.insert(*ch, end_val - prev);
+                diff_map.insert(*ch, end_val.wrapping_sub(*prev));
             }
         }
         for (ch, end_val) in end_vals {

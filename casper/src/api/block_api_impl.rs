@@ -125,7 +125,7 @@ impl BlockApiImpl {
             .await?
             .pop()
             .flatten()
-            .ok_or_else(|| format!("missing block {}", hash.to_hex()))
+            .ok_or_else(|| format!("block {} was not found on this node", hash.to_hex()))
     }
 
     async fn get_data_at_par_raw(
@@ -285,7 +285,18 @@ impl BlockApi for BlockApiImpl {
 
     async fn deploy_status(&self, deploy_id: &DeployId) -> ApiErr<DeployExecStatus> {
         if let Some(block_hash) = self.dag.lookup_by_deploy_id(deploy_id).await? {
-            let block = self.get_block_unsafe(&block_hash).await?;
+            // The deploy is indexed as belonging to this block, but the block body may not be in
+            // the store yet (the proposer persists the body separately from the DAG index). Treat a
+            // missing body as "still processing" so a polling caller keeps waiting instead of
+            // surfacing a raw internal "missing block" error.
+            let block = match self.block_store.get(&[block_hash]).await?.pop().flatten() {
+                Some(block) => block,
+                None => {
+                    return Ok(DeployExecStatus::NotProcessed {
+                        status: "Block not yet available".to_string(),
+                    });
+                }
+            };
             let deploy_opt = block
                 .state
                 .deploys
@@ -625,16 +636,11 @@ impl BlockApi for BlockApiImpl {
         let dag = self.dag.get_representation().await;
         let target: Option<BlockMessage> = match block_hash {
             None => {
-                // Read the LATEST block, not the last *finalized* one: `explore-deploy` is the
-                // dev/read-only surface a wallet uses to check balances, and the finalized fringe
-                // lags the chain tip by a block or more, so reading it shows stale vault balances
-                // for a deploy that just landed.
-                let hash = dag
-                    .height_map
-                    .iter()
-                    .next_back()
-                    .and_then(|(_, hashes)| hashes.iter().next().copied())
-                    .ok_or_else(|| "No blocks in the DAG.".to_string())?;
+                // Read the last *finalized* block, not the chain tip: explore-deploy is read-only and
+                // must reflect a finalized state (a non-finalized tip could later be orphaned, spoofing
+                // wallet balance reads). To read a specific just-landed block, use
+                // explore-deploy-by-block-hash with the block hash from deploy-status.
+                let hash = dag.last_finalized_block_unsafe()?;
                 self.block_store.get(&[hash]).await?.pop().flatten()
             }
             Some(h) => {
