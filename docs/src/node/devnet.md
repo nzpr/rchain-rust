@@ -31,6 +31,20 @@ tools/devnet.sh diagnose                     per-node health check (PASS/FAIL)
 tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
 ```
 
+**Autopropose and friends are `up` flags, not build flags** — set them per run:
+
+```text
+tools/devnet.sh up --validators 1                    # autopropose ON (default)
+tools/devnet.sh up --validators 1 --no-autopropose   # autopropose OFF — blocks only via `propose`
+tools/devnet.sh up --validators 1 --no-propose-on-deploy
+                                                     # deploy no longer auto-proposes
+```
+
+`--admin` (default on) publishes the admin HTTP port `40405`, which exposes only `POST /api/v1/propose`
+(*force a block*) — deploys always go through the public `40403` surface or the deploy gRPC, never
+`40405`. Run `tools/devnet.sh help` for the full matrix (autopropose / propose-on-deploy / admin /
+deployer-key / nodes).
+
 ## Worked example
 
 ```bash

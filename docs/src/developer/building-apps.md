@@ -21,6 +21,15 @@ tools/devnet.sh up --validators 3 --observers 1
 tools/devnet.sh up --nodes 3
 ```
 
+**Autopropose is a `up` flag, not a build flag.** You control it per run:
+
+```sh
+tools/devnet.sh up --validators 1                    # autopropose ON (default)
+tools/devnet.sh up --validators 1 --no-autopropose   # autopropose OFF — blocks only via `propose`
+tools/devnet.sh up --validators 1 --no-propose-on-deploy
+                                                     # deploy no longer auto-proposes; autopropose timer still runs
+```
+
 The **bootstrap** node (`devnet-bootstrap`) is the one apps should talk to. Tear down with
 `tools/devnet.sh down -v` (drop the `-v` to keep the data volumes). Run `tools/devnet.sh help` for the
 full flag reference (autopropose / propose-on-deploy / admin / deployer-key / nodes).
@@ -47,6 +56,12 @@ There are two wire surfaces:
 
 Against the bootstrap: public HTTP at `http://localhost:40403`, admin HTTP at
 `http://localhost:40405`, deploy gRPC at `localhost:40402`.
+
+> **There is no "admin deploy".** `40405` is the **admin** API and exposes exactly one operation of
+> interest to apps: `POST /api/v1/propose` — *force a block*. It does **not** accept deploys. Deploys
+> always go through the **public** surface — `POST /api/v1/deploy` on `40403`, or the `DeployService`
+> gRPC on `40401`/`40402`. The admin port is only relevant when you want to trigger block production
+> yourself (e.g. `--no-autopropose`).
 
 > **Propose/REPL is loopback-only.** It binds `127.0.0.1:40402` inside the container and is not
 > host-mapped; `tools/devnet.sh` reaches it via `docker exec`. From an app, drive block production via
@@ -102,6 +117,15 @@ secp256k1 signature over the protobuf-serialized `data` object; `deployer` is th
 and `signature` its signature, both base16. The devnet's funded deployer is validator 0
 (`DEPLOYER_PRIV` in `tools/devnet.sh`); use the CLI to sign during development, and in production sign
 with your own key and fund the corresponding wallet in genesis.
+
+**Deploying is identical whether autopropose is on or off** — the same `POST /api/v1/deploy` (or
+gRPC `doDeploy`) is used, and the deploy always lands in the deploy pool. Autopropose only changes
+*when* it gets included in a block:
+
+- **autopropose ON** (default): the deploy is proposed automatically — immediately (propose-on-deploy)
+  or on the next timer tick.
+- **autopropose OFF** (`--no-autopropose --no-propose-on-deploy`): the deploy sits in the pool until
+  *you* call `propose` (admin `POST /api/v1/propose` on `40405`, or `rnode propose`).
 
 ### 3.2 Read responses
 
@@ -233,8 +257,12 @@ exposes `propose` and `proposeResult`. The protobuf definitions live in
   helpers work out of the box. In your own genesis, fund the wallet that signs your deploys.
 - **Reporting is off.** `api-server.enable-reporting` is `false` by default, so the transaction/event
   reporting routes are unavailable unless you enable them.
-- **One node vs many.** Non-bootstrap nodes offset their host ports by `1000·i`; for a single-validator
-  devnet the bootstrap numbers above are the only ones you need.
+- **One node vs many.** Non-bootstrap nodes offset their host ports by `1000·i`, so node *i*'s public
+  HTTP is `40403 + 1000·i`, its admin HTTP `40405 + 1000·i`, and its deploy gRPC `40402 + 1000·i`. For a
+  single-validator devnet (`--validators 1`) the bootstrap numbers above are the only ones you need.
+  In a multi-validator net you still **deploy to the bootstrap** (or a specific node with
+  `tools/devnet.sh deploy hello.rho --to N`); the deploy then reaches the other nodes via block
+  propagation, and `--autopropose`/`--propose-on-deploy` are per-node flags applied uniformly by `up`.
 - **`InvalidStateHash` on propose.** A `Failure: … (seqNum N)` containing `InvalidStateHash` means the
   node rejected its **own** freshly-created block: the post-state hash it computed did not match the
   state it recomputed by replaying the block's deploys. It is a node-side bug, *not* caused by your
