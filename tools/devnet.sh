@@ -397,11 +397,17 @@ cmd_deploy() {
   local node="$BOOTSTRAP"
   if [[ "${1:-}" == "--to" ]]; then node="$(validator_name "${2:?}")"; shift 2; fi
   local base; base="$(basename "$file")"
-  echo "==> deploying $base to $node"
+  # Anchor the deploy to the current height: a `valid_after_block_number = -1` deploy is "valid from
+  # genesis" and expires after DEPLOY_LIFESPAN blocks, so on a long-running devnet it would be dropped
+  # before it can be proposed.
+  local height
+  height="$(node_cli "$node" status 2>/dev/null | sed -n 's/.*"latestBlockNumber": *\([0-9]*\).*/\1/p')"
+  echo "==> deploying $base to $node (validAfterBlockNumber=${height:-0})"
   node_cli "$node" deploy \
     --phlo-limit 1000000 --phlo-price 1 \
     --private-key "$DEPLOYER_PRIV" \
     --shard-id root \
+    --valid-after-block-number "${height:-0}" \
     "/contracts/$base"
 }
 
