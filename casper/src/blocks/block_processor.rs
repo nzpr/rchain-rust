@@ -59,7 +59,7 @@ where
 /// Process incoming blocks: validate a batch concurrently, insert serially in topological order,
 /// notify the validated queue, and broadcast the block hash (port of `BlockProcessor.apply`).
 pub async fn apply<F, Fut>(
-    mut input_blocks: mpsc::UnboundedReceiver<BlockMessage>,
+    mut input_blocks: mpsc::Receiver<BlockMessage>,
     validated_tx: mpsc::UnboundedSender<BlockMessage>,
     shard_id: String,
     min_phlo_price: i64,

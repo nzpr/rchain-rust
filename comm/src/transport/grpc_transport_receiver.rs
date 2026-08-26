@@ -8,6 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::channel::mpsc;
@@ -105,6 +106,13 @@ const MAX_CONCURRENT_HANDSHAKES: usize = 128;
 /// many concurrent streams (each buffering chunks up to `max_stream_message_size`). Exhaustion
 /// returns `ResourceExhausted` without buffering.
 const MAX_CONCURRENT_STREAMS: usize = 1024;
+/// Bound on concurrent decompressed stream blobs in flight. Each `handle_streamed` task holds its
+/// blob (up to `max_stream_message_size`) until the routing queue accepts it, so this must be small —
+/// it is the aggregate decompressed-memory budget, not the per-stream size.
+const MAX_CONCURRENT_BLOBS: usize = 16;
+/// Wall-clock bound on a single inbound TLS handshake, so a stalled ClientHello cannot hold a
+/// handshake slot (and its socket) indefinitely.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The inbound gRPC `TransportLayer` service (port of the `RoutingGrpcMonix.TransportLayer` impl).
 pub struct GrpcTransportReceiver {
@@ -115,6 +123,7 @@ pub struct GrpcTransportReceiver {
     handle_streamed: Arc<dyn Fn(Blob) -> BoxFuture<()> + Send + Sync>,
     dispatch_slots: Arc<tokio::sync::Semaphore>,
     stream_slots: Arc<tokio::sync::Semaphore>,
+    blob_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[async_trait]
@@ -211,8 +220,20 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
                 usize::try_from(self.max_stream_message_size).unwrap_or(usize::MAX),
             ) {
                 Ok(blob) => {
+                    // Bound concurrent decompressed blobs: `handle_streamed` blocks on the routing
+                    // queue while holding the (up-to-256-MiB) blob, so acquire a slot before
+                    // spawning and drop the blob when the aggregate budget is exhausted (R13).
+                    let permit = match self.blob_slots.clone().try_acquire_owned() {
+                        Ok(p) => p,
+                        Err(_) => {
+                            return Ok(Response::new(internal_server_error(&stream_error_message(
+                                &StreamError::MaxSizeReached,
+                            ))));
+                        }
+                    };
                     let handle = self.handle_streamed.clone();
                     tokio::spawn(async move {
+                        let _permit = permit;
                         (handle)(blob).await;
                     });
                     Ok(Response::new(ack(&self.local, &self.network_id)))
@@ -246,17 +267,26 @@ pub async fn serve(
     // a spawned task, and feed the accepted TLS streams to tonic through a bounded channel. A slow
     // handshake no longer blocks the accept loop.
     let (tx, rx) = mpsc::channel::<Result<TlsIo, std::io::Error>>(MAX_CONCURRENT_HANDSHAKES);
+    // Bound *in-flight* handshakes (not just the completed ones the channel bounds): acquire a slot
+    // before spawning, so a peer opening thousands of idle connections cannot spawn that many
+    // handshake tasks each holding a socket + rustls state until the TCP timeout (R14).
+    let handshake_slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_HANDSHAKES));
     tokio::spawn(async move {
         loop {
             let tcp = match listener.accept().await {
                 Ok((tcp, _)) => tcp,
                 Err(_) => break,
             };
+            let Ok(permit) = handshake_slots.clone().try_acquire_owned() else {
+                continue;
+            };
             let acceptor = acceptor.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
+                let _permit = permit;
                 let mut tx = tx;
-                if let Ok(tls) = acceptor.accept(tcp).await {
+                let accepted = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(tcp)).await;
+                if let Ok(Ok(tls)) = accepted {
                     let _ = tx.send(Ok(TlsIo(tls))).await;
                 }
             });
@@ -272,6 +302,7 @@ pub async fn serve(
         handle_streamed,
         dispatch_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DISPATCH)),
         stream_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_STREAMS)),
+        blob_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_BLOBS)),
     };
 
     tonic::transport::Server::builder()

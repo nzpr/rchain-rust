@@ -82,6 +82,10 @@ pub async fn handle_has_block_message(
 /// the outbound bandwidth a single peer can pull.
 const DEFAULT_BLOCK_REQUEST_LIMIT_PER_SEC: u32 = 100;
 
+/// Upper bound on `StoreItemsMessageRequest.take` — a peer-controlled state-sync walk is capped so
+/// a `take=i32::MAX` cannot traverse/serialize the whole trie.
+const MAX_STORE_ITEMS_TAKE: usize = 10_000;
+
 /// Per-peer fixed-window rate limiter for block requests (H4): bounds the outbound bandwidth a
 /// single peer can pull by requesting blocks. Documented Scala deviation: Scala serves every block
 /// request with no limit.
@@ -304,6 +308,15 @@ impl<E: RSpaceExporter> NodeRunning<E> {
                 .info(self.log_source, "Dropping store-items request with negative skip/take");
             return;
         };
+        // Bound the walk: a peer-controlled `take` of i32::MAX would traverse and serialize the
+        // whole trie (state exfiltration + CPU/IO/bandwidth amplification, repeatable per peer).
+        if take > MAX_STORE_ITEMS_TAKE {
+            self.log.info(
+                self.log_source,
+                &format!("Dropping store-items request with take {take} > {MAX_STORE_ITEMS_TAKE}"),
+            );
+            return;
+        }
         let nodes = self.exporter.get_nodes(&req.start_path, skip, take);
         let history_keys: Vec<Blake2b256Hash> =
             nodes.iter().filter(|n| !n.is_leaf).map(|n| n.hash).collect();

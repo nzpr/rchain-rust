@@ -528,8 +528,11 @@ pub fn wire_block_processing(
     );
 
     // Load each validated hash's block from the store and feed the processor (port of
-    // `blockReceiverStream.evalMap(blockStore.getUnsafe)`).
-    let (processor_input_tx, processor_input_rx) = mpsc::unbounded_channel();
+    // `blockReceiverStream.evalMap(blockStore.getUnsafe)`). Bounded so a peer streaming valid-signed
+    // blocks applies backpressure to `load_blocks` instead of growing an unbounded in-memory queue
+    // ahead of CPU-bound replay validation (R15).
+    let (processor_input_tx, processor_input_rx) =
+        mpsc::channel(rchain_casper::engine::node_running::MAX_PENDING_BLOCKS);
     let load_blocks = {
         let block_store = parts.block_store.clone();
         let mut validation_rx = validation_rx;
@@ -542,7 +545,7 @@ pub fn wire_block_processing(
                     .and_then(|mut v| v.pop())
                     .flatten()
                 {
-                    let _ = processor_input_tx.send(block);
+                    let _ = processor_input_tx.send(block).await;
                 }
             }
         }
