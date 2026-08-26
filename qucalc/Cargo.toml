@@ -2,6 +2,7 @@
 name = "qucalc"
 version = "0.1.0"
 edition = "2021"
+license = "AGPL-3.0-only"
 description = "QuCalc closure superposition over census_inventory.json: ways as a coefficient, most-ways-first."
 
 [dependencies]
