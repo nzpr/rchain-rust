@@ -111,17 +111,26 @@ pub struct NodeCapabilities {
     pub faucet: bool,
 }
 
-/// A pooled (not-yet-included) deploy (the `/api/v1/deploys` entry).
+/// A pooled (not-yet-included) deploy (an entry in the `/api/v1/deploys` response).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PooledDeploy {
-    pub signature: String,
+    /// The deploy id (base16 signature) — identical to what `POST /api/v1/deploy` returns and
+    /// `deploy-status` accepts.
+    pub deploy_id: String,
     pub timestamp: i64,
     pub deployer: String,
     pub term: String,
     pub phlo_price: i64,
     pub phlo_limit: i64,
     pub valid_after_block_number: i64,
+}
+
+/// The `/api/v1/deploys` response: the currently-pooled deploys, most-recent-first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PooledDeploys {
+    pub deploys: Vec<PooledDeploy>,
 }
 
 /// Exception thrown by the Block API (port of `BlockApiException`).

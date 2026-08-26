@@ -167,7 +167,8 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
         // Add block metadata to the index.
         self.block_metadata_store.add(block_metadata.clone()).await?;
 
-        // Index each deploy to this block.
+        // Index each deploy to this block, and remove it from the pending pool so
+        // `pooled_deploys` no longer lists it (a deploy leaves the pool once included).
         let deploy_hashes: Vec<DeployId> = block
             .state
             .deploys
@@ -180,6 +181,7 @@ impl BlockDagStorage for BlockDagKeyValueStorage {
                 .map(|h| (h.clone(), block.block_hash))
                 .collect();
             self.deploy_index.put(&pairs).await?;
+            self.deploy_store.delete(&deploy_hashes).await?;
         }
 
         // Compute fringe diff and store fringe data.
@@ -463,6 +465,36 @@ mod tests {
 
         let pooled = storage.pooled_deploys().await.unwrap();
         assert_eq!(pooled[&deploy.sig], deploy);
+    }
+
+    #[tokio::test]
+    async fn insert_removes_included_deploy_from_pool() {
+        let storage = build_storage().await;
+        let signed = deploy_with_id(7);
+        storage.add_deploy(signed.clone()).await.unwrap();
+        assert!(storage.contains_deploy_in_pool(&signed.sig).await.unwrap());
+
+        let processed = rchain_models::casper::protocol::casper_message::ProcessedDeploy {
+            deploy: signed.clone(),
+            cost: rchain_models::casper::protocol::casper_message::PCost { cost: 0 },
+            deploy_log: vec![],
+            is_failed: false,
+            system_deploy_error: None,
+        };
+        let block_hash = hash(1);
+        let mut b = block(block_hash);
+        b.state.deploys = vec![processed];
+        storage.insert(meta(block_hash, &[], 1), b).await.unwrap();
+
+        assert!(
+            !storage.contains_deploy_in_pool(&signed.sig).await.unwrap(),
+            "an included deploy must leave the pool"
+        );
+        assert_eq!(
+            storage.lookup_by_deploy_id(&signed.sig).await.unwrap(),
+            Some(block_hash)
+        );
+        assert!(storage.pooled_deploys().await.unwrap().is_empty());
     }
 
     fn deploy_with_id(id: usize) -> SignedDeployData {

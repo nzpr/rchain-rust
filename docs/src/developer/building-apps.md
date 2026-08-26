@@ -246,10 +246,15 @@ curl -s http://localhost:40403/api/v1/deploys
 ```
 
 ```json
-[ { "signature": "<hex>", "timestamp": 1724500000000, "deployer": "<hex>",
+{ "deploys": [
+  { "deployId": "<base16 sig>", "timestamp": 1724500000000, "deployer": "<hex>",
     "term": "@\"hello\"!(\"world\")", "phloPrice": 1, "phloLimit": 1000000,
-    "validAfterBlockNumber": -1 } ]
+    "validAfterBlockNumber": -1 }
+] }
 ```
+
+The `deployId` is the base16 signature — identical to what `POST /api/v1/deploy` returns and
+`GET /api/v1/deploy-status/{sig}` accepts. When the pool is empty the response is `{ "deploys": [] }`.
 
 Notes:
 
@@ -259,6 +264,9 @@ Notes:
 - Only *pooled* (not-yet-included) deploys are listed. Expired deploys are pruned from the pool, and a
   signature that was never pooled (or is already in a block) won't appear — use
   `GET /api/v1/deploy-status/{sig}` for a specific deploy's outcome.
+- Recommended app pattern: after `POST /api/v1/deploy`, poll `GET /api/v1/deploy-status/{sig}` for the
+  terminal state; use `GET /api/v1/deploys` to enumerate anything still pending (e.g. on startup to
+  reconcile across sessions/devices).
 
 ## 4. End-to-end example (curl)
 

@@ -52,10 +52,10 @@ pub fn to_node_capabilities(caps: &Capabilities, faucet: bool) -> NodeCapabiliti
     }
 }
 
-/// Map a pooled `SignedDeployData` to a `PooledDeploy` (the `/api/v1/deploys` entry).
+/// Map a pooled `SignedDeployData` to a `PooledDeploy` (an entry in the `/api/v1/deploys` response).
 pub fn to_pooled_deploy(signed: &SignedDeployData) -> PooledDeploy {
     PooledDeploy {
-        signature: base16::encode(&signed.sig),
+        deploy_id: base16::encode(&signed.sig),
         timestamp: signed.data.timestamp,
         deployer: base16::encode(&signed.deployer),
         term: signed.data.term.clone(),

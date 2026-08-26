@@ -7,7 +7,7 @@ use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo}
 use super::dto::{
     ApiStatus, BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest,
     DataAtNameResponse, DeployExecStatus, DeployRequest, FaucetResponse, NodeCapabilities,
-    PooledDeploy, RhoDataResponse,
+    PooledDeploys, RhoDataResponse,
 };
 use crate::web::transaction::TransactionResponse;
 
@@ -20,7 +20,7 @@ pub trait WebApi: Send + Sync {
 
     async fn deploy_status(&self, deploy_id: &str) -> Result<DeployExecStatus, BlockApiException>;
 
-    async fn pooled_deploys(&self) -> Result<Vec<PooledDeploy>, BlockApiException>;
+    async fn pooled_deploys(&self) -> Result<PooledDeploys, BlockApiException>;
 
     async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException>;
 

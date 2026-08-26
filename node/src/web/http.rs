@@ -666,7 +666,7 @@ mod tests {
     use super::*;
     use crate::api::dto::{
         ApiStatus, DataAtNameResponse, DeployExecStatus, FaucetResponse, NodeCapabilities,
-        PooledDeploy, RhoDataResponse, VersionInfo,
+        PooledDeploy, PooledDeploys, RhoDataResponse, VersionInfo,
     };
     use crate::diagnostics::scrape_data_builder::Configuration;
     use crate::web::transaction::TransactionResponse;
@@ -748,6 +748,7 @@ mod tests {
 
     struct MockWebApi {
         status: ApiStatus,
+        pooled_deploys: PooledDeploys,
     }
 
     #[async_trait]
@@ -764,8 +765,8 @@ mod tests {
             unimplemented!()
         }
 
-        async fn pooled_deploys(&self) -> Result<Vec<PooledDeploy>, BlockApiException> {
-            unimplemented!()
+        async fn pooled_deploys(&self) -> Result<PooledDeploys, BlockApiException> {
+            Ok(self.pooled_deploys.clone())
         }
 
         async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException> {
@@ -837,6 +838,7 @@ mod tests {
             reporter: Arc::new(NewPrometheusReporter::new(Configuration::default())),
             web_api: Arc::new(MockWebApi {
                 status: test_status(),
+                pooled_deploys: PooledDeploys { deploys: Vec::new() },
             }),
             block_report_api: test_block_report_api(),
             status_provider: None,
@@ -868,6 +870,40 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["address"], "addr");
         assert_eq!(json["version"]["api"], "1.0");
+    }
+
+    #[tokio::test]
+    async fn api_deploys_returns_wrapped_pool() {
+        let mut s = state();
+        s.web_api = Arc::new(MockWebApi {
+            status: test_status(),
+            pooled_deploys: PooledDeploys {
+                deploys: vec![PooledDeploy {
+                    deploy_id: "deadbeef".to_string(),
+                    timestamp: 1724500000000,
+                    deployer: "00".to_string(),
+                    term: "Nil".to_string(),
+                    phlo_price: 1,
+                    phlo_limit: 100,
+                    valid_after_block_number: -1,
+                }],
+            },
+        });
+        let response = api_deploys(State(s)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["deploys"][0]["deployId"], "deadbeef");
+        assert_eq!(json["deploys"][0]["timestamp"], 1724500000000i64);
+    }
+
+    #[tokio::test]
+    async fn api_deploys_empty_pool_returns_empty_array() {
+        let response = api_deploys(State(state())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["deploys"], serde_json::json!([]));
     }
 
     #[test]

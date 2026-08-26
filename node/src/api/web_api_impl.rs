@@ -20,7 +20,7 @@ use super::conversion::{
 use super::dto::{
     ApiStatus, BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest,
     DataAtNameResponse, DeployExecStatus, DeployRequest, FaucetResponse, NodeCapabilities,
-    PooledDeploy, RhoDataResponse,
+    PooledDeploys, RhoDataResponse,
 };
 use super::faucet;
 use super::rho_expr::{rho_expr_to_par, unforg_to_par};
@@ -86,11 +86,12 @@ impl WebApi for WebApiImpl {
         self.block_api.deploy(&deploy).await.map_err(BlockApiException)
     }
 
-    async fn pooled_deploys(&self) -> Result<Vec<PooledDeploy>, BlockApiException> {
+    async fn pooled_deploys(&self) -> Result<PooledDeploys, BlockApiException> {
         let mut pooled = self.block_api.pooled_deploys().await.map_err(BlockApiException)?;
         // Most-recent-first: the pool's key order is the deploy signature bytes, not insertion time.
         pooled.sort_by_key(|d| std::cmp::Reverse(d.data.timestamp));
-        Ok(pooled.iter().map(to_pooled_deploy).collect())
+        let deploys = pooled.iter().map(to_pooled_deploy).collect();
+        Ok(PooledDeploys { deploys })
     }
 
     async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException> {
