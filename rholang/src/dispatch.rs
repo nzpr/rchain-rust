@@ -71,6 +71,11 @@ impl Dispatch for RholangAndScalaDispatcher {
         match &continuation {
             TaggedContinuation::ParBody(pwr) => {
                 let env = build_env(&data_list);
+                // Order-sensitive merge, Scala-faithful (`dispatch.scala:33`:
+                // `parWithRand.randomState +: dataList.map(_.randomState)`): continuation first, then
+                // the matched data in receive-bind order. `data_list` order is canonical (extracted in
+                // pattern order by `extract_data_candidates`), so this is deterministic — do NOT sort
+                // here (unlike the mergeable-channel merge, which merges an unordered set of branches).
                 let mut randoms: Vec<Blake2b512Random> = vec![pwr.random_state.clone()];
                 randoms.extend(data_list.iter().map(|d| d.random_state.clone()));
                 let merged = Blake2b512Random::merge(&randoms);

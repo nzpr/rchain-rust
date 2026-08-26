@@ -22,6 +22,7 @@
 - [Grammar and sorts](formal/grammar-sorts.md)
 - [The 19 laws](formal/the-19-laws.md)
 - [The concurrency model](formal/concurrency-model.md)
+- [Determinism of the block state transition](formal/determinism.md)
 - [Structural congruence and reduction](formal/congruence-reduction.md)
 - [Concurrent reduction](formal/concurrent-reduction.md)
 - [Effect scheduling](formal/effect-scheduling.md)

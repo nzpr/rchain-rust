@@ -44,6 +44,22 @@ pub struct DataAtNameByBlockHashRequest {
     pub use_pre_state_hash: bool,
 }
 
+/// A faucet request: the REV address to fund (devnet-only endpoint).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaucetRequest {
+    pub address: String,
+}
+
+/// A faucet response: the deploy id of the transfer (poll `deploy-status/{deployId}` for the result).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaucetResponse {
+    pub deploy_id: String,
+    pub amount: i64,
+    pub to: String,
+}
+
 /// API/node version info (port of `VersionInfo`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

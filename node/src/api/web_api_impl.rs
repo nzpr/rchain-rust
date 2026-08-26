@@ -6,8 +6,10 @@ use async_trait::async_trait;
 
 use rchain_casper::api::block_api::BlockApi;
 use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+use rchain_crypto::private_key::PrivateKey;
 use rchain_models::casper::protocol::casper_message::SignedDeployData;
 use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo};
+use rchain_rholang::util::rev_address::RevAddress;
 use rchain_shared::base16;
 
 use super::conversion::{
@@ -16,8 +18,9 @@ use super::conversion::{
 };
 use super::dto::{
     ApiStatus, BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest,
-    DataAtNameResponse, DeployExecStatus, DeployRequest, RhoDataResponse,
+    DataAtNameResponse, DeployExecStatus, DeployRequest, FaucetResponse, RhoDataResponse,
 };
+use super::faucet;
 use super::rho_expr::{rho_expr_to_par, unforg_to_par};
 use super::web_api::WebApi;
 use crate::web::transaction::{TransactionApi, TransactionResponse};
@@ -26,13 +29,23 @@ use crate::web::transaction::{TransactionApi, TransactionResponse};
 pub struct WebApiImpl {
     block_api: Arc<dyn BlockApi>,
     transaction_api: Arc<dyn TransactionApi>,
+    /// The dev deployer key (dev-mode only); `None` disables the faucet.
+    deployer_key: Option<PrivateKey>,
+    shard_id: String,
 }
 
 impl WebApiImpl {
-    pub fn new(block_api: Arc<dyn BlockApi>, transaction_api: Arc<dyn TransactionApi>) -> Self {
+    pub fn new(
+        block_api: Arc<dyn BlockApi>,
+        transaction_api: Arc<dyn TransactionApi>,
+        deployer_key: Option<PrivateKey>,
+        shard_id: String,
+    ) -> Self {
         WebApiImpl {
             block_api,
             transaction_api,
+            deployer_key,
+            shard_id,
         }
     }
 }
@@ -71,6 +84,28 @@ impl WebApi for WebApiImpl {
             .map_err(BlockApiException)?;
         to_deploy_exec_status(&status)
             .ok_or_else(|| BlockApiException("Deploy status protobuf message error".to_string()))
+    }
+
+    async fn faucet(&self, address: &str) -> Result<FaucetResponse, BlockApiException> {
+        if !RevAddress::is_valid(address) {
+            return Err(BlockApiException(format!("Invalid REV address: {address}")));
+        }
+        let sk = self.deployer_key.as_ref().ok_or_else(|| {
+            BlockApiException("faucet requires --dev-mode --deployer-private-key".to_string())
+        })?;
+        // Valid-from-now: a deploy with `valid_after_block_number = -1` is treated as expired once
+        // the node is past `DEPLOY_LIFESPAN` (50) blocks, so anchor it to the current height.
+        let vabn = self.block_api.status().await.latest_block_number;
+        let signed =
+            faucet::sign_faucet_deploy(sk, address, faucet::FAUCET_AMOUNT, &self.shard_id, vabn)
+                .map_err(BlockApiException)?;
+        // `deploy` validates, pools, and (with propose-on-deploy) proposes the transfer.
+        self.block_api.deploy(&signed).await.map_err(BlockApiException)?;
+        Ok(FaucetResponse {
+            deploy_id: base16::encode(&signed.sig),
+            amount: faucet::FAUCET_AMOUNT,
+            to: address.to_string(),
+        })
     }
 
     async fn listen_for_data_at_name(

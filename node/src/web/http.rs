@@ -31,13 +31,17 @@ use crate::api::admin_web_api::AdminWebApi;
 use crate::api::grpc::DEFAULT_API_RATE_LIMIT_PER_SEC;
 use crate::api::dto::{
     BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest, DeployRequest,
-    ExploreDeployRequest,
+    ExploreDeployRequest, FaucetRequest,
 };
 use crate::api::web_api::WebApi;
 use crate::diagnostics::NewPrometheusReporter;
 use crate::web::reporting::transform_result;
 use crate::web::status_info;
 use crate::web::version_info;
+
+/// Rate limit for the devnet faucet endpoint. Much stricter than the deploy route because each
+/// request transfers real (dev) REV.
+const FAUCET_RATE_LIMIT_PER_SEC: u64 = 1;
 
 /// Comm state needed by `GET /status` (port of the `ConnectionsCell`/`NodeDiscovery`/`RPConfAsk`
 /// arguments of `StatusInfo.service`).
@@ -60,6 +64,8 @@ pub struct HttpState {
     /// Rate limiter for the unauthenticated deploy/explore-deploy routes (documented Scala
     /// deviation: the Scala HTTP deploy routes are unlimited).
     pub deploy_rate_limiter: Arc<RateLimiter>,
+    /// Rate limiter for the devnet faucet endpoint.
+    pub faucet_rate_limiter: Arc<RateLimiter>,
 }
 
 /// State shared by the admin HTTP server (port of the `adminWebApiRoutes` argument of
@@ -116,6 +122,17 @@ async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployReques
             .into_response();
     }
     json_result(state.web_api.deploy(&req).await)
+}
+
+async fn api_faucet(State(state): State<HttpState>, Json(req): Json<FaucetRequest>) -> Response {
+    if !state.faucet_rate_limiter.allow() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json("faucet rate limit exceeded".to_string()),
+        )
+            .into_response();
+    }
+    json_result(state.web_api.faucet(&req.address).await)
 }
 
 async fn api_explore_deploy(State(state): State<HttpState>, Json(term): Json<String>) -> Response {
@@ -517,6 +534,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/trace", get(reporting_trace))
         .route("/api/status", get(api_status))
         .route("/api/deploy", post(api_deploy))
+        .route("/api/faucet", post(api_faucet))
         .route("/api/explore-deploy", post(api_explore_deploy))
         .route(
             "/api/explore-deploy-by-block-hash",
@@ -537,6 +555,7 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/transactions/:hash", get(api_get_transaction))
         .route("/api/v1/status", get(api_status))
         .route("/api/v1/deploy", post(api_deploy))
+        .route("/api/v1/faucet", post(api_faucet))
         .route(
             "/api/v1/deploy-status/:deploy_signature",
             get(api_v1_deploy_status),
@@ -601,6 +620,7 @@ pub async fn acquire_http_server(
         status_provider,
         enable_reporting,
         deploy_rate_limiter: Arc::new(RateLimiter::new(DEFAULT_API_RATE_LIMIT_PER_SEC)),
+        faucet_rate_limiter: Arc::new(RateLimiter::new(FAUCET_RATE_LIMIT_PER_SEC)),
     })
     .layer(TimeoutLayer::new(max_connection_idle));
     axum::serve(listener, app).await.map_err(|e| e.to_string())
@@ -633,7 +653,8 @@ pub async fn acquire_admin_http_server(
 mod tests {
     use super::*;
     use crate::api::dto::{
-        ApiStatus, DataAtNameResponse, DeployExecStatus, RhoDataResponse, VersionInfo,
+        ApiStatus, DataAtNameResponse, DeployExecStatus, FaucetResponse, RhoDataResponse,
+        VersionInfo,
     };
     use crate::diagnostics::scrape_data_builder::Configuration;
     use crate::web::transaction::TransactionResponse;
@@ -726,6 +747,10 @@ mod tests {
             unimplemented!()
         }
 
+        async fn faucet(&self, _: &str) -> Result<FaucetResponse, BlockApiException> {
+            unimplemented!()
+        }
+
         async fn listen_for_data_at_name(
             &self,
             _: &DataAtNameRequest,
@@ -792,6 +817,7 @@ mod tests {
             status_provider: None,
             enable_reporting: true,
             deploy_rate_limiter: Arc::new(RateLimiter::new(DEFAULT_API_RATE_LIMIT_PER_SEC)),
+            faucet_rate_limiter: Arc::new(RateLimiter::new(FAUCET_RATE_LIMIT_PER_SEC)),
         }
     }
 

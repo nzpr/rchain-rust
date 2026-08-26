@@ -62,6 +62,7 @@ Commands:
   deploy <contract.rho> [--to N] signed deploy to the bootstrap (file lives in examples/)
   eval <file.rho>                thin-client REPL eval of a file on the bootstrap
   query <name>                   listen for data at a public name
+  faucet <rev-address>           transfer 0.3 REV from the funded dev wallet to <rev-address>
   propose [--admin]              force the bootstrap to propose (gRPC, or admin HTTP with --admin)
   cli <node> <rnode subcommand…> run the Rust client inside a node container
   help                           this message
@@ -417,6 +418,20 @@ cmd_query() {
   node_cli "$BOOTSTRAP" listen-data-at-name -t pub -c "\"$name\""
 }
 
+cmd_faucet() {
+  local addr="${1:?REV address required}"
+  if ! docker ps --format '{{.Names}}' | grep -q "^${BOOTSTRAP}$"; then
+    echo "ERROR: $BOOTSTRAP is not running — start it with 'up --validators 1'." >&2
+    exit 2
+  fi
+  # The faucet is served on the public HTTP API (dev-mode only); it transfers 0.3 REV from the
+  # genesis-funded deployer wallet to the requested address.
+  curl -s -X POST "http://localhost:${HTTP_BASE}/api/v1/faucet" \
+    -H 'Content-Type: application/json' \
+    -d "{\"address\":\"${addr}\"}"
+  echo
+}
+
 cmd_propose() {
   if [[ "${1:-}" == "--admin" ]]; then
     if ! docker port "$BOOTSTRAP" 40405 >/dev/null 2>&1; then
@@ -439,6 +454,7 @@ case "${1:-}" in
   deploy) shift; cmd_deploy "$@" ;;
   eval) shift; cmd_eval "$@" ;;
   query) shift; cmd_query "$@" ;;
+  faucet) shift; cmd_faucet "$@" ;;
   propose) shift; cmd_propose "${1:-}" ;;
   cli) shift; cmd_cli "$@" ;;
   help|--help|-h) help ;;

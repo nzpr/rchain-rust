@@ -341,7 +341,7 @@ impl RuntimeManager {
         let (mut processed, eval_result) = self.process_deploy(deploy, &rand.split_byte(1)).await?;
         collector = collector.add(&processed.deploy_log, &eval_result.mergeable);
 
-        let refund = SystemDeploy::refund(deploy.data.phlo_limit, rand.split_byte(2));
+        let refund = SystemDeploy::refund(processed.refund_amount(), rand.split_byte(2));
         let _ = self.eval_system_deploy(&refund).await?;
 
         processed.deploy_log = collector.event_log.clone();

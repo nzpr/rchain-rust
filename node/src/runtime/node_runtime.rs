@@ -1133,7 +1133,20 @@ pub async fn setup(
         block_report_api.clone(),
         transfer_unforgeable,
     ));
-    let web_api: Arc<dyn WebApi> = Arc::new(WebApiImpl::new(block_api.clone(), transaction_api));
+    // The faucet signs transfers with the dev deployer key (only present in dev mode; `None`
+    // disables the faucet). The funds come from the deployer vault seeded at genesis via wallets.txt.
+    let faucet_deployer_key = conf
+        .dev
+        .deployer_private_key
+        .as_deref()
+        .and_then(|hex| base16::decode(hex))
+        .map(PrivateKey::new);
+    let web_api: Arc<dyn WebApi> = Arc::new(WebApiImpl::new(
+        block_api.clone(),
+        transaction_api,
+        faucet_deployer_key,
+        shard_id.clone(),
+    ));
     let admin_web_api: Arc<dyn AdminWebApi> = Arc::new(AdminWebApiImpl::new(block_api));
 
     Ok((

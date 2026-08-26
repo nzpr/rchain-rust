@@ -17,6 +17,7 @@ use rchain_models::ast::{Expr, Par, Var};
 use rchain_models::casper::protocol::casper_message::{
     ProcessedDeploy, ProcessedSystemDeploy, SystemDeployData,
 };
+use rchain_models::normalizer_env::NormalizerEnv;
 use rchain_models::par_ops::from_expr;
 use rchain_models::types::count_free_vars;
 use rchain_models::rholang::RhoType::RhoNumber;
@@ -269,7 +270,7 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
 
         // Refund.
         let refund = SystemDeploy::refund(
-            refund_amount(processed_deploy),
+            processed_deploy.refund_amount(),
             rand.split_byte(REFUND_SPLIT_INDEX),
         );
         let (_refund_result, refund_eval) = self.replay_system_deploy_internal(&refund, None).await?;
@@ -297,9 +298,17 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             processed_deploy.deploy.data.phlo_limit,
             "deploy-replay",
         ));
+        // S1: replay must normalize with the SAME env as play, so `new x(`rho:rchain:deployerId`)` /
+        // `rho:rchain:deployId` resolve identically (the Scala oracle passes `NormalizerEnv(deploy)`
+        // on both paths). The empty env made every deployerId/deployId-dependent deploy fail replay.
+        let normalizer_env = NormalizerEnv::new(&processed_deploy.deploy);
         let result = self
             .runtime
-            .evaluate(&processed_deploy.deploy.data.term, &rand)
+            .evaluate_with_env(
+                &processed_deploy.deploy.data.term,
+                normalizer_env.to_env(),
+                &rand,
+            )
             .await
             .map_err(|e| ReplayFailure::internal_error(e.to_string()))?;
         if result.failed() {
@@ -689,18 +698,4 @@ fn get_number_with_rnd(par_with_rnd: &ListParWithRandom) -> Result<i64, String> 
             par_with_rnd.pars.len()
         )),
     }
-}
-
-/// The phlo refunded after a deploy (port of `ProcessedDeploy.refundAmount`).
-fn refund_amount(processed_deploy: &ProcessedDeploy) -> i64 {
-    // Compute in i128 and clamp to i64::MAX: the refund is non-negative by construction
-    // (`max(0)`), so any overflow would otherwise wrap and corrupt cost accounting.
-    let remaining = processed_deploy
-        .deploy
-        .data
-        .phlo_limit
-        .saturating_sub_unsigned(processed_deploy.cost.cost)
-        .max(0) as i128;
-    let product = remaining * (processed_deploy.deploy.data.phlo_price as i128);
-    i64::try_from(product).unwrap_or(i64::MAX)
 }

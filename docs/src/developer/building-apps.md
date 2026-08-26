@@ -149,6 +149,25 @@ you need a block deterministically (e.g. your node is **not** autoproposing). Wh
 calling `propose` is redundant; an extra call while one is in flight returns
 `Failure: another propose is in progress`, which is harmless.
 
+### 3.4 Faucet — fund an unfunded wallet
+
+The devnet seeds a **funded deployer wallet** at genesis (`wallets.txt`), and every node runs with
+`--dev-mode --deployer-private-key`. The faucet transfers `0.3 REV` (`30,000,000` drops) from that
+funded wallet to a caller's REV address — it is a real transfer, not newly-minted REV.
+
+```sh
+tools/devnet.sh faucet <rev-address>
+# or over HTTP (public):
+curl -s -X POST http://localhost:40403/api/v1/faucet \
+  -H 'Content-Type: application/json' \
+  -d '{"address": "<rev-address>"}'
+```
+
+The response is `{ "deployId": "<hex>", "amount": 30000000, "to": "<rev-address>" }`. The transfer is
+a normal deploy, so poll `GET /api/v1/deploy-status/{deployId}` for `processedWithSuccess`. The
+endpoint is **dev-mode only** (a node without `--deployer-private-key` returns `400`) and is
+rate-limited to one drip per second.
+
 ## 4. End-to-end example (curl)
 
 ```bash
@@ -178,6 +197,7 @@ Requests and responses are JSON (`camelCase` keys).
 |---|---|---|---|
 | GET | `/api/v1/status` | node version, address, peers, block height | `ApiStatus` |
 | POST | `/api/v1/deploy` | submit a signed deploy | `DeployRequest` → deploy signature (string) |
+| POST | `/api/v1/faucet` | **dev-mode** — transfer 0.3 REV to an address | `{address}` → `FaucetResponse` |
 | GET | `/api/v1/deploy-status/{sig}` | a deploy's execution status | `DeployExecStatus` |
 | POST | `/api/v1/explore-deploy` | run a term, return its result | raw JSON string term → `ExploratoryDeployResponse` |
 | POST | `/api/v1/explore-deploy-by-block-hash` | run a term at a block hash | `{term, blockHash, usePreStateHash}` |

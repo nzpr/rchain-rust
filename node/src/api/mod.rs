@@ -4,6 +4,7 @@ pub mod admin_web_api;
 pub mod admin_web_api_impl;
 pub mod conversion;
 pub mod dto;
+pub mod faucet;
 pub mod grpc;
 pub mod rho_expr;
 pub mod web_api;

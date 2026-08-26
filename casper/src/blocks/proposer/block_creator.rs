@@ -86,22 +86,10 @@ impl BlockCreator {
                 pre_state_hash,
             );
 
-            // Slash + close-block system deploys.
-            let mut system_deploys: Vec<SystemDeploy> = Vec::new();
-            let mut sorted_to_slash: Vec<&Validator> = to_slash.iter().collect();
-            sorted_to_slash.sort();
-            for (i, v) in sorted_to_slash.into_iter().enumerate() {
-                let seed = rand.split_byte(
-                    u8::try_from(deploys.len() + i).map_err(|e| e.to_string())?,
-                );
-                system_deploys.push(SystemDeploy::slash(v, seed));
-            }
-            let close_seed = rand.split_byte(
-                u8::try_from(deploys.len() + to_slash.len()).map_err(|e| e.to_string())?,
-            );
-            system_deploys.push(SystemDeploy::close_block(close_seed));
-
-            // Pooled deploys filtered to the selected ids.
+            // Pooled deploys filtered to the selected ids — computed FIRST so the slash/close seed
+            // index below reflects the ACTUAL deploy count (`selected.len()`, matching replay's
+            // `terms.len()`), not the requested id list (`deploys.len()`) which can over-count if a
+            // requested deploy is absent from the pool (S2/S4).
             let pooled = dag.pooled_deploys().await?;
             let deploy_set: BTreeSet<&DeployId> = deploys.iter().collect();
             let selected: Vec<SignedDeployData> = pooled
@@ -109,6 +97,21 @@ impl BlockCreator {
                 .filter(|(id, _)| deploy_set.contains(id))
                 .map(|(_, d)| d)
                 .collect();
+
+            // Slash + close-block system deploys.
+            let mut system_deploys: Vec<SystemDeploy> = Vec::new();
+            let mut sorted_to_slash: Vec<&Validator> = to_slash.iter().collect();
+            sorted_to_slash.sort();
+            for (i, v) in sorted_to_slash.into_iter().enumerate() {
+                let seed = rand.split_byte(
+                    u8::try_from(selected.len() + i).map_err(|e| e.to_string())?,
+                );
+                system_deploys.push(SystemDeploy::slash(v, seed));
+            }
+            let close_seed = rand.split_byte(
+                u8::try_from(selected.len() + to_slash.len()).map_err(|e| e.to_string())?,
+            );
+            system_deploys.push(SystemDeploy::close_block(close_seed));
 
             Some(
                 compute_deploys_checkpoint(

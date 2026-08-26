@@ -1399,6 +1399,12 @@ impl SystemProcesses {
                             .ok_or_else(|| illegal_arg("transfer expects a number amount"))?;
                         let amount =
                             NonNegI64::try_from(amount).map_err(|e| illegal_arg(&e.to_string()))?;
+                        // Self-transfer is a no-op: the Scala purse split/deposit nets to zero.
+                        // Without this guard the read-then-write below would double the balance when
+                        // `from == to` (both writes target the same vault leaf).
+                        if from.as_str() == to {
+                            return cc.produce(&rand, &[RhoNil::apply()], ret).await;
+                        }
                         let from_balance =
                             match native.vault_balance(&from).await.map_err(|e| illegal_arg(&e))? {
                                 Some(b) => b,
@@ -1747,6 +1753,58 @@ mod tests {
         .await
         .expect_err("transfer with a byte array must be rejected");
         assert!(err.to_string().contains("deployerId"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn rev_vault_self_transfer_is_a_noop() {
+        let mock = Arc::new(MockSpace {
+            produced: Mutex::new(Vec::new()),
+        });
+        let charging = ChargingRSpace::new(
+            mock.clone(),
+            Arc::new(crate::accounting::CostAccounting::from_initial(
+                crate::accounting::Costs::unsafe_max(),
+            )),
+        );
+        let dispatcher = Arc::new(RholangAndScalaDispatcher::new(std::collections::BTreeMap::new()));
+        let block_data = Arc::new(Mutex::new(BlockData::empty()));
+        let native_state = Arc::new(NativeSystemState::new(Arc::new(
+            rchain_rspace::native_store::InMemNativeStore::empty(),
+        )));
+        let sp = SystemProcesses::new(charging, dispatcher, block_data, native_state.clone());
+        let defs = sp.definitions();
+        let vault = defs
+            .iter()
+            .find(|d| d.body_ref == BodyRefs::REV_VAULT)
+            .expect("revVault definition");
+
+        let alice_id = RhoDeployerId::apply(vec![1; 65]);
+        let alice = RevAddress::from_deployer_id(&[1; 65])
+            .expect("alice address")
+            .to_base58();
+        native_state.set_vault_balance(&alice, NonNegI64::try_from(100).unwrap());
+
+        // transfer(alice, alice, 30, _) must succeed and leave the balance unchanged (the Scala
+        // purse split/deposit nets to zero); without the guard the read-then-write would double it.
+        let ret = FixedChannels::stdout();
+        (vault.handler)(vec![lpw(vec![
+            RhoString::apply("transfer".to_string()),
+            RhoList::apply(vec![
+                alice_id,
+                RhoString::apply(alice.clone()),
+                RhoNumber::apply(30),
+                ret,
+            ]),
+        ])])
+        .await
+        .expect("self-transfer must succeed");
+
+        let balance = native_state
+            .vault_balance(&alice)
+            .await
+            .expect("read balance")
+            .expect("vault exists");
+        assert_eq!(i64::from(balance), 100, "self-transfer must not change the balance");
     }
 
     #[tokio::test]

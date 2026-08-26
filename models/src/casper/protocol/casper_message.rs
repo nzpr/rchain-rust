@@ -462,6 +462,21 @@ impl ProcessedDeploy {
             system_deploy_error: self.system_deploy_error.clone().unwrap_or_default(),
         }
     }
+
+    /// The phlo refunded after this deploy: `max(0, phlo_limit − cost) × phlo_price` (port of
+    /// `ProcessedDeploy.refundAmount`). Computed in `i128` and clamped to `i64::MAX` so the refund
+    /// cannot wrap (it is non-negative by construction). Shared by play and replay so the two paths
+    /// cannot drift (S3).
+    pub fn refund_amount(&self) -> i64 {
+        let remaining = self
+            .deploy
+            .data
+            .phlo_limit
+            .saturating_sub_unsigned(self.cost.cost)
+            .max(0) as i128;
+        let product = remaining * (self.deploy.data.phlo_price as i128);
+        i64::try_from(product).unwrap_or(i64::MAX)
+    }
 }
 
 /// Rholang tuple-space state change (port of `RholangState`).

@@ -6,7 +6,7 @@ use rchain_models::casper::protocol::deploy_service::{BlockInfo, LightBlockInfo}
 
 use super::dto::{
     ApiStatus, BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest,
-    DataAtNameResponse, DeployExecStatus, DeployRequest, RhoDataResponse,
+    DataAtNameResponse, DeployExecStatus, DeployRequest, FaucetResponse, RhoDataResponse,
 };
 use crate::web::transaction::TransactionResponse;
 
@@ -18,6 +18,8 @@ pub trait WebApi: Send + Sync {
     async fn deploy(&self, request: &DeployRequest) -> Result<String, BlockApiException>;
 
     async fn deploy_status(&self, deploy_id: &str) -> Result<DeployExecStatus, BlockApiException>;
+
+    async fn faucet(&self, address: &str) -> Result<FaucetResponse, BlockApiException>;
 
     async fn listen_for_data_at_name(
         &self,

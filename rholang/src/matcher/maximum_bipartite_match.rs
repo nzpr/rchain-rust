@@ -92,10 +92,14 @@ where
             return None;
         }
     }
-    let out: Vec<(T, P, R)> = state
+    // Sort the matches by candidate index: `HashMap::into_iter()` order is per-process-randomized,
+    // and the output Vec order must be canonical (Law 8 deterministic COMM).
+    let mut matched: Vec<(usize, T, P, R)> = state
         .matches
         .into_iter()
-        .map(|(idx, (pat, res))| (targets[idx].clone(), pat.0, res))
+        .map(|(idx, (pat, res))| (idx, targets[idx].clone(), pat.0, res))
         .collect();
+    matched.sort_by_key(|(idx, _, _, _)| *idx);
+    let out: Vec<(T, P, R)> = matched.into_iter().map(|(_, t, p, r)| (t, p, r)).collect();
     Some(out)
 }
