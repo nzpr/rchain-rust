@@ -47,32 +47,29 @@ pub struct ReceiveInfo {
 }
 
 /// Request-state machine for the Last Finalized State block requester (port of
-/// `LfsBlockRequester.ST`).
+/// `LfsBlockRequester.ST`, minus the Scala `lowerBound`/`extraHeights` cutoff — see `spec/AUDIT.md`).
+///
+/// The Scala state tracks a `lowerBound` and stops requesting justifications below it (to download
+/// only `extraHeights` blocks before the fringe). That cutoff is removed here: a syncing node's DAG
+/// is always empty (see `NodeLaunch.apply`), and `BlockDagStorage::insert` requires every block's
+/// justifications to be present, so the requester must walk the full ancestry chain down to the
+/// genesis block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LfsState<Key: Ord + Clone> {
     pub d: BTreeMap<Key, ReqStatus>,
     pub latest: BTreeSet<Key>,
-    pub lower_bound: i64,
     pub height_map: BTreeMap<i64, BTreeSet<Key>>,
     pub finished: BTreeSet<Key>,
-    pub extra_heights: i32,
 }
 
 impl<Key: Ord + Clone> LfsState<Key> {
     /// Create a request state with initial keys (port of `ST.apply`).
-    pub fn new(
-        initial: BTreeSet<Key>,
-        latest: BTreeSet<Key>,
-        lower_bound: i64,
-        extra_heights: i32,
-    ) -> Self {
+    pub fn new(initial: BTreeSet<Key>, latest: BTreeSet<Key>) -> Self {
         LfsState {
             d: initial.into_iter().map(|k| (k, ReqStatus::Init)).collect(),
             latest,
-            lower_bound,
             height_map: BTreeMap::new(),
             finished: BTreeSet::new(),
-            extra_heights,
         }
     }
 
@@ -140,27 +137,14 @@ impl<Key: Ord + Clone> LfsState<Key> {
         let mut height_map = self.height_map.clone();
         height_map.entry(height).or_default().insert(k.clone());
 
-        let lower_bound_1 = if is_latest {
-            (height - 1).min(self.lower_bound)
-        } else {
-            self.lower_bound
-        };
-        let lower_bound = if is_last_latest {
-            (lower_bound_1 - self.extra_heights as i64).max(0)
-        } else {
-            lower_bound_1
-        };
-
         let mut d = self.d.clone();
         d.insert(k.clone(), ReqStatus::Received);
 
         let st = LfsState {
             d,
             latest: new_latest,
-            lower_bound,
             height_map,
             finished: self.finished.clone(),
-            extra_heights: self.extra_heights,
         };
         (
             st,
@@ -200,7 +184,7 @@ mod tests {
 
     #[test]
     fn add_skips_finished_and_existing() {
-        let st = LfsState::new(set(&[1]), set(&[]), 0, 0);
+        let st = LfsState::new(set(&[1]), set(&[]));
         let st = st.add(&set(&[1, 2]));
         assert_eq!(st.d.len(), 2);
         assert_eq!(st.d[&1], ReqStatus::Init);
@@ -209,7 +193,7 @@ mod tests {
 
     #[test]
     fn get_next_requests_init_keys() {
-        let st = LfsState::new(set(&[1, 2]), set(&[]), 0, 0);
+        let st = LfsState::new(set(&[1, 2]), set(&[]));
         let (st, req) = st.get_next(false);
         assert_eq!(req, set(&[1, 2]));
         // All requested now.
@@ -223,18 +207,16 @@ mod tests {
     }
 
     #[test]
-    fn received_tracks_latest_and_lower_bound() {
-        let st = LfsState::new(set(&[]), set(&[1, 2]), 10, 0);
+    fn received_tracks_latest_flags() {
+        let st = LfsState::new(set(&[]), set(&[1, 2]));
         let (st, _req) = st.get_next(false);
         let (st, info) = st.received(&1, 5);
         assert!(info.latest);
         assert!(!info.last_latest);
-        assert_eq!(st.lower_bound, 4);
 
         let (st, info) = st.received(&2, 6);
         assert!(info.latest);
         assert!(info.last_latest);
-        assert_eq!(st.lower_bound, 4);
         // Not finished until received keys are marked done.
         assert!(!st.is_finished());
 
@@ -244,7 +226,7 @@ mod tests {
 
     #[test]
     fn done_marks_finished() {
-        let st = LfsState::new(set(&[1]), set(&[]), 0, 0);
+        let st = LfsState::new(set(&[1]), set(&[]));
         let (st, _) = st.get_next(false);
         let (st, _) = st.received(&1, 0);
         let st = st.done(&1);

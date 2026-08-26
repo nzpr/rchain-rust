@@ -25,7 +25,6 @@ use rchain_shared::log::{Log, LogSource};
 
 use super::lfs_block_requester::request_blocks;
 use super::lfs_tuple_space_requester::request_tuple_space;
-use crate::multi_parent_casper::DEPLOY_LIFESPAN;
 use crate::protocol::comm_util::CommUtil;
 use crate::validator_identity::ValidatorIdentity;
 
@@ -266,11 +265,9 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     mut tuple_space_rx: tokio::sync::mpsc::Receiver<StoreItemsMessage>,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
-    let block_heights_before_fringe = i32::try_from(DEPLOY_LIFESPAN).map_err(|e| e.to_string())?;
     let block_fut = request_blocks(
         fringe,
         &mut incoming_blocks_rx,
-        block_heights_before_fringe,
         Duration::from_secs(30),
         &block_store,
         comm_util.as_ref(),
@@ -290,35 +287,27 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     tuple_res.map_err(|e| e.to_string())?;
 
     log.info(source, "Rholang state received and saved to store.");
-    populate_dag(
-        dag.as_ref(),
-        &block_store,
-        log.as_ref(),
-        block_st.lower_bound,
-        &block_st.height_map,
-    )
-    .await?;
+    populate_dag(dag.as_ref(), &block_store, log.as_ref(), &block_st.height_map).await?;
     Ok(())
 }
 
-/// Insert the received blocks into the DAG (port of `populateDag`).
+/// Insert the received blocks into the DAG (port of `populateDag`, minus the Scala `minHeight`
+/// filter — the full ancestry chain is now downloaded and must be inserted).
 async fn populate_dag(
     dag: &dyn BlockDagStorage,
     block_store: &BlockStore,
     log: &dyn Log,
-    min_height: i64,
     height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
 ) -> Result<(), String> {
     let source = LogSource::new("casper.engine.NodeSyncing");
     log.info(source, "Adding blocks for approved state to DAG.");
 
-    let mut hashes: Vec<BlockHash> = height_map
-        .values()
-        .flat_map(|s| s.iter().copied())
-        .collect();
-    hashes.reverse();
-
-    for hash in hashes {
+    // Insert blocks in ascending height order (parents before children): `dag.insert` requires each
+    // block's justifications to already be present in the message map, and a block's justifications
+    // always sit at strictly lower heights (block height = 1 + max justification height). The prior
+    // `.reverse()` inserted the newest block first — whose justification was not yet in the map —
+    // so LFS sync failed with "justification not present in message map".
+    for hash in height_map.values().flat_map(|s| s.iter().copied()) {
         let block = block_store
             .get(&[hash])
             .await?
@@ -327,20 +316,151 @@ async fn populate_dag(
             .next()
             .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
         let block_height = i64::from(block.block_number);
-        if block_height >= min_height {
-            log.info(source, &format!("Adding #{} {}.", block.block_number, hash.to_hex()));
-            if block_height == 0 {
-                // Genesis block: insert with validated metadata (fringe empty, fringe_state =
-                // pre_state), matching `insert_genesis`, so the validator is bonded and can build on
-                // block 0.
-                insert_genesis(dag, block).await?;
-            } else {
-                let bmd = BlockMetadata::from_block(&block);
-                dag.insert(bmd, block).await?;
-            }
+        log.info(source, &format!("Adding #{} {}.", block.block_number, hash.to_hex()));
+        if block_height == 0 {
+            // Genesis block: insert with validated metadata (fringe empty, fringe_state =
+            // pre_state), matching `insert_genesis`, so the validator is bonded and can build on
+            // block 0.
+            insert_genesis(dag, block).await?;
+        } else {
+            let bmd = BlockMetadata::from_block(&block);
+            dag.insert(bmd, block).await?;
         }
     }
 
     log.info(source, "Blocks for approved state added to DAG.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rchain_block_storage::dag::codecs::{
+        Blake2b256HashCodec, BlockHashCodec, BlockMessageCodec, BlockMetadataCodec,
+        FringeDataCodec, SignedDeployDataCodec,
+    };
+    use rchain_block_storage::dag::dag_storage::DeployId;
+    use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
+    use rchain_models::block::state_hash::StateHash;
+    use rchain_models::casper::protocol::casper_message::{
+        BlockMessage, RholangState, SignedDeployData,
+    };
+    use rchain_models::fringe_data::FringeData;
+    use rchain_models::validator::Validator;
+    use rchain_shared::log::NopLog;
+    use rchain_shared::refined::BlockHeight;
+    use rchain_shared::store::{InMemoryKeyValueStore, KeyValueStore};
+    use rchain_shared::typed_store::{BytesCodec, KeyValueTypedStore, KeyValueTypedStoreCodec};
+
+    use crate::block_metadata_store::BlockMetadataStore;
+    use crate::dag::BlockDagKeyValueStorage;
+
+    type Shared = Arc<tokio::sync::Mutex<Box<dyn KeyValueStore + Send + Sync>>>;
+
+    fn in_memory() -> Shared {
+        Arc::new(tokio::sync::Mutex::new(Box::new(
+            InMemoryKeyValueStore::default(),
+        )))
+    }
+
+    fn hash(byte: u8) -> BlockHash {
+        let mut bytes = [0u8; 32];
+        bytes[0] = byte;
+        BlockHash::new(bytes)
+    }
+
+    fn chain_block(block_num: i64, justification: Option<BlockHash>) -> BlockMessage {
+        let justifications: Vec<BlockHash> = justification.into_iter().collect();
+        BlockMessage {
+            version: 1,
+            shard_id: "root".to_string(),
+            block_hash: hash(block_num as u8),
+            block_number: BlockHeight::try_from(block_num).unwrap(),
+            sender: Validator::new([0u8; 65]),
+            seq_num: block_num.try_into().unwrap(),
+            pre_state_hash: StateHash::new([0u8; 32]),
+            post_state_hash: StateHash::new([0u8; 32]),
+            justifications,
+            bonds: BTreeMap::new(),
+            rejected_deploys: BTreeSet::new(),
+            rejected_blocks: BTreeSet::new(),
+            rejected_senders: BTreeSet::new(),
+            state: RholangState::default(),
+            sig_algorithm: "secp256k1".to_string(),
+            sig: vec![],
+        }
+    }
+
+    async fn build_dag() -> Arc<BlockDagKeyValueStorage> {
+        let metadata_store = Arc::new(
+            BlockMetadataStore::create(Arc::new(KeyValueTypedStoreCodec::new(
+                in_memory(),
+                Arc::new(BlockHashCodec),
+                Arc::new(BlockMetadataCodec),
+            )))
+            .await
+            .unwrap(),
+        );
+        let fringe_store: Arc<dyn KeyValueTypedStore<Blake2b256Hash, FringeData>> =
+            Arc::new(KeyValueTypedStoreCodec::new(
+                in_memory(),
+                Arc::new(Blake2b256HashCodec),
+                Arc::new(FringeDataCodec),
+            ));
+        let deploy_index: Arc<dyn KeyValueTypedStore<DeployId, BlockHash>> =
+            Arc::new(KeyValueTypedStoreCodec::new(
+                in_memory(),
+                Arc::new(BytesCodec),
+                Arc::new(BlockHashCodec),
+            ));
+        let deploy_store: Arc<dyn KeyValueTypedStore<DeployId, SignedDeployData>> =
+            Arc::new(KeyValueTypedStoreCodec::new(
+                in_memory(),
+                Arc::new(BytesCodec),
+                Arc::new(SignedDeployDataCodec),
+            ));
+        Arc::new(
+            BlockDagKeyValueStorage::create(metadata_store, fringe_store, deploy_index, deploy_store)
+                .await
+                .unwrap(),
+        )
+    }
+
+    /// Regression test for the LFS-sync "justification not present in message map" failure: the
+    /// DAG must be populated parents-before-children, i.e. in ascending block height order. The
+    /// prior code reversed the height map and inserted the newest block first, whose justification
+    /// was not yet in the message map.
+    #[tokio::test]
+    async fn populate_dag_inserts_parents_before_children() {
+        let n = 5i64;
+        // A single-validator chain, each block justifying its predecessor.
+        let blocks: Vec<BlockMessage> = (0..n)
+            .map(|i| chain_block(i, (i > 0).then(|| hash(i as u8 - 1))))
+            .collect();
+
+        let block_store: BlockStore = Arc::new(KeyValueTypedStoreCodec::new(
+            in_memory(),
+            Arc::new(BlockHashCodec),
+            Arc::new(BlockMessageCodec),
+        ));
+        for b in &blocks {
+            block_store.put(&[(b.block_hash, b.clone())]).await.unwrap();
+        }
+
+        let dag = build_dag().await;
+        let mut height_map: BTreeMap<i64, BTreeSet<BlockHash>> = BTreeMap::new();
+        for b in &blocks {
+            height_map
+                .entry(i64::from(b.block_number))
+                .or_default()
+                .insert(b.block_hash);
+        }
+
+        populate_dag(dag.as_ref(), &block_store, &NopLog, &height_map)
+            .await
+            .expect("populate_dag must succeed when blocks are inserted parents-first");
+
+        // The whole chain is in the DAG, so the latest block number equals the chain length.
+        assert_eq!(dag.get_representation().await.latest_block_number(), n);
+    }
 }

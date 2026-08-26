@@ -22,7 +22,8 @@ use crate::validate;
 type St = LfsState<BlockHash>;
 
 /// Validate a received block and, if accepted, request its justifications. Returns whether the
-/// block was requested and its hash valid (port of `validateReceivedBlock`).
+/// block was requested and its hash valid (port of `validateReceivedBlock`, minus the Scala
+/// `lowerBound` acceptance cutoff — the full ancestry chain is walked to genesis).
 async fn validate_received_block(
     st: &Arc<tokio::sync::Mutex<St>>,
     block: &BlockMessage,
@@ -30,16 +31,16 @@ async fn validate_received_block(
     source: LogSource,
 ) -> bool {
     let block_number = i64::from(block.block_number);
-    let (info, minimum_height) = {
+    let info = {
         let mut guard = st.lock().await;
         let (new_state, info) = guard.received(&block.block_hash, block_number);
         *guard = new_state;
-        (info, guard.lower_bound)
+        info
     };
     let ReceiveInfo {
         requested,
-        latest,
         last_latest,
+        ..
     } = info;
 
     let block_hash_is_valid = requested && validate::block_hash(block);
@@ -55,17 +56,14 @@ async fn validate_received_block(
 
     if block_hash_is_valid {
         if last_latest {
-            log.info(
-                source,
-                &format!("Latest blocks downloaded. Minimum block height is {minimum_height}."),
-            );
+            log.info(source, "Latest blocks downloaded.");
         }
-        let block_is_accepted = latest || (requested && block_number >= minimum_height);
-        if block_is_accepted {
-            let justifications: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
-            let mut guard = st.lock().await;
-            *guard = guard.add(&justifications);
-        }
+        // Always request the block's justifications: `dag.insert` requires every justification to
+        // be present in the message map, so the requester must reconstruct the full ancestry chain
+        // down to the genesis block (a syncing node's DAG is always empty).
+        let justifications: BTreeSet<BlockHash> = block.justifications.iter().copied().collect();
+        let mut guard = st.lock().await;
+        *guard = guard.add(&justifications);
         return requested;
     }
     false
@@ -155,7 +153,6 @@ async fn request_next(
 pub async fn request_blocks(
     fringe: &FinalizedFringe,
     incoming_blocks: &mut tokio::sync::mpsc::Receiver<BlockMessage>,
-    block_heights_before_fringe: i32,
     request_timeout: Duration,
     block_store: &BlockStore,
     comm_util: &CommUtil,
@@ -168,8 +165,6 @@ pub async fn request_blocks(
     let st = Arc::new(tokio::sync::Mutex::new(LfsState::new(
         finalized_hashes.clone(),
         finalized_hashes,
-        0,
-        block_heights_before_fringe,
     )));
 
     // `true` triggers a resend of already-requested blocks.
