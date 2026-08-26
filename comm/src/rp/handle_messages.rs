@@ -22,20 +22,30 @@ pub struct RoutingMessage {
     pub packet: Packet,
 }
 
-/// Whether a host is a local/private address (port of `HandleMessages.isLocalAddress`). Only IPv4
-/// literals are classified (matching the oracle tests); hostname resolution is not performed.
+/// Whether a host is a local/private address (port of `HandleMessages.isLocalAddress`). Classifies
+/// both IPv4 and IPv6 literals. Hostnames are not resolved (see the residual note below).
 pub fn is_local_address(host: &str) -> bool {
-    if let Ok(IpAddr::V4(ip)) = host.parse::<IpAddr>() {
-        let o = ip.octets();
-        ip.is_unspecified() // 0.0.0.0
-            || ip.is_loopback() // 127/8
-            || ip.is_multicast() // 224/4
-            || (o[0] == 169 && o[1] == 254) // link-local 169.254/16
-            || o[0] == 10 // 10/8
-            || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16/12
-            || (o[0] == 192 && o[1] == 168) // 192.168/16
-    } else {
-        false
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            let o = ip.octets();
+            ip.is_unspecified() // 0.0.0.0
+                || ip.is_loopback() // 127/8
+                || ip.is_multicast() // 224/4
+                || (o[0] == 169 && o[1] == 254) // link-local 169.254/16
+                || o[0] == 10 // 10/8
+                || (o[0] == 172 && (16..=31).contains(&o[1])) // 172.16/12
+                || (o[0] == 192 && o[1] == 168) // 192.168/16
+        }
+        Ok(IpAddr::V6(ip)) => {
+            ip.is_unspecified() // ::
+                || ip.is_loopback() // ::1
+                || ip.is_multicast() // ff00::/8
+                || ip.is_unique_local() // fc00::/7
+                || ip.is_unicast_link_local() // fe80::/10
+        }
+        // Residual: a hostname that resolves to a private/loopback address is not classified here
+        // (resolution is async and DNS-rebinding-prone). The IPv6-literal bypass is closed.
+        Err(_) => false,
     }
 }
 

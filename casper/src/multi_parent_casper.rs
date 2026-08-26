@@ -289,8 +289,17 @@ where
 {
     let init_block_meta = BlockMetadata::from_block(block);
 
-    // Block summary (justification regression, sequence/block number, deploy checks).
-    match crate::validate::block_summary(dag, block_store, block, shard_id, DEPLOY_LIFESPAN).await {
+    // Block summary (justification regression, sequence/block number, deploy checks, phlo price).
+    match crate::validate::block_summary(
+        dag,
+        block_store,
+        block,
+        shard_id,
+        DEPLOY_LIFESPAN,
+        min_phlo_price,
+    )
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(status)) => {
             return Err(ValidateError::ValidationFailed(
@@ -344,16 +353,6 @@ where
             ))
         }
         Err(e) => return Err(ValidateError::Internal(format!("neglectedInvalidBlock failed: {e}"))),
-    }
-
-    // Phlo price. The Scala treated this best-effort (recoverWith); here a low-cost deploy is a
-    // validation failure rather than being silently discarded.
-    let status = crate::validate::phlo_price(block, min_phlo_price);
-    if !status.is_valid() {
-        return Err(ValidateError::ValidationFailed(
-            mark_failed(&block_metadata),
-            status,
-        ));
     }
 
     // Build/cache the block index.

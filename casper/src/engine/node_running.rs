@@ -106,6 +106,9 @@ impl PeerRateLimiter {
     pub fn allow(&self, peer_key: &[u8]) -> bool {
         let now = Instant::now();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        // Prune peers whose window expired long ago, so a connection churn with many distinct node
+        // ids (Kademlia-injectable) cannot grow this map without bound (R30).
+        state.retain(|_, (last, _)| now.duration_since(*last) < Duration::from_secs(60));
         let entry = state.entry(peer_key.to_vec()).or_insert((now, 0));
         if now.duration_since(entry.0) >= Duration::from_secs(1) {
             entry.0 = now;

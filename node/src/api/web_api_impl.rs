@@ -1,6 +1,7 @@
 //! Web API implementation (port of `WebApi.WebApiImpl`).
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
@@ -32,6 +33,8 @@ pub struct WebApiImpl {
     /// The dev deployer key (dev-mode only); `None` disables the faucet.
     deployer_key: Option<PrivateKey>,
     shard_id: String,
+    /// Per-address faucet drip count (R17): bounds how much REV any single address can pull.
+    drip_counts: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 impl WebApiImpl {
@@ -46,9 +49,14 @@ impl WebApiImpl {
             transaction_api,
             deployer_key,
             shard_id,
+            drip_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
+
+/// Maximum faucet drips any single address may receive (0.3 REV each). Bounds the dev-wallet drain
+/// a single caller can cause before other developers are starved.
+const FAUCET_MAX_DRIPS_PER_ADDRESS: u32 = 10;
 
 fn invalid_deploy_id() -> BlockApiException {
     BlockApiException("Deploy id is not valid base16 format.".to_string())
@@ -89,6 +97,18 @@ impl WebApi for WebApiImpl {
     async fn faucet(&self, address: &str) -> Result<FaucetResponse, BlockApiException> {
         if !RevAddress::is_valid(address) {
             return Err(BlockApiException(format!("Invalid REV address: {address}")));
+        }
+        // Per-address drip budget (R17): bound how much REV one address can pull, so a single caller
+        // cannot monopolize the rate limit and drain the genesis dev wallet.
+        {
+            let mut counts = self.drip_counts.lock().unwrap_or_else(|p| p.into_inner());
+            let count = counts.entry(address.to_string()).or_insert(0);
+            if *count >= FAUCET_MAX_DRIPS_PER_ADDRESS {
+                return Err(BlockApiException(format!(
+                    "faucet: address {address} has reached its drip budget ({FAUCET_MAX_DRIPS_PER_ADDRESS})"
+                )));
+            }
+            *count += 1;
         }
         let sk = self.deployer_key.as_ref().ok_or_else(|| {
             BlockApiException("faucet requires --dev-mode --deployer-private-key".to_string())

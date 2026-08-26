@@ -318,6 +318,7 @@ pub async fn block_summary(
     block: &BlockMessage,
     shard_id: &str,
     expiration_threshold: i64,
+    min_phlo_price: i64,
 ) -> Result<ValidBlockProcessing, String> {
     if let Err(status) = justification_regressions(dag, block).await? {
         return Ok(Err(status));
@@ -328,10 +329,13 @@ pub async fn block_summary(
     if let Err(status) = block_number(dag, block).await? {
         return Ok(Err(status));
     }
+    // Pure deploy checks — including `phlo_price`, which must be rejected *before* the expensive
+    // replay so an economically-free deploy cannot force every validator to replay it (R27).
     let pure = [
         deploys_shard_identifier(block, shard_id),
         future_transaction(block),
         transaction_expiration(block, expiration_threshold),
+        phlo_price(block, min_phlo_price),
     ];
     for status in pure {
         if !status.is_valid() {

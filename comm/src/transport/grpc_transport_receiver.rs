@@ -113,6 +113,9 @@ const MAX_CONCURRENT_BLOBS: usize = 16;
 /// Wall-clock bound on a single inbound TLS handshake, so a stalled ClientHello cannot hold a
 /// handshake slot (and its socket) indefinitely.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound on the number of chunks accepted per inbound `stream`. Empty `content_data` chunks never
+/// advance the byte counter, so without this a peer could stream an unbounded number of them.
+const MAX_STREAM_CHUNKS: usize = 100_000;
 
 /// The inbound gRPC `TransportLayer` service (port of the `RoutingGrpcMonix.TransportLayer` impl).
 pub struct GrpcTransportReceiver {
@@ -178,7 +181,8 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
         let mut incoming = request.into_inner();
         let mut chunks = Vec::new();
         // Enforce the size cap *while* draining, so a peer cannot stream an unbounded number of
-        // chunks before the circuit breaker runs in `stream_handler::collect`.
+        // chunks before the circuit breaker runs in `stream_handler::collect`. A separate chunk-count
+        // cap bounds empty `content_data` chunks, which never advance `received` (R26).
         let mut received: i64 = 0;
         while let Some(chunk) = incoming.message().await? {
             if let Some(chunk::Content::Data(d)) = &chunk.content {
@@ -190,6 +194,11 @@ impl transport_layer_server::TransportLayer for GrpcTransportReceiver {
                 }
             }
             chunks.push(chunk);
+            if chunks.len() > MAX_STREAM_CHUNKS {
+                return Ok(Response::new(internal_server_error(&stream_error_message(
+                    &StreamError::MaxSizeReached,
+                ))));
+            }
         }
 
         let mut cache = PacketCache::new();

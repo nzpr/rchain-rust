@@ -1042,7 +1042,9 @@ fn eval_method(
             let from = from_i.max(0);
             let until = until_i.max(0);
             let len = if until > from { (until - from) as usize } else { 0 };
-            cost.charge(Costs::slice_cost(len as i64))?;
+            // Charge the input walk (`skip(from).take(len)` touches `max(from, until)` elements), not
+            // just the output length: otherwise `slice(n, n)` walks n elements for ~0 phlo (R23).
+            cost.charge(Costs::slice_cost(from.max(until)))?;
             let from = from as usize;
             match base {
                 Expr::GString(s) => Ok(from_expr(Expr::GString(

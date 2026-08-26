@@ -15,6 +15,7 @@ use rchain_shared::log::{Log, LogSource};
 use tokio::sync::mpsc;
 
 use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
+use crate::engine::node_running::MAX_PENDING_BLOCKS;
 use crate::validate::{block_hash, block_signature, format_of_fields};
 
 /// Block-receive status (port of `RecvStatus`).
@@ -87,6 +88,16 @@ impl<MId: Ord + Clone + std::fmt::Debug> BlockReceiverState<MId> {
             return Err(format!(
                 "Received should be called only in begin received state, actual: {:?}, hash: {:?}",
                 cur_state_opt, id
+            ));
+        }
+
+        // Bound the receiver state (R29): a peer can stream valid-signed blocks whose justifications
+        // point at nonexistent hashes; those never resolve and would otherwise accumulate here
+        // forever (in `blocks_st`/`receive_st`/`child_relations`).
+        if self.blocks_st.len() >= MAX_PENDING_BLOCKS && !self.blocks_st.contains_key(&id) {
+            return Err(format!(
+                "block receiver state full ({} blocks); dropping {:?}",
+                MAX_PENDING_BLOCKS, id
             ));
         }
 

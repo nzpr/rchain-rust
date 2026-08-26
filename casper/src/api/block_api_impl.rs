@@ -268,6 +268,18 @@ impl BlockApi for BlockApiImpl {
                 deploy.data.phlo_price, self.min_phlo_price
             ));
         }
+        // Reject deploys anchored too far in the future (R28): a deploy with
+        // `valid_after_block_number` far ahead of the tip is neither selected (it stays "future")
+        // nor expired, so it would permanently occupy a deploy-pool slot.
+        let latest_block = self.dag.get_representation().await.latest_block_number();
+        if deploy.data.valid_after_block_number
+            > latest_block + crate::multi_parent_casper::DEPLOY_LIFESPAN
+        {
+            return Err(format!(
+                "Deploy validAfterBlockNumber {} is too far in the future (latest block {}).",
+                deploy.data.valid_after_block_number, latest_block
+            ));
+        }
 
         let r = match crate::multi_parent_casper::deploy(self.dag.as_ref(), deploy).await {
             Ok(id) => Ok(format!("Success!\nDeployId is: {}", base16::encode(&id))),
