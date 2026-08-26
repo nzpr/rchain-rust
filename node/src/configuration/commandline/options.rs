@@ -23,6 +23,20 @@ fn parse_base16(s: &str) -> Result<Vec<u8>, String> {
         .ok_or_else(|| format!("Error parsing value. Invalid base16 encoding: {s}"))
 }
 
+/// A base16-decoded byte string (clap parses it via `FromStr`). A plain `Vec<u8>` field with
+/// `value_parser = parse_base16` does not work: clap reads `Vec<T>` as "many occurrences of `T`",
+/// so the parser's `Vec<u8>` output and the field's element type `u8` disagree and clap panics on
+/// the downcast instead of reporting the mismatch (issue #14).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Base16(pub Vec<u8>);
+
+impl std::str::FromStr for Base16 {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        parse_base16(s).map(Base16)
+    }
+}
+
 /// The CLI surface (port of the Scala `Options` scallop config).
 #[derive(Parser, Debug)]
 #[command(name = "rchain", version, about = "RChain node | gRPC client", disable_help_flag = true)]
@@ -97,8 +111,8 @@ pub enum Commands {
     },
     /// Returns the status of the deploy with provided signature.
     DeployStatus {
-        #[arg(long = "deploy-signature", required = true, value_parser = parse_base16)]
-        deploy_signature: Vec<u8>,
+        #[arg(long = "deploy-signature", required = true, value_parser = clap::value_parser!(Base16))]
+        deploy_signature: Base16,
     },
     /// View properties of a block.
     ShowBlock {
@@ -136,8 +150,8 @@ pub enum Commands {
     },
     /// Searches for a block containing the deploy with provided id.
     FindDeploy {
-        #[arg(long = "deploy-id", required = true, value_parser = parse_base16)]
-        deploy_id: Vec<u8>,
+        #[arg(long = "deploy-id", required = true, value_parser = clap::value_parser!(Base16))]
+        deploy_id: Base16,
     },
     /// Force Casper to propose a block.
     Propose {
@@ -146,8 +160,8 @@ pub enum Commands {
     },
     /// Check bond status for a validator public key.
     BondStatus {
-        #[arg(value_parser = parse_base16)]
-        validator_public_key: Vec<u8>,
+        #[arg(value_parser = clap::value_parser!(Base16))]
+        validator_public_key: Base16,
     },
     /// Get RNode status information.
     Status,
@@ -472,4 +486,56 @@ pub struct Run {
     /// (see `spec/RUST-FIRST.md`).
     #[arg(long = "pos-multi-sig-quorum")]
     pub pos_multi_sig_quorum: Option<i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Options, clap::Error> {
+        Options::try_parse_from(std::iter::once("rnode").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn find_deploy_parses_base16_id() {
+        let opts = parse(&["find-deploy", "--deploy-id", "30440220"]).expect("parse");
+        match &opts.subcommand {
+            Commands::FindDeploy { deploy_id } => {
+                assert_eq!(deploy_id.0, vec![0x30, 0x44, 0x02, 0x20]);
+            }
+            other => panic!("wrong subcommand: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deploy_status_parses_base16_signature() {
+        let opts = parse(&["deploy-status", "--deploy-signature", "30440220"]).expect("parse");
+        match &opts.subcommand {
+            Commands::DeployStatus { deploy_signature } => {
+                assert_eq!(deploy_signature.0, vec![0x30, 0x44, 0x02, 0x20]);
+            }
+            other => panic!("wrong subcommand: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bond_status_parses_base16_public_key() {
+        let opts = parse(&["bond-status", "04f700a4"]).expect("parse");
+        match &opts.subcommand {
+            Commands::BondStatus {
+                validator_public_key,
+            } => {
+                assert_eq!(validator_public_key.0, vec![0x04, 0xf7, 0x00, 0xa4]);
+            }
+            other => panic!("wrong subcommand: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn base16_parser_rejects_invalid_input() {
+        // Invalid base16 must be a parse error, not a panic (issue #14).
+        assert!(parse(&["find-deploy", "--deploy-id", "zz"]).is_err());
+        assert!(parse(&["deploy-status", "--deploy-signature", "zz"]).is_err());
+        assert!(parse(&["bond-status", "zz"]).is_err());
+    }
 }

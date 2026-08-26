@@ -247,17 +247,31 @@ impl<'a, R: ReplayRuntime + ?Sized> RuntimeReplayOps<'a, R> {
             &PublicKey::new(processed_deploy.deploy.deployer.clone()),
             rand.split_byte(PRE_CHARGE_SPLIT_INDEX),
         );
-        let (_pre_result, pre_eval) = self
-            .replay_system_deploy_internal(&pre_charge, expected_failure)
-            .await?;
+        let (pre_result, pre_eval) = self
+            .eval_system_deploy(&pre_charge)
+            .await
+            .map_err(ReplayFailure::internal_error)?;
         self.runtime.create_soft_checkpoint().await;
         if pre_eval.succeeded() {
             mergeable.extend(pre_eval.mergeable.iter().cloned());
         }
 
-        if expected_failure.is_some() {
-            return Ok(true);
+        // A play-side pre-charge failure is recorded as `system_deploy_error` with the user deploy
+        // never run. Since issue #15 a failed *user* deploy is also recorded there, so distinguish
+        // the two by whether the replayed pre-charge itself fails: only then may the user deploy be
+        // skipped.
+        if let Err(SystemDeployUserError(actual)) = &pre_result {
+            return match expected_failure {
+                Some(expected) if expected == actual.as_str() => Ok(true),
+                Some(expected) => Err(ReplayFailure::system_deploy_error_mismatch(
+                    expected.to_string(),
+                    actual.clone(),
+                )),
+                None => Err(ReplayFailure::replay_status_mismatch(false, true)),
+            };
         }
+        // `expected_failure` still Some here means the pre-charge replayed successfully and the
+        // recorded failure belongs to the user deploy — the user-deploy replay below verifies it.
 
         // User deploy (reverted on failure).
         let eval_result = self

@@ -251,6 +251,15 @@ impl RuntimeManager {
             .map_err(|e| e.to_string())?;
         let checkpoint = self.runtime.create_soft_checkpoint().await;
         let succeeded = eval_result.errors.is_empty();
+        // Surface the reducer's failure reason in the processed deploy (issue #15): a failed user
+        // deploy previously recorded only `errored: true` + cost, leaving the deployer no message.
+        // `system_deploy_error` is the per-deploy error field the block already carries; explore-deploy
+        // returns this same error text directly.
+        let system_deploy_error = if succeeded {
+            None
+        } else {
+            eval_result.errors.first().map(|e| e.to_string())
+        };
         let deploy_log: Vec<Event> = checkpoint.log.iter().map(to_casper_event).collect();
         let processed = ProcessedDeploy {
             deploy: deploy.clone(),
@@ -262,7 +271,7 @@ impl RuntimeManager {
             },
             deploy_log,
             is_failed: !succeeded,
-            system_deploy_error: None,
+            system_deploy_error,
         };
         if !succeeded {
             self.runtime.revert_to_soft_checkpoint(fallback).await;

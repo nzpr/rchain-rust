@@ -117,10 +117,10 @@ pub async fn run_cli(options: &Options) -> Result<(), Vec<String>> {
                     .await
                 }
                 Commands::DeployStatus { deploy_signature } => {
-                    DeployRuntime::deploy_status(&deploy, deploy_signature).await
+                    DeployRuntime::deploy_status(&deploy, &deploy_signature.0).await
                 }
                 Commands::FindDeploy { deploy_id } => {
-                    DeployRuntime::find_deploy(&deploy, deploy_id).await
+                    DeployRuntime::find_deploy(&deploy, &deploy_id.0).await
                 }
                 Commands::ShowBlock { hash } => DeployRuntime::get_block(&deploy, hash).await,
                 Commands::ShowBlocks { depth } => {
@@ -152,7 +152,7 @@ pub async fn run_cli(options: &Options) -> Result<(), Vec<String>> {
                 Commands::IsFinalized { hash } => DeployRuntime::is_finalized(&deploy, hash).await,
                 Commands::BondStatus {
                     validator_public_key,
-                } => DeployRuntime::bond_status(&deploy, validator_public_key).await,
+                } => DeployRuntime::bond_status(&deploy, &validator_public_key.0).await,
                 Commands::Status => DeployRuntime::status(&deploy).await,
                 _ => Err(vec!["unexpected subcommand for deploy service".to_string()]),
             }

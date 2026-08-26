@@ -167,3 +167,60 @@ async fn play_and_replay_agree_for_transfer_deploy_and_vault_writes_persist() {
         .unwrap_or(0);
     assert_eq!(target_balance, 30_000_000, "target vault must hold the transferred 30_000_000");
 }
+
+#[tokio::test]
+async fn play_and_replay_agree_for_failed_user_deploy_with_recorded_error() {
+    // Issue #15: a failed user deploy must record the reducer's error in `system_deploy_error`,
+    // and replay must still reproduce the post-state (the recorded failure is the user deploy's,
+    // not the pre-charge's, so replay must not skip the user-deploy evaluation).
+    let rm = common::build_runtime_manager().await;
+    let rand = Blake2b512Random::from_init(&[0u8; 32]);
+
+    let (_pre, post, _) = rm
+        .compute_genesis(
+            &[],
+            &rand,
+            BlockData::empty(),
+            &BTreeMap::new(),
+            &[seeded_vault()],
+        )
+        .await
+        .expect("compute_genesis");
+
+    // Fails at runtime: `1 + "not-a-number"` is a type error.
+    let term = r#"new return in { return!(1 + "not-a-number") }"#;
+
+    let (post_state, user_results, sys_results) = rm
+        .compute_state(&post, &[deploy(term)], &[], &rand, BlockData::empty())
+        .await
+        .expect("play compute_state");
+    assert!(user_results[0].deploy.is_failed, "deploy must fail");
+    assert!(
+        user_results[0].deploy.system_deploy_error.is_some(),
+        "failed deploy must record its error, got: {:?}",
+        user_results[0].deploy.system_deploy_error
+    );
+
+    let processed: Vec<ProcessedDeploy> = user_results.into_iter().map(|r| r.deploy).collect();
+    let processed_sys: Vec<ProcessedSystemDeploy> =
+        sys_results.into_iter().map(|r| r.deploy).collect();
+
+    let (replay_state, _) = rm
+        .replay_compute_state(
+            &post,
+            &processed,
+            &processed_sys,
+            &rand,
+            BlockData::empty(),
+            true,
+            &BTreeMap::new(),
+            &[],
+        )
+        .await
+        .expect("replay compute_state");
+
+    assert_eq!(
+        post_state, replay_state,
+        "play and replay post-state hashes must agree for a failed user deploy"
+    );
+}
