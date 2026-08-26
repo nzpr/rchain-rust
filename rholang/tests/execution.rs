@@ -11,6 +11,7 @@ use rchain_models::ast::Expr;
 use rchain_models::par_ops::from_expr;
 use rchain_models::sorted::SortedProc;
 use rchain_models::types::Closed;
+use rchain_rholang::accounting::Cost;
 use rchain_rholang::env::Env;
 use rchain_rholang::registry::registry_bootstrap_ast;
 use rchain_rspace::history::history::empty_root_hash_value;
@@ -183,4 +184,78 @@ async fn concurrent_and_sequential_state_hashes_match() {
         let hs = rt_s.create_checkpoint().await.unwrap().root;
         assert_eq!(hc, hs, "concurrent vs sequential state hash mismatch for {term}");
     }
+}
+
+#[tokio::test]
+async fn match_takes_first_written_branch() {
+    // Issue #10: branches were tried in reverse written order. The first branch (literal 1) must
+    // win over the later catch-all.
+    let (rt, _) = build_runtime_pair().await;
+    let res = rt
+        .evaluate(
+            r#"new x in { match 1 { 1 => { @"ch"!("literal") } x => { @"ch"!("catchall") } } }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate");
+    assert!(res.succeeded(), "unexpected errors: {:?}", res.errors);
+    assert_eq!(
+        rt.get_data_par(&chan("ch")).await.unwrap(),
+        vec![from_expr(Expr::GString("literal".to_string()))]
+    );
+}
+
+#[tokio::test]
+async fn match_wildcard_branch_matches() {
+    // Issue #10: a `_` wildcard pattern never matched. It must catch the non-literal case.
+    let (rt, _) = build_runtime_pair().await;
+    let res = rt
+        .evaluate(
+            r#"new x in { match 5 { 0 => { @"ch"!("zero") } _ => { @"ch"!("wild") } } }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate");
+    assert!(res.succeeded(), "unexpected errors: {:?}", res.errors);
+    assert_eq!(
+        rt.get_data_par(&chan("ch")).await.unwrap(),
+        vec![from_expr(Expr::GString("wild".to_string()))]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unbounded_recursion_hits_depth_limit_not_stack_overflow() {
+    // Issue #11: exploratory deploy of an unbounded recursive term used to overflow the tokio
+    // worker stack and abort the whole process. With a generous phlo budget the recursion-depth
+    // budget must stop it with a legible error, and the runtime must survive.
+    let (rt, _) = build_runtime_pair().await;
+    rt.cost().set(Cost::new(1_000_000_000, "test"));
+    // Small budget so the test trips it quickly; the node default is much larger.
+    rt.set_max_reduce_steps(2_000);
+    let res = rt
+        .evaluate(
+            r#"new return, c in { c!(1) | contract c(@n) = { return!(n) | c!(n - 1) } }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate returns Ok");
+    assert!(res.failed(), "expected the reduction-step budget to fail the deploy");
+    assert!(
+        res.errors
+            .iter()
+            .any(|e| e.to_string().contains("reduction step budget")),
+        "expected a step-budget error, got: {:?}",
+        res.errors
+    );
+
+    // The node-equivalent invariant: the runtime still reduces ordinary deploys afterwards.
+    let ok = rt
+        .evaluate(r#"@"ch2"!(42)"#, &fixed_rand())
+        .await
+        .expect("evaluate");
+    assert!(ok.succeeded(), "runtime should still work: {:?}", ok.errors);
+    assert_eq!(
+        rt.get_data_par(&chan("ch2")).await.unwrap(),
+        vec![from_expr(Expr::GInt(42))]
+    );
 }

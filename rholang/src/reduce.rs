@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -1445,6 +1446,27 @@ fn resolve_match(
 /// take `self: Arc<Self>` and return this, so the scheduler can `tokio::spawn` disjoint branches.
 type ReducerFuture = Pin<Box<dyn Future<Output = Result<(), RholangError>> + std::marker::Send>>;
 
+/// Spawn a prepared reducer future on the current runtime and await its result, mapping a task
+/// panic to a legible [`RholangError`]. Every continuation dispatch and persistent/peek follow-on
+/// effect goes through this so no single task's future chain grows with the recursion depth.
+async fn join_spawned(
+    fut: Result<ReducerFuture, RholangError>,
+    what: &'static str,
+) -> Result<(), RholangError> {
+    let fut = fut?;
+    tokio::spawn(fut)
+        .await
+        .map_err(|e| RholangError::ReduceError(format!("{what} task panicked: {e}")))?
+}
+
+/// Per-evaluation reduction-step budget. A step is a continuation dispatch or a persistent/peek
+/// re-produce / re-consume — i.e. one trip around the produce/consume → continuation cycle. An
+/// unbounded recursive contract burns one step per iteration, so this cap turns a missing base case
+/// into a legible error instead of a stack overflow or an unbounded task chain (issue #11). The
+/// counter is reset at the start of every top-level [`DebruijnInterpreter::eval`] (one deploy /
+/// exploratory evaluation), so ordinary deploys are unaffected.
+pub const DEFAULT_MAX_REDUCE_STEPS: i64 = 100_000;
+
 /// The reducer (port of `DebruijnInterpreter`).
 pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     space: T,
@@ -1453,6 +1475,9 @@ pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     merge_chs: Arc<Mutex<Vec<SortedProc>>>,
     mergeable_tag_name: SortedProc,
     concurrent: bool,
+    /// Reduction steps taken in the current top-level evaluation (see [`DEFAULT_MAX_REDUCE_STEPS`]).
+    steps: Arc<AtomicI64>,
+    max_steps: Arc<AtomicI64>,
 }
 
 impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
@@ -1469,7 +1494,14 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
             merge_chs: Arc::new(Mutex::new(Vec::new())),
             mergeable_tag_name,
             concurrent: true,
+            steps: Arc::new(AtomicI64::new(0)),
+            max_steps: Arc::new(AtomicI64::new(DEFAULT_MAX_REDUCE_STEPS)),
         }
+    }
+
+    /// Set the per-evaluation reduction-step budget (see [`DEFAULT_MAX_REDUCE_STEPS`]).
+    pub fn set_max_reduce_steps(&self, max_steps: i64) {
+        self.max_steps.store(max_steps, Ordering::SeqCst);
     }
 
     /// Toggle concurrent per-term resolution (on by default). With concurrency disabled,
@@ -1480,7 +1512,7 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
     }
 
     /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`): reduce the process to normal form via
-    /// the recursive reducer.
+    /// the recursive reducer. Resets the per-evaluation reduction-step counter.
     pub async fn eval(
         self: Arc<Self>,
         par: &Par,
@@ -1488,6 +1520,7 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
         rand: &Blake2b512Random,
         cost: &Arc<CostAccounting>,
     ) -> Result<(), RholangError> {
+        self.steps.store(0, Ordering::SeqCst);
         self.reduce_par((*par).clone(), (*env).clone(), (*rand).clone(), cost.clone())
             .await
     }
@@ -1614,18 +1647,27 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
                     self.update_mergeable_channels(&chan);
                     let result = self.space.produce(&chan, data.clone(), persistent).await?;
                     if let Some((continuation, data_list, peek)) = result {
-                        self.dispatch(&continuation, &data_list).await?;
+                        join_spawned(
+                            self.clone().dispatch_owned(continuation, data_list.clone()),
+                            "continuation dispatch",
+                        )
+                        .await?;
                         if persistent {
-                            self.clone()
-                                .apply_effect(
+                            join_spawned(
+                                self.clone().apply_effect_spawned(
                                     Effect::Produce(chan.clone(), data.clone(), true),
                                     cost,
-                                )
-                                .await?;
+                                ),
+                                "persistent re-produce",
+                            )
+                            .await?;
                         } else if peek {
-                            self.clone()
-                                .apply_effect(Effect::ProducePeeks(data_list.clone()), cost)
-                                .await?;
+                            join_spawned(
+                                self.clone()
+                                    .apply_effect_spawned(Effect::ProducePeeks(data_list.clone()), cost),
+                                "peek re-produce",
+                            )
+                            .await?;
                         }
                     }
                     Ok(())
@@ -1652,18 +1694,27 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
                         )
                         .await?;
                     if let Some((continuation, data_list, p)) = result {
-                        self.dispatch(&continuation, &data_list).await?;
+                        join_spawned(
+                            self.clone().dispatch_owned(continuation, data_list.clone()),
+                            "continuation dispatch",
+                        )
+                        .await?;
                         if persistent {
-                            self.clone()
-                                .apply_effect(
+                            join_spawned(
+                                self.clone().apply_effect_spawned(
                                     Effect::Consume(binds.clone(), body.clone(), true, peek),
                                     cost,
-                                )
-                                .await?;
+                                ),
+                                "persistent re-consume",
+                            )
+                            .await?;
                         } else if p {
-                            self.clone()
-                                .apply_effect(Effect::ProducePeeks(data_list.clone()), cost)
-                                .await?;
+                            join_spawned(
+                                self.clone()
+                                    .apply_effect_spawned(Effect::ProducePeeks(data_list.clone()), cost),
+                                "peek re-produce",
+                            )
+                            .await?;
                         }
                     }
                     Ok(())
@@ -1685,13 +1736,48 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
         })
     }
 
-    async fn dispatch(
-        &self,
-        continuation: &TaggedContinuation,
-        data_list: &[(SortedProc, ListParWithRandom, ListParWithRandom, bool)],
-    ) -> Result<(), RholangError> {
-        let data: Vec<ListParWithRandom> = data_list.iter().map(|(_, d, _, _)| d.clone()).collect();
-        self.dispatcher.dispatch(continuation.clone(), data).await
+    /// Dispatch a continuation on a fresh task, charged against the per-evaluation step budget.
+    /// Spawning (rather than awaiting inline) keeps each task's future chain shallow: an unbounded
+    /// recursive contract would otherwise nest one dispatch future per iteration inside a single
+    /// task, and re-polling that ever-growing chain overflows the native stack (issue #11).
+    fn dispatch_owned(
+        self: Arc<Self>,
+        continuation: TaggedContinuation,
+        data_list: Vec<(SortedProc, ListParWithRandom, ListParWithRandom, bool)>,
+    ) -> Result<ReducerFuture, RholangError> {
+        let step = self.steps.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        let max_steps = self.max_steps.load(Ordering::SeqCst);
+        if step > max_steps {
+            return Err(RholangError::ReduceError(format!(
+                "reduction step budget exceeded ({max_steps} steps)"
+            )));
+        }
+        let fut = Box::pin(async move {
+            let data: Vec<ListParWithRandom> =
+                data_list.iter().map(|(_, d, _, _)| d.clone()).collect();
+            self.dispatcher.dispatch(continuation, data).await
+        });
+        Ok(fut)
+    }
+
+    /// Apply a persistent/peek follow-on effect on a fresh task, charged against the same
+    /// per-evaluation step budget. The persistent re-consume loop is the other half of issue #11:
+    /// a persistent contract re-installs itself after every invocation, and applying that re-consume
+    /// inline nests one `apply_effect` future per iteration in the root task.
+    fn apply_effect_spawned(
+        self: Arc<Self>,
+        effect: Effect,
+        cost: Arc<CostAccounting>,
+    ) -> Result<ReducerFuture, RholangError> {
+        let step = self.steps.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+        let max_steps = self.max_steps.load(Ordering::SeqCst);
+        if step > max_steps {
+            return Err(RholangError::ReduceError(format!(
+                "reduction step budget exceeded ({max_steps} steps)"
+            )));
+        }
+        let fut = Box::pin(async move { self.apply_effect(effect, cost).await });
+        Ok(fut)
     }
 
     fn update_mergeable_channels(&self, chan: &SortedProc) {

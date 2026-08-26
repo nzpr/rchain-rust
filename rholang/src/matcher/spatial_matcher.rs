@@ -650,7 +650,10 @@ fn list_match_single<T: MatchableTerm>(
                     Ok(Vec::new())
                 }
             }
-            None => Ok(Vec::new()),
+            // Scala falls through to `listMatch` here; `listMatch` then succeeds when `wildcard` is
+            // set (the wildcard absorbs the leftover targets) or when there are no leftover targets.
+            // Returning `Ok(Vec::new())` made a `_` wildcard pattern dead code.
+            None => list_match(targets, patterns, merger, remainder, wildcard, fm, spatial_match_fn),
         };
     }
     list_match(targets, patterns, merger, remainder, wildcard, fm, spatial_match_fn)

@@ -707,14 +707,13 @@ fn normalize_match(
                     env: input.env.clone(),
     },
         )?;
-        match_cases.insert(
-            0,
-            MatchCase {
-                pattern: Box::new(pattern_result.par.clone().quote()),
-                source: Box::new(case_body_result.par.clone()),
-                free_count: FreeCount::from_nonneg(bound_count),
-            },
-        );
+        // Written order is preserved (`resolve_match` takes the first case that matches); the Scala
+        // normalizer prepends then reverses, which is the same thing.
+        match_cases.push(MatchCase {
+            pattern: Box::new(pattern_result.par.clone().quote()),
+            source: Box::new(case_body_result.par.clone()),
+            free_count: FreeCount::from_nonneg(bound_count),
+        });
         locally_free = union_free(&locally_free, &pattern_result.par.locally_free.0);
         locally_free = union_free(
             &locally_free,

@@ -289,6 +289,13 @@ impl RhoRuntime {
         self.cost.as_ref()
     }
 
+    /// Set the reducer's per-evaluation reduction-step budget (see `DEFAULT_MAX_REDUCE_STEPS`).
+    /// The exploratory runtime can lower this to bound non-terminating reads more tightly than
+    /// block-production deploys.
+    pub fn set_max_reduce_steps(&self, steps: i64) {
+        self.reducer.set_max_reduce_steps(steps);
+    }
+
     pub async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
         self.space.create_checkpoint().await
     }
