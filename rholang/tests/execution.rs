@@ -15,6 +15,8 @@ use rchain_rholang::accounting::Cost;
 use rchain_rholang::env::Env;
 use rchain_rholang::registry::registry_bootstrap_ast;
 use rchain_rspace::history::history::empty_root_hash_value;
+use std::sync::Arc;
+use std::time::Duration;
 
 use common::{build_runtime, build_runtime_pair, load_golden};
 
@@ -256,6 +258,51 @@ async fn unbounded_recursion_hits_depth_limit_not_stack_overflow() {
     assert!(ok.succeeded(), "runtime should still work: {:?}", ok.errors);
     assert_eq!(
         rt.get_data_par(&chan("ch2")).await.unwrap(),
+        vec![from_expr(Expr::GInt(42))]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancellation_stops_runaway_reduction() {
+    // Issue #12: dropping the outer evaluation future (a wall-clock timeout) does not stop the
+    // spawned continuation tasks. The reducer's cooperative cancellation flag must make the
+    // detached task tree unwind, and the runtime must remain usable afterwards.
+    let (rt, _) = build_runtime_pair().await;
+    let rt = Arc::new(rt);
+    rt.cost().set(Cost::new(1_000_000_000, "test"));
+    // Step budget far away: cancellation is the only thing that can stop this.
+    rt.set_max_reduce_steps(1_000_000);
+
+    let canceller = rt.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        canceller.cancel_reduce();
+    });
+
+    let res = rt
+        .evaluate(
+            r#"new return, loop in { loop!(0) | contract loop(@x) = { loop!(x + 1) } }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate returns Ok");
+    assert!(res.failed(), "expected cancellation to fail the deploy");
+    assert!(
+        res.errors
+            .iter()
+            .any(|e| e.to_string().contains("cancelled")),
+        "expected a cancellation error, got: {:?}",
+        res.errors
+    );
+
+    // The runtime survives and still reduces ordinary deploys.
+    let ok = rt
+        .evaluate(r#"@"ch3"!(42)"#, &fixed_rand())
+        .await
+        .expect("evaluate");
+    assert!(ok.succeeded(), "runtime should still work: {:?}", ok.errors);
+    assert_eq!(
+        rt.get_data_par(&chan("ch3")).await.unwrap(),
         vec![from_expr(Expr::GInt(42))]
     );
 }

@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -1480,6 +1480,10 @@ pub struct DebruijnInterpreter<T: Tuplespace, D: Dispatch> {
     /// Reduction steps taken in the current top-level evaluation (see [`DEFAULT_MAX_REDUCE_STEPS`]).
     steps: Arc<AtomicI64>,
     max_steps: Arc<AtomicI64>,
+    /// Cooperative cancellation flag, checked wherever a step is charged. Dropping the outer
+    /// evaluation future (a `tokio::time::timeout`) does not stop the spawned continuation tasks;
+    /// this flag lets the owner tell the in-flight task tree to unwind (issue #12).
+    cancelled: Arc<AtomicBool>,
 }
 
 impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
@@ -1498,12 +1502,19 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
             concurrent: true,
             steps: Arc::new(AtomicI64::new(0)),
             max_steps: Arc::new(AtomicI64::new(DEFAULT_MAX_REDUCE_STEPS)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Set the per-evaluation reduction-step budget (see [`DEFAULT_MAX_REDUCE_STEPS`]).
     pub fn set_max_reduce_steps(&self, max_steps: i64) {
         self.max_steps.store(max_steps, Ordering::SeqCst);
+    }
+
+    /// Cooperatively cancel the current evaluation: the next step check in the spawned task tree
+    /// fails with a cancellation error, unwinding every task back to the caller (issue #12).
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
     }
 
     /// Toggle concurrent per-term resolution (on by default). With concurrency disabled,
@@ -1514,7 +1525,8 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
     }
 
     /// Evaluate a top-level `Par` (port of `Reduce.eval(par)`): reduce the process to normal form via
-    /// the recursive reducer. Resets the per-evaluation reduction-step counter.
+    /// the recursive reducer. Resets the per-evaluation reduction-step counter and the cancellation
+    /// flag.
     pub async fn eval(
         self: Arc<Self>,
         par: &Par,
@@ -1523,6 +1535,7 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
         cost: &Arc<CostAccounting>,
     ) -> Result<(), RholangError> {
         self.steps.store(0, Ordering::SeqCst);
+        self.cancelled.store(false, Ordering::SeqCst);
         self.reduce_par((*par).clone(), (*env).clone(), (*rand).clone(), cost.clone())
             .await
     }
@@ -1747,6 +1760,9 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
         continuation: TaggedContinuation,
         data_list: Vec<(SortedProc, ListParWithRandom, ListParWithRandom, bool)>,
     ) -> Result<ReducerFuture, RholangError> {
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(RholangError::ReduceError("reduction cancelled".to_string()));
+        }
         let step = self.steps.fetch_add(1, Ordering::SeqCst).saturating_add(1);
         let max_steps = self.max_steps.load(Ordering::SeqCst);
         if step > max_steps {
@@ -1771,6 +1787,9 @@ impl<T: Tuplespace + 'static, D: Dispatch + 'static> DebruijnInterpreter<T, D> {
         effect: Effect,
         cost: Arc<CostAccounting>,
     ) -> Result<ReducerFuture, RholangError> {
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err(RholangError::ReduceError("reduction cancelled".to_string()));
+        }
         let step = self.steps.fetch_add(1, Ordering::SeqCst).saturating_add(1);
         let max_steps = self.max_steps.load(Ordering::SeqCst);
         if step > max_steps {

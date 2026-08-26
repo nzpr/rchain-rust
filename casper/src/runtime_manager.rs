@@ -56,6 +56,11 @@ pub type MergeableStore = Arc<dyn KeyValueTypedStore<Vec<u8>, Vec<DeployMergeabl
 const EXPLORATORY_PHLO_LIMIT: i64 = 1_000_000_000;
 /// The wall-clock deadline for a single exploratory deploy (documented Scala deviation).
 const EXPLORATORY_EVAL_TIMEOUT: Duration = Duration::from_secs(60);
+/// The reduction-step budget for exploratory deploys. Lower than the reducer default so the legible
+/// "reduction step budget exceeded" fires well inside [`EXPLORATORY_EVAL_TIMEOUT`] (measured ~460
+/// steps/s at depth 16k, so 10k steps completes in ~22s worst case — issue #12). The wall clock is
+/// the backstop, not the operative bound.
+const EXPLORATORY_MAX_REDUCE_STEPS: i64 = 10_000;
 
 pub struct RuntimeManager {
     runtime: RhoRuntime,
@@ -649,16 +654,28 @@ impl RuntimeManager {
         // reset/re-evaluate the shared space mid-block and corrupt the block's post-state hash).
         let runtime = self.fork_play_runtime(to_blake(start)).await?;
         runtime.reset(to_blake(start)).await.map_err(|e| e)?;
-        // Bound the exploratory evaluation (documented Scala deviation): a phlo cap (the reducer
-        // aborts with `OutOfPhlogistonsError` once the balance is exhausted) + a wall-clock
-        // deadline, mirroring the Repl bound.
+        // Bound the exploratory evaluation (documented Scala deviation): a phlo cap + a
+        // reduction-step budget (the operative bound; the legible "step budget exceeded" error must
+        // fire well inside the wall-clock deadline) + a wall-clock backstop.
         runtime
             .cost()
             .set(Cost::new(EXPLORATORY_PHLO_LIMIT, "exploratory"));
-        let eval = tokio::time::timeout(EXPLORATORY_EVAL_TIMEOUT, runtime.evaluate(term, rand))
+        runtime.set_max_reduce_steps(EXPLORATORY_MAX_REDUCE_STEPS);
+        let eval = match tokio::time::timeout(EXPLORATORY_EVAL_TIMEOUT, runtime.evaluate(term, rand))
             .await
-            .map_err(|_| format!("exploratory deploy timed out after {EXPLORATORY_EVAL_TIMEOUT:?}"))?
-            .map_err(|e| e.to_string())?;
+        {
+            Ok(eval) => eval.map_err(|e| e.to_string())?,
+            Err(_elapsed) => {
+                // Dropping the outer evaluation future does NOT stop the spawned continuation tasks
+                // (dropping a `JoinHandle` never aborts its task). Signal the reducer cooperatively:
+                // the next step check in the detached task tree fails and the whole tree unwinds,
+                // releasing the forked runtime (issue #12).
+                runtime.cancel_reduce();
+                return Err(format!(
+                    "exploratory deploy timed out after {EXPLORATORY_EVAL_TIMEOUT:?}"
+                ));
+            }
+        };
         if !eval.errors.is_empty() {
             return Err(format!("{:?}", eval.errors));
         }

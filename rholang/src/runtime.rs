@@ -296,6 +296,12 @@ impl RhoRuntime {
         self.reducer.set_max_reduce_steps(steps);
     }
 
+    /// Cooperatively cancel an in-flight evaluation: the reducer's next step check fails with a
+    /// cancellation error, unwinding the spawned task tree (issue #12).
+    pub fn cancel_reduce(&self) {
+        self.reducer.cancel();
+    }
+
     pub async fn create_checkpoint(&self) -> Result<Checkpoint, String> {
         self.space.create_checkpoint().await
     }
