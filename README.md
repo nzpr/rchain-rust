@@ -151,3 +151,9 @@ The upstream Scala fork — the sbt modules (`node/`, `sdk/`, `shared/`, `crypto
 `rspace/`, `comm/`, `casper/`, `rholang/`, `block-storage/`, `regex/`, `graphz/`, `roscala/`,
 `rosette/`, `rspace-bench/`), the sbt build (`build.sbt`, `project/`), configuration, CI, docs,
 tooling, and data files — now lives under [`legacy/`](legacy/), with the original directory names.
+
+## License
+
+The Rust rewrite is licensed under the [GNU Affero General Public License, version 3](LICENSE)
+(AGPL-3.0). The upstream Scala fork preserved for reference under [`legacy/`](legacy/) retains its
+original [Apache License 2.0](legacy/LICENSE.TXT).
