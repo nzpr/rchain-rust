@@ -24,6 +24,7 @@ use rchain_models::sorted::SortedProc;
 use rchain_models::validator::Validator;
 use rchain_rholang::merging::{calculate_number_channel_merge, read_mergeable_values};
 use rchain_rholang::storage::RhoHistoryRepository;
+use rchain_rholang::system_processes::BlockData;
 use rchain_rspace::history::history_repository::HistoryRepository;
 use rchain_rspace::hot_store_trie_action::HotStoreTrieAction;
 use rchain_rspace::merger::event_log_index::{EventLogIndex, NumberChannelsDiff};
@@ -37,6 +38,7 @@ use rchain_sdk::dag::merging::{
 };
 use rchain_shared::serialize::Serialize;
 
+use crate::block_random_seed::BlockRandomSeed;
 use crate::event_converter::to_rspace_event;
 use crate::runtime_manager::RuntimeManager;
 
@@ -440,9 +442,73 @@ impl BlockIndex {
         let sender = block.sender.as_bytes().to_vec();
         let pre_state_hash = Blake2b256Hash::from_byte_array(block.pre_state_hash.as_bytes());
         let post_state_hash = Blake2b256Hash::from_byte_array(block.post_state_hash.as_bytes());
-        let mergeable_chs = runtime
+        let mergeable_chs = match runtime
             .load_mergeable_channels(post_state_hash.as_bytes(), &sender, i64::from(block.seq_num))
-            .await?;
+            .await
+        {
+            Ok(channels) => channels,
+            // LFS-restored/deep-replayed blocks may never have had their mergeable-channel
+            // sidecar persisted for this (post_state_hash, sender, seq_num) key, even though
+            // the block itself is otherwise valid - the sidecar is written at proposal time,
+            // not derivable from the block alone. Regenerate it by replaying the block from its
+            // own pre-state rather than failing block indexing outright.
+            Err(err) if err.starts_with("Mergeable store invalid state hash") => {
+                if block.justifications.is_empty()
+                    && block.state.deploys.is_empty()
+                    && block.state.system_deploys.is_empty()
+                {
+                    // Genesis (or an equivalent empty block): nothing to replay, so the sidecar
+                    // is trivially empty. Persist it so subsequent lookups hit the fast path.
+                    runtime
+                        .save_mergeable_channels(
+                            post_state_hash,
+                            &sender,
+                            i64::from(block.seq_num),
+                            &[],
+                            pre_state_hash,
+                        )
+                        .await?;
+                    Vec::new()
+                } else {
+                    let forked = runtime.fork_replay_runtime(pre_state_hash).await?;
+                    let rand = BlockRandomSeed::random_generator_from_block(&block);
+                    let with_cost_accounting = !block.justifications.is_empty();
+                    let (computed, channels) = runtime
+                        .replay_compute_state_with(
+                            &forked,
+                            &pre_state_hash,
+                            &block.state.deploys,
+                            &block.state.system_deploys,
+                            &rand,
+                            BlockData::from_block(&block),
+                            with_cost_accounting,
+                            &block.bonds,
+                            // Genesis vault balances are not carried on the block (installed at
+                            // genesis, re-derived only on the trusted genesis replay path); this
+                            // is always non-genesis block replay, so no vault re-install is
+                            // needed - matches interpreter_util.rs's replay_block precedent.
+                            &[],
+                        )
+                        .await
+                        .map_err(|e| {
+                            format!(
+                                "failed to regenerate mergeable channels for block {}: {e:?}",
+                                block.block_hash.to_hex()
+                            )
+                        })?;
+                    if computed != post_state_hash {
+                        return Err(format!(
+                            "regenerated mergeable channels for block {} but replay computed {} instead of {}",
+                            block.block_hash.to_hex(),
+                            computed.to_hex(),
+                            post_state_hash.to_hex()
+                        ));
+                    }
+                    channels
+                }
+            }
+            Err(err) => return Err(err),
+        };
 
         let index = BlockIndex::apply(
             block.block_hash,
