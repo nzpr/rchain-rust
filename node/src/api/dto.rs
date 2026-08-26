@@ -80,6 +80,48 @@ pub struct ApiStatus {
     pub nodes: i32,
     pub min_phlo_price: i64,
     pub latest_block_number: i64,
+    /// Continuous block production (`--autopropose`).
+    pub autopropose: bool,
+    /// Propose immediately after a deploy is accepted (`--propose-on-deploy`).
+    pub propose_on_deploy: bool,
+    /// Blocks are produced only by an explicit `propose`.
+    pub manual_propose: bool,
+    /// The admin HTTP surface is published and CORS-enabled.
+    pub admin_http: bool,
+    /// Dev mode is on.
+    pub dev_mode: bool,
+}
+
+/// The node's capabilities, returned by `GET /api/v1/capabilities` (the app-facing "can I propose /
+/// is the faucet available" surface).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeCapabilities {
+    /// Continuous block production (`--autopropose`).
+    pub autopropose: bool,
+    /// Propose immediately after a deploy is accepted (`--propose-on-deploy`).
+    pub propose_on_deploy: bool,
+    /// Blocks are produced only by an explicit `propose` (neither of the above).
+    pub manual_propose: bool,
+    /// The admin HTTP surface (`POST /api/v1/propose` on 40405) is published and CORS-enabled.
+    pub admin_http: bool,
+    /// Dev mode is on (`--dev-mode`).
+    pub dev_mode: bool,
+    /// The `/api/v1/faucet` endpoint is available (dev mode + a deployer key).
+    pub faucet: bool,
+}
+
+/// A pooled (not-yet-included) deploy (the `/api/v1/deploys` entry).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PooledDeploy {
+    pub signature: String,
+    pub timestamp: i64,
+    pub deployer: String,
+    pub term: String,
+    pub phlo_price: i64,
+    pub phlo_limit: i64,
+    pub valid_after_block_number: i64,
 }
 
 /// Exception thrown by the Block API (port of `BlockApiException`).
@@ -153,6 +195,11 @@ mod tests {
             nodes: 2,
             min_phlo_price: 3,
             latest_block_number: 4,
+            autopropose: true,
+            propose_on_deploy: true,
+            manual_propose: false,
+            admin_http: true,
+            dev_mode: true,
         };
         assert_eq!(status.min_phlo_price, 3);
         assert_eq!(status.latest_block_number, 4);

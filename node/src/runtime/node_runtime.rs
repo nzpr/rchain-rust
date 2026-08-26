@@ -1104,6 +1104,7 @@ pub async fn setup(
         proposer_state.clone(),
         conf.autopropose,
         conf.propose_on_deploy,
+        conf.api_server.enable_devnet_cors,
         std::collections::BTreeSet::new(),
     ));
 

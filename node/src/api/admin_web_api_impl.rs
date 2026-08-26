@@ -41,7 +41,7 @@ impl AdminWebApi for AdminWebApiImpl {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use rchain_casper::api::block_api::ApiErr;
+    use rchain_casper::api::block_api::{ApiErr, Capabilities};
     use rchain_models::ast::Par;
     use rchain_models::block_metadata::BlockMetadata;
     use rchain_models::casper::protocol::casper_message::SignedDeployData;
@@ -60,6 +60,12 @@ mod tests {
             unimplemented!()
         }
         async fn deploy_status(&self, _: &Vec<u8>) -> ApiErr<DeployExecStatus> {
+            unimplemented!()
+        }
+        async fn pooled_deploys(&self) -> ApiErr<Vec<SignedDeployData>> {
+            unimplemented!()
+        }
+        async fn capabilities(&self) -> Capabilities {
             unimplemented!()
         }
         async fn create_block(&self, _: bool) -> ApiErr<String> {

@@ -1,10 +1,11 @@
 //! Web API protobuf conversion functions (port of the conversion fns in `api/WebApi.scala`).
 
+use rchain_casper::api::block_api::Capabilities;
 use rchain_crypto::public_key::PublicKey;
 use rchain_crypto::signatures::signed::Signed;
 use rchain_crypto::signatures::signatures_alg::from_algorithm;
 use rchain_models::ast::Par;
-use rchain_models::casper::protocol::casper_message::DeployData;
+use rchain_models::casper::protocol::casper_message::{DeployData, SignedDeployData};
 use rchain_models::casper::protocol::deploy_service::{
     DataWithBlockInfo, DeployExecStatus as CasperDeployExecStatus, LightBlockInfo, Status,
 };
@@ -12,12 +13,13 @@ use rchain_shared::base16;
 
 use super::dto::{
     ApiStatus, DataAtNameResponse, DeployExecStatus as ApiDeployExecStatus, DeployRequest,
-    RhoDataResponse, RhoExprWithBlock, SignatureException, VersionInfo,
+    NodeCapabilities, PooledDeploy, RhoDataResponse, RhoExprWithBlock, SignatureException,
+    VersionInfo,
 };
 use super::rho_expr::{expr_from_par, RhoExpr};
 
-/// Map a casper `Status` to an `ApiStatus` (port of `toApiStatus`).
-pub fn to_api_status(status: &Status) -> ApiStatus {
+/// Map a casper `Status` + `Capabilities` to an `ApiStatus` (port of `toApiStatus`).
+pub fn to_api_status(status: &Status, caps: &Capabilities) -> ApiStatus {
     ApiStatus {
         version: VersionInfo {
             api: status.version.api.clone(),
@@ -30,6 +32,36 @@ pub fn to_api_status(status: &Status) -> ApiStatus {
         nodes: status.nodes,
         min_phlo_price: status.min_phlo_price,
         latest_block_number: status.latest_block_number,
+        autopropose: caps.autopropose,
+        propose_on_deploy: caps.propose_on_deploy,
+        manual_propose: caps.manual_propose,
+        admin_http: caps.admin_http,
+        dev_mode: caps.dev_mode,
+    }
+}
+
+/// Map a casper `Capabilities` + the faucet availability flag to the app-facing `NodeCapabilities`.
+pub fn to_node_capabilities(caps: &Capabilities, faucet: bool) -> NodeCapabilities {
+    NodeCapabilities {
+        autopropose: caps.autopropose,
+        propose_on_deploy: caps.propose_on_deploy,
+        manual_propose: caps.manual_propose,
+        admin_http: caps.admin_http,
+        dev_mode: caps.dev_mode,
+        faucet,
+    }
+}
+
+/// Map a pooled `SignedDeployData` to a `PooledDeploy` (the `/api/v1/deploys` entry).
+pub fn to_pooled_deploy(signed: &SignedDeployData) -> PooledDeploy {
+    PooledDeploy {
+        signature: base16::encode(&signed.sig),
+        timestamp: signed.data.timestamp,
+        deployer: base16::encode(&signed.deployer),
+        term: signed.data.term.clone(),
+        phlo_price: signed.data.phlo_price,
+        phlo_limit: signed.data.phlo_limit,
+        valid_after_block_number: signed.data.valid_after_block_number,
     }
 }
 
@@ -151,10 +183,19 @@ mod tests {
             min_phlo_price: 3,
             latest_block_number: 4,
         };
-        let api = to_api_status(&status);
+        let caps = Capabilities {
+            autopropose: true,
+            propose_on_deploy: true,
+            manual_propose: false,
+            admin_http: true,
+            dev_mode: true,
+        };
+        let api = to_api_status(&status, &caps);
         assert_eq!(api.version.api, "1.0");
         assert_eq!(api.address, "addr");
         assert_eq!(api.min_phlo_price, 3);
+        assert!(api.autopropose);
+        assert!(!api.manual_propose);
     }
 
     #[test]

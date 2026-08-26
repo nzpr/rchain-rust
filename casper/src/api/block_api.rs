@@ -14,9 +14,28 @@ use rchain_models::casper::protocol::deploy_service::{
 };
 use rchain_models::validator::Validator;
 use rchain_shared::base16;
+use serde::{Deserialize, Serialize};
 
 /// A block-api error (the Scala `BlockApi.Error = String`).
 pub type ApiErr<A> = Result<A, String>;
+
+/// The node's block-creation mode + deploy-gating capabilities, exposed to apps so a wallet can
+/// decide whether to surface `propose` / the faucet instead of hardcoding a devnet flag.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Capabilities {
+    /// Continuous block production (`--autopropose`).
+    pub autopropose: bool,
+    /// Propose immediately after a deploy is accepted (`--propose-on-deploy`).
+    pub propose_on_deploy: bool,
+    /// Blocks are produced only by an explicit `propose` (neither of the above).
+    pub manual_propose: bool,
+    /// The admin HTTP surface (`POST /api/v1/propose` on 40405) is published and reachable from a
+    /// browser (`--admin` + `--api-enable-devnet-cors`).
+    pub admin_http: bool,
+    /// Dev mode is on (`--dev-mode`).
+    pub dev_mode: bool,
+}
 
 /// The block API (port of `BlockApi[F]`). Implementations read from the block store/DAG and drive
 /// propose via the runtime.
@@ -27,6 +46,12 @@ pub trait BlockApi: Send + Sync {
     async fn deploy(&self, deploy: &SignedDeployData) -> ApiErr<String>;
 
     async fn deploy_status(&self, deploy_id: &DeployId) -> ApiErr<DeployExecStatus>;
+
+    /// The currently-pooled (not-yet-included) deploys.
+    async fn pooled_deploys(&self) -> ApiErr<Vec<SignedDeployData>>;
+
+    /// The node's block-creation mode + deploy-gating capabilities.
+    async fn capabilities(&self) -> Capabilities;
 
     async fn create_block(&self, is_async: bool) -> ApiErr<String>;
 

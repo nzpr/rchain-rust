@@ -192,6 +192,74 @@ a normal deploy, so poll `GET /api/v1/deploy-status/{deployId}` for `processedWi
 endpoint is **dev-mode only** (a node without `--deployer-private-key` returns `400`) and is
 rate-limited to one drip per second.
 
+### 3.5 Discover node capabilities (gate UI features without a hardcoded "devnet" flag)
+
+A wallet should decide what to surface (a manual `propose` button, the faucet) from the node itself,
+not from a hardcoded flag. `GET /api/v1/capabilities` (public `40403`) returns a stable, camelCase
+object:
+
+```sh
+curl -s http://localhost:40403/api/v1/capabilities
+```
+
+```json
+{
+  "autopropose": true,
+  "proposeOnDeploy": true,
+  "manualPropose": false,
+  "adminHttp": true,
+  "devMode": true,
+  "faucet": true
+}
+```
+
+Semantics:
+
+| Field | Meaning |
+|---|---|
+| `autopropose` | `--autopropose` — blocks are produced continuously on a timer. |
+| `proposeOnDeploy` | `--propose-on-deploy` — a block is proposed immediately after each deploy. |
+| `manualPropose` | `!autopropose && !proposeOnDeploy` — an app must call `POST /api/v1/propose` to make blocks. |
+| `adminHttp` | the admin HTTP surface (`POST /api/v1/propose` on `40405`) is published and CORS-enabled (`--admin` + `--api-enable-devnet-cors`). |
+| `devMode` | `--dev-mode`. |
+| `faucet` | the `/api/v1/faucet` endpoint is actually available (`--dev-mode` **and** a deployer key). |
+
+Recommended gating:
+
+- show the **PROPOSE** button only when `manualPropose` is `true` (otherwise blocks are already
+  produced automatically, and `propose` is redundant).
+- show the **FAUCET** button only when `faucet` is `true`.
+
+On a default `tools/devnet.sh up` (`--autopropose --propose-on-deploy --admin --deployer-key`) this
+reports `autopropose:true, proposeOnDeploy:true, manualPropose:false, adminHttp:true, devMode:true,
+faucet:true`. On the bare topology (`up --nodes 3`) it reports `autopropose:false,
+proposeOnDeploy:false, manualPropose:true`.
+
+### 3.6 List pending (pooled) deploys
+
+A wallet can reconcile its outstanding transactions across sessions/devices with
+`GET /api/v1/deploys` (public `40403`) — it returns every deploy that has been accepted but **not yet
+included in a block**, most-recent-first:
+
+```sh
+curl -s http://localhost:40403/api/v1/deploys
+```
+
+```json
+[ { "signature": "<hex>", "timestamp": 1724500000000, "deployer": "<hex>",
+    "term": "@\"hello\"!(\"world\")", "phloPrice": 1, "phloLimit": 1000000,
+    "validAfterBlockNumber": -1 } ]
+```
+
+Notes:
+
+- A deploy appears here after `POST /api/v1/deploy` (or the faucet) and disappears once the proposer
+  includes it in a block — so with `--autopropose` it empties quickly; with `--no-autopropose` it stays
+  until you call `propose`.
+- Only *pooled* (not-yet-included) deploys are listed. Expired deploys are pruned from the pool, and a
+  signature that was never pooled (or is already in a block) won't appear — use
+  `GET /api/v1/deploy-status/{sig}` for a specific deploy's outcome.
+
 ## 4. End-to-end example (curl)
 
 ```bash
@@ -220,6 +288,8 @@ Requests and responses are JSON (`camelCase` keys).
 | Method | Path | Purpose | Body / response |
 |---|---|---|---|
 | GET | `/api/v1/status` | node version, address, peers, block height | `ApiStatus` |
+| GET | `/api/v1/capabilities` | block-creation mode + dev/admin/faucet surfaces | `NodeCapabilities` |
+| GET | `/api/v1/deploys` | the pooled (not-yet-included) deploys | `PooledDeploy[]` |
 | POST | `/api/v1/deploy` | submit a signed deploy | `DeployRequest` → deploy signature (string) |
 | POST | `/api/v1/faucet` | **dev-mode** — transfer 0.3 REV to an address | `{address}` → `FaucetResponse` |
 | GET | `/api/v1/deploy-status/{sig}` | a deploy's execution status | `DeployExecStatus` |

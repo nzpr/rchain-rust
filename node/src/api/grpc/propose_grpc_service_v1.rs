@@ -40,7 +40,7 @@ impl ProposeGrpcServiceV1 {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use rchain_casper::api::block_api::{ApiErr, BlockApi};
+    use rchain_casper::api::block_api::{ApiErr, BlockApi, Capabilities};
     use rchain_models::ast::Par;
     use rchain_models::block_metadata::BlockMetadata;
     use rchain_models::casper::protocol::casper_message::SignedDeployData;
@@ -63,6 +63,12 @@ mod tests {
             unimplemented!()
         }
         async fn deploy_status(&self, _deploy_id: &Vec<u8>) -> ApiErr<DeployExecStatus> {
+            unimplemented!()
+        }
+        async fn pooled_deploys(&self) -> ApiErr<Vec<SignedDeployData>> {
+            unimplemented!()
+        }
+        async fn capabilities(&self) -> Capabilities {
             unimplemented!()
         }
         async fn create_block(&self, _is_async: bool) -> ApiErr<String> {

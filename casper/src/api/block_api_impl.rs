@@ -28,7 +28,9 @@ use rchain_rspace::hashing::stable_hash_provider::{hash_channel, hash_channels, 
 use rchain_rspace::trace::event::Event as REvent;
 use rchain_shared::base16;
 
-use crate::api::block_api::{get_full_block_info, get_light_block_info, ApiErr, BlockApi};
+use crate::api::block_api::{
+    get_full_block_info, get_light_block_info, ApiErr, BlockApi, Capabilities,
+};
 use crate::api::graph_generator::{dag_as_cluster, ValidatorBlock};
 use crate::api::machine_verifiable_dag::machine_verifiable_dag;
 use crate::blocks::proposer::propose_result::{ProposeResult, ProposeStatus};
@@ -74,6 +76,7 @@ pub struct BlockApiImpl {
     proposer_state: Option<Arc<tokio::sync::Mutex<ProposerState>>>,
     auto_propose: bool,
     propose_on_deploy: bool,
+    admin_http: bool,
     system_public_keys: BTreeSet<Vec<u8>>,
 }
 
@@ -96,6 +99,7 @@ impl BlockApiImpl {
         proposer_state: Option<Arc<tokio::sync::Mutex<ProposerState>>>,
         auto_propose: bool,
         propose_on_deploy: bool,
+        admin_http: bool,
         system_public_keys: BTreeSet<Vec<u8>>,
     ) -> Self {
         BlockApiImpl {
@@ -115,6 +119,7 @@ impl BlockApiImpl {
             proposer_state,
             auto_propose,
             propose_on_deploy,
+            admin_http,
             system_public_keys,
         }
     }
@@ -240,6 +245,21 @@ impl BlockApi for BlockApiImpl {
             nodes: net.nodes,
             min_phlo_price: self.min_phlo_price,
             latest_block_number,
+        }
+    }
+
+    async fn pooled_deploys(&self) -> ApiErr<Vec<SignedDeployData>> {
+        let pooled = self.dag.pooled_deploys().await?;
+        Ok(pooled.into_values().collect())
+    }
+
+    async fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            autopropose: self.auto_propose,
+            propose_on_deploy: self.propose_on_deploy,
+            manual_propose: !self.auto_propose && !self.propose_on_deploy,
+            admin_http: self.admin_http,
+            dev_mode: self.dev_mode,
         }
     }
 
@@ -648,11 +668,17 @@ impl BlockApi for BlockApiImpl {
         let dag = self.dag.get_representation().await;
         let target: Option<BlockMessage> = match block_hash {
             None => {
-                // Read the last *finalized* block, not the chain tip: explore-deploy is read-only and
-                // must reflect a finalized state (a non-finalized tip could later be orphaned, spoofing
-                // wallet balance reads). To read a specific just-landed block, use
-                // explore-deploy-by-block-hash with the block hash from deploy-status.
-                let hash = dag.last_finalized_block_unsafe()?;
+                // Read the LATEST block (chain tip), not the last *finalized* one: `explore-deploy`
+                // is the read surface a wallet uses to check balances, and the finalized fringe lags
+                // the tip by a block or more, so reading it shows stale vault balances for a deploy
+                // (e.g. a faucet transfer) that just landed. Callers that need a specific block can
+                // pass a `block_hash` (explore-deploy-by-block-hash) instead.
+                let hash = dag
+                    .height_map
+                    .iter()
+                    .next_back()
+                    .and_then(|(_, hashes)| hashes.iter().next().copied())
+                    .ok_or_else(|| "No blocks in the DAG.".to_string())?;
                 self.block_store.get(&[hash]).await?.pop().flatten()
             }
             Some(h) => {

@@ -116,6 +116,14 @@ async fn api_status(State(state): State<HttpState>) -> Response {
     json_result(state.web_api.status().await)
 }
 
+async fn api_deploys(State(state): State<HttpState>) -> Response {
+    json_result(state.web_api.pooled_deploys().await)
+}
+
+async fn api_capabilities(State(state): State<HttpState>) -> Response {
+    json_result(state.web_api.capabilities().await)
+}
+
 async fn api_deploy(State(state): State<HttpState>, Json(req): Json<DeployRequest>) -> Response {
     if !state.deploy_rate_limiter.allow() {
         return (StatusCode::TOO_MANY_REQUESTS, Json("deploy rate limit exceeded".to_string()))
@@ -533,6 +541,8 @@ pub fn router(state: HttpState) -> Router {
         .route("/reporting/trace", get(reporting_trace))
         .route("/api/trace", get(reporting_trace))
         .route("/api/status", get(api_status))
+        .route("/api/capabilities", get(api_capabilities))
+        .route("/api/deploys", get(api_deploys))
         .route("/api/deploy", post(api_deploy))
         .route("/api/faucet", post(api_faucet))
         .route("/api/explore-deploy", post(api_explore_deploy))
@@ -554,6 +564,8 @@ pub fn router(state: HttpState) -> Router {
         .route("/api/is-finalized/:hash", get(api_is_finalized))
         .route("/api/transactions/:hash", get(api_get_transaction))
         .route("/api/v1/status", get(api_status))
+        .route("/api/v1/capabilities", get(api_capabilities))
+        .route("/api/v1/deploys", get(api_deploys))
         .route("/api/v1/deploy", post(api_deploy))
         .route("/api/v1/faucet", post(api_faucet))
         .route(
@@ -653,8 +665,8 @@ pub async fn acquire_admin_http_server(
 mod tests {
     use super::*;
     use crate::api::dto::{
-        ApiStatus, DataAtNameResponse, DeployExecStatus, FaucetResponse, RhoDataResponse,
-        VersionInfo,
+        ApiStatus, DataAtNameResponse, DeployExecStatus, FaucetResponse, NodeCapabilities,
+        PooledDeploy, RhoDataResponse, VersionInfo,
     };
     use crate::diagnostics::scrape_data_builder::Configuration;
     use crate::web::transaction::TransactionResponse;
@@ -726,6 +738,11 @@ mod tests {
             nodes: 2,
             min_phlo_price: 3,
             latest_block_number: 4,
+            autopropose: true,
+            propose_on_deploy: true,
+            manual_propose: false,
+            admin_http: true,
+            dev_mode: true,
         }
     }
 
@@ -744,6 +761,14 @@ mod tests {
         }
 
         async fn deploy_status(&self, _: &str) -> Result<DeployExecStatus, BlockApiException> {
+            unimplemented!()
+        }
+
+        async fn pooled_deploys(&self) -> Result<Vec<PooledDeploy>, BlockApiException> {
+            unimplemented!()
+        }
+
+        async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException> {
             unimplemented!()
         }
 

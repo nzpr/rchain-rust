@@ -14,12 +14,13 @@ use rchain_rholang::util::rev_address::RevAddress;
 use rchain_shared::base16;
 
 use super::conversion::{
-    to_api_status, to_data_at_name_response, to_deploy_exec_status, to_rho_data_response,
-    to_signed_deploy,
+    to_api_status, to_data_at_name_response, to_deploy_exec_status, to_node_capabilities,
+    to_pooled_deploy, to_rho_data_response, to_signed_deploy,
 };
 use super::dto::{
     ApiStatus, BlockApiException, DataAtNameByBlockHashRequest, DataAtNameRequest,
-    DataAtNameResponse, DeployExecStatus, DeployRequest, FaucetResponse, RhoDataResponse,
+    DataAtNameResponse, DeployExecStatus, DeployRequest, FaucetResponse, NodeCapabilities,
+    PooledDeploy, RhoDataResponse,
 };
 use super::faucet;
 use super::rho_expr::{rho_expr_to_par, unforg_to_par};
@@ -65,7 +66,9 @@ fn invalid_deploy_id() -> BlockApiException {
 #[async_trait]
 impl WebApi for WebApiImpl {
     async fn status(&self) -> Result<ApiStatus, BlockApiException> {
-        Ok(to_api_status(&self.block_api.status().await))
+        let status = self.block_api.status().await;
+        let caps = self.block_api.capabilities().await;
+        Ok(to_api_status(&status, &caps))
     }
 
     async fn deploy(&self, request: &DeployRequest) -> Result<String, BlockApiException> {
@@ -81,6 +84,20 @@ impl WebApi for WebApiImpl {
             }
         };
         self.block_api.deploy(&deploy).await.map_err(BlockApiException)
+    }
+
+    async fn pooled_deploys(&self) -> Result<Vec<PooledDeploy>, BlockApiException> {
+        let mut pooled = self.block_api.pooled_deploys().await.map_err(BlockApiException)?;
+        // Most-recent-first: the pool's key order is the deploy signature bytes, not insertion time.
+        pooled.sort_by_key(|d| std::cmp::Reverse(d.data.timestamp));
+        Ok(pooled.iter().map(to_pooled_deploy).collect())
+    }
+
+    async fn capabilities(&self) -> Result<NodeCapabilities, BlockApiException> {
+        let caps = self.block_api.capabilities().await;
+        // The faucet is gated on both dev mode and a configured deployer key.
+        let faucet = caps.dev_mode && self.deployer_key.is_some();
+        Ok(to_node_capabilities(&caps, faucet))
     }
 
     async fn deploy_status(&self, deploy_id: &str) -> Result<DeployExecStatus, BlockApiException> {
