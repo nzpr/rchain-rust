@@ -14,6 +14,7 @@ use rchain_crypto::public_key::PublicKey;
 use rchain_models::casper::protocol::casper_message::{
     DeployData, ProcessedDeploy, ProcessedSystemDeploy, SignedDeployData,
 };
+use rchain_rholang::native_state::NativeSystemState;
 use rchain_rholang::system_processes::BlockData;
 use rchain_rholang::util::rev_address::RevAddress;
 use rchain_shared::refined::NonNegI64;
@@ -96,4 +97,73 @@ async fn play_and_replay_agree_for_deployer_id_binding_deploy() {
         post_state, replay_state,
         "play and replay post-state hashes must agree (S1/S3)"
     );
+}
+
+#[tokio::test]
+async fn play_and_replay_agree_for_transfer_deploy_and_vault_writes_persist() {
+    let rm = common::build_runtime_manager().await;
+    let rand = Blake2b512Random::from_init(&[0u8; 32]);
+
+    let (_pre, post, _) = rm
+        .compute_genesis(
+            &[],
+            &rand,
+            BlockData::empty(),
+            &BTreeMap::new(),
+            &[seeded_vault()],
+        )
+        .await
+        .expect("compute_genesis");
+
+    let target = RevAddress::from_public_key(&PublicKey::new(vec![1u8; 65]))
+        .expect("target address")
+        .to_base58();
+    let term = format!(
+        r#"new revVault(`rho:rchain:revVault`), deployerId(`rho:rchain:deployerId`), r in {{ revVault!("transfer", *deployerId, "{target}", 30000000, *r) | for (_ <- r) {{ Nil }} }}"#
+    );
+
+    let (post_state, user_results, sys_results) = rm
+        .compute_state(&post, &[deploy(&term)], &[], &rand, BlockData::empty())
+        .await
+        .expect("play compute_state");
+    assert!(
+        user_results[0].eval_result.succeeded(),
+        "play transfer must succeed: {:?}",
+        user_results[0].eval_result.errors
+    );
+
+    let processed: Vec<ProcessedDeploy> = user_results.into_iter().map(|r| r.deploy).collect();
+    let processed_sys: Vec<ProcessedSystemDeploy> =
+        sys_results.into_iter().map(|r| r.deploy).collect();
+
+    let (replay_state, _) = rm
+        .replay_compute_state(
+            &post,
+            &processed,
+            &processed_sys,
+            &rand,
+            BlockData::empty(),
+            true,
+            &BTreeMap::new(),
+            &[],
+        )
+        .await
+        .expect("replay compute_state");
+
+    assert_eq!(
+        post_state, replay_state,
+        "play and replay post-state hashes must agree for a revVault transfer"
+    );
+
+    // The transfer's vault writes must be visible at the committed post-state.
+    let fork = rm.fork_play_runtime(replay_state).await.expect("fork at replay state");
+    fork.reset(replay_state).await.expect("reset fork");
+    let native = NativeSystemState::new(fork.native_store());
+    let target_balance = native
+        .vault_balance(&target)
+        .await
+        .expect("read target balance")
+        .map(|b| i64::from(b))
+        .unwrap_or(0);
+    assert_eq!(target_balance, 30_000_000, "target vault must hold the transferred 30_000_000");
 }

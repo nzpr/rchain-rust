@@ -625,7 +625,16 @@ impl BlockApi for BlockApiImpl {
         let dag = self.dag.get_representation().await;
         let target: Option<BlockMessage> = match block_hash {
             None => {
-                let hash = dag.last_finalized_block_unsafe()?;
+                // Read the LATEST block, not the last *finalized* one: `explore-deploy` is the
+                // dev/read-only surface a wallet uses to check balances, and the finalized fringe
+                // lags the chain tip by a block or more, so reading it shows stale vault balances
+                // for a deploy that just landed.
+                let hash = dag
+                    .height_map
+                    .iter()
+                    .next_back()
+                    .and_then(|(_, hashes)| hashes.iter().next().copied())
+                    .ok_or_else(|| "No blocks in the DAG.".to_string())?;
                 self.block_store.get(&[hash]).await?.pop().flatten()
             }
             Some(h) => {
