@@ -15,6 +15,7 @@ use rchain_block_storage::syntax::insert_genesis;
 use rchain_comm::peer_node::PeerNode;
 use rchain_comm::rp::rp_conf::RPConf;
 use rchain_comm::transport::transport_layer::TransportLayer;
+use rchain_crypto::hash::blake2b256_hash::Blake2b256Hash;
 use rchain_models::block_hash::BlockHash;
 use rchain_models::block_metadata::BlockMetadata;
 use rchain_models::casper::protocol::casper_message::{
@@ -24,7 +25,7 @@ use rchain_rspace::state::RSpaceImporter;
 use rchain_shared::log::{Log, LogSource};
 
 use super::lfs_block_requester::request_blocks;
-use super::lfs_tuple_space_requester::request_tuple_space;
+use super::lfs_tuple_space_requester::{request_tuple_space, request_tuple_space_roots};
 use crate::protocol::comm_util::CommUtil;
 use crate::validator_identity::ValidatorIdentity;
 
@@ -286,9 +287,69 @@ async fn run_approved_state_sync<I: RSpaceImporter + Send + 'static>(
     let (block_st, tuple_res) = tokio::join!(block_fut, tuple_fut);
     tuple_res.map_err(|e| e.to_string())?;
 
+    // The fringe tuple-space request above only hydrates the finalized-fringe root itself. Casper's
+    // read/validation APIs (explore, data-at-name, and mergeable-sidecar regeneration during block
+    // indexing) open the pre/post RSpace root of specific downloaded blocks directly, not just the
+    // fringe root - request those too, or an observer's local history reader has no root to open for
+    // anything but the exact fringe state once restore finishes.
+    let fringe_root = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
+    let block_roots =
+        collect_block_state_roots(&block_store, &block_st.height_map).await?;
+    let extra_roots: Vec<Blake2b256Hash> = block_roots
+        .into_iter()
+        .filter(|root| *root != fringe_root)
+        .collect();
+    if !extra_roots.is_empty() {
+        log.info(
+            source,
+            &format!(
+                "Requesting tuple-space data for {} approved block state roots.",
+                extra_roots.len()
+            ),
+        );
+        request_tuple_space_roots(
+            &extra_roots,
+            &mut tuple_space_rx,
+            Duration::from_secs(120),
+            transport.as_ref(),
+            &conf,
+            &mut importer,
+            log.as_ref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
     log.info(source, "Rholang state received and saved to store.");
     populate_dag(dag.as_ref(), &block_store, log.as_ref(), &block_st.height_map).await?;
     Ok(())
+}
+
+/// Collect the pre/post RSpace state roots of every downloaded approved block, so the caller can
+/// request tuple-space data for any that aren't the finalized-fringe root already hydrated above.
+async fn collect_block_state_roots(
+    block_store: &BlockStore,
+    height_map: &BTreeMap<i64, BTreeSet<BlockHash>>,
+) -> Result<BTreeSet<Blake2b256Hash>, String> {
+    let mut roots = BTreeSet::new();
+
+    for hash in height_map.values().flat_map(|s| s.iter().copied()) {
+        let block = block_store
+            .get(&[hash])
+            .await?
+            .into_iter()
+            .flatten()
+            .next()
+            .ok_or_else(|| format!("missing block {}", hash.to_hex()))?;
+        roots.insert(Blake2b256Hash::from_byte_array(
+            block.pre_state_hash.as_bytes(),
+        ));
+        roots.insert(Blake2b256Hash::from_byte_array(
+            block.post_state_hash.as_bytes(),
+        ));
+    }
+
+    Ok(roots)
 }
 
 /// Insert the received blocks into the DAG (port of `populateDag`, minus the Scala `minHeight`

@@ -291,15 +291,47 @@ pub async fn request_tuple_space<I: RSpaceImporter>(
     importer: &mut I,
     log: &dyn Log,
 ) -> Result<LfsTupleSpaceState<StatePartPath>, StateValidationError> {
+    let state_hash = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
+    request_tuple_space_roots(
+        &[state_hash],
+        tuple_space_rx,
+        request_timeout,
+        transport,
+        conf,
+        importer,
+        log,
+    )
+    .await
+}
+
+/// Request tuple-space data for one or more concrete state roots.
+///
+/// Approved-state sync restores the finalized-fringe root first, then may need to hydrate the
+/// pre/post roots of downloaded blocks because validation and read APIs open those roots directly.
+pub async fn request_tuple_space_roots<I: RSpaceImporter>(
+    state_hashes: &[Blake2b256Hash],
+    tuple_space_rx: &mut tokio::sync::mpsc::Receiver<StoreItemsMessage>,
+    request_timeout: Duration,
+    transport: &dyn TransportLayer,
+    conf: &RPConf,
+    importer: &mut I,
+    log: &dyn Log,
+) -> Result<LfsTupleSpaceState<StatePartPath>, StateValidationError> {
     let source = LogSource::new("casper.engine.LfsTupleSpaceRequester");
 
-    let state_hash = Blake2b256Hash::from_byte_array(fringe.state_hash.as_bytes());
-    let start_request: StatePartPath = vec![(state_hash, None)];
-    importer.set_root(state_hash);
+    if state_hashes.is_empty() {
+        return Ok(LfsTupleSpaceState::new(Vec::new()));
+    }
 
-    let st = Arc::new(tokio::sync::Mutex::new(LfsTupleSpaceState::new(vec![
-        start_request,
-    ])));
+    let mut start_requests = Vec::with_capacity(state_hashes.len());
+    for state_hash in state_hashes {
+        importer.set_root(*state_hash);
+        start_requests.push(vec![(*state_hash, None)]);
+    }
+
+    let st = Arc::new(tokio::sync::Mutex::new(LfsTupleSpaceState::new(
+        start_requests,
+    )));
     let (request_tx, mut request_rx) = tokio::sync::mpsc::channel::<bool>(2);
     let _ = request_tx.send(false).await;
 
