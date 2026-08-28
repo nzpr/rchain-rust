@@ -224,3 +224,76 @@ async fn play_and_replay_agree_for_failed_user_deploy_with_recorded_error() {
         "play and replay post-state hashes must agree for a failed user deploy"
     );
 }
+
+#[tokio::test]
+async fn play_and_replay_agree_for_escrow_round_trip_deploy() {
+    let rm = common::build_runtime_manager().await;
+    let rand = Blake2b512Random::from_init(&[0u8; 32]);
+
+    let (_pre, post, _) = rm
+        .compute_genesis(
+            &[],
+            &rand,
+            BlockData::empty(),
+            &BTreeMap::new(),
+            &[seeded_vault()],
+        )
+        .await
+        .expect("compute_genesis");
+
+    let target = RevAddress::from_public_key(&PublicKey::new(vec![1u8; 65]))
+        .expect("target address")
+        .to_base58();
+    // The robotics-coordination "escrow" idiom: bind `rho:rchain:deployerId`, produce it onto a
+    // fresh channel, and install a persistent contract whose body round-trips that deployerId
+    // through the channel and calls the native revVault transfer.
+    let term = r#"new deployerId(`rho:rchain:deployerId`), escrowCh in {
+  escrowCh!(*deployerId) |
+  contract @"raas:escrow:test"(@"complete", @fee, ret) = {
+    for (d <- escrowCh) {
+      new revVault(`rho:rchain:revVault`), resultCh in {
+        revVault!("transfer", *d, "__TARGET__", fee, *resultCh) |
+        for (_ <- resultCh) { escrowCh!(*d) | ret!(true) }
+      }
+    }
+  } |
+  contract @"raas:escrow:test"(@"query", ret) = { ret!("x") }
+}"#
+    .replace("__TARGET__", &target);
+
+    let (play_hash, user_results, sys_results) = rm
+        .compute_state(&post, &[deploy(&term)], &[], &rand, BlockData::empty())
+        .await
+        .expect("play compute_state");
+    assert!(
+        user_results[0].eval_result.succeeded(),
+        "play deploy must succeed: {:?}",
+        user_results[0].eval_result.errors
+    );
+
+    let processed: Vec<ProcessedDeploy> = user_results.into_iter().map(|r| r.deploy).collect();
+    let processed_sys: Vec<ProcessedSystemDeploy> =
+        sys_results.into_iter().map(|r| r.deploy).collect();
+
+    let replay_hash = match rm
+        .replay_compute_state(
+            &post,
+            &processed,
+            &processed_sys,
+            &rand,
+            BlockData::empty(),
+            true,
+            &BTreeMap::new(),
+            &[],
+        )
+        .await
+    {
+        Ok((hash, _)) => hash,
+        Err(e) => panic!("replay failed with {e:?} (play_hash = {play_hash:?})"),
+    };
+
+    assert_eq!(
+        play_hash, replay_hash,
+        "play and replay post-state hashes must agree for the escrow round-trip deploy"
+    );
+}
