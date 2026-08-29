@@ -1,5 +1,8 @@
 //! Shared harness for the rholang execution-pipeline integration tests.
 
+// Each integration-test target uses a different subset of these helpers.
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use rchain_models::runtime::{BindPattern, ListParWithRandom, TaggedContinuation};

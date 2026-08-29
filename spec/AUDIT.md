@@ -653,19 +653,27 @@ invariant (#18/#23).
   `Dispatch for Weak<…>`), and the eval closure captures `Arc::downgrade(&reducer)` and upgrades at
   dispatch time. **Pure bug fix.** Verified: `dropping_runtime_releases_its_space`
   (`rholang/tests/execution.rs`) — a dropped `RhoRuntime` now releases its RSpace.
+- **#24 — conformance test for qucalc/gov/registry system processes.** Added
+  `rholang/tests/system_process_conformance.rs`: nine end-to-end tests call each process from
+  rholang by its `rho:*` urn, with the documented argument shapes, and assert the shape of the
+  answer — `qucalc:zfa` `(zfa, phase)`, `qucalc:grant` uri / `Nil`, `qucalc:verify` `Bool`,
+  `qucalc:fuse` `(geometry, cap)` / `Nil`, `gov:resolveWeights` weight map, `gov:trustLevels`
+  level map, `gov:censure` `(discredited, newLevels)`, `gov:tally` ranked + approval winner, and
+  `registry:insertArbitrary`/`insertSigned`/`lookup` round-trips. `insertSigned` binds
+  `rho:rchain:deployerId` through `evaluate_with_env` (the signed-deploy env shape).
 
 ### Still open (triaged, not fixed in this pass)
 
-- **#24 / #25** — conformance test for qucalc/gov system processes; quoted-name lint. Enhancement,
-  not a bug.
+- **#25** — quoted-name lint. Enhancement, not a bug.
 
 ### Verification (this pass)
 
 - `cargo check --workspace` — clean.
 - `tools/audit-type-system.sh` — zero hard production violations.
 - `cargo test -p rchain-rspace` — 54 passed (incl. the new join-persistence regression).
-- `cargo test -p rchain-rholang` — 83 lib + 17 execution + 1 rho_examples passed (incl. the new
-  nested-contract, repeated-call, and runtime-drop regressions).
+- `cargo test -p rchain-rholang` — 83 lib + 17 execution + 1 rho_examples + 9
+  system_process_conformance passed (incl. the new nested-contract, repeated-call, runtime-drop,
+  and urn-conformance regressions).
 - `cargo test -p rchain-casper --lib` — 113 passed; `cargo test -p rchain-casper --test determinism` —
   4 passed.
 - `cargo clippy -p rchain-rspace -p rchain-rholang --all-targets` — no new warnings on the changed
