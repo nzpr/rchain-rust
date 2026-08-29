@@ -324,6 +324,21 @@ async fn flat_one_binder_contract_terminates() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dropping_runtime_releases_its_space() {
+    // Issues #18/#23: a forked exploratory runtime was kept alive forever by two Arc cycles —
+    // dispatcher → dispatch-table handler → ContractCall → dispatcher, and dispatcher → eval
+    // closure → reducer → dispatcher — so every request retained its whole RSpace/hot store.
+    // Dropping the runtime must now release the space.
+    let rt = build_runtime(true).await;
+    let weak = Arc::downgrade(rt.space());
+    drop(rt);
+    assert!(
+        weak.upgrade().is_none(),
+        "runtime kept its RSpace alive through a reference cycle"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn contract_serves_repeated_calls_via_published_name() {
     // Issue #21: a persistent receive (contract) installed by one deploy became unreachable after
     // its first produce-side COMM because RSpace removed its join records while leaving the

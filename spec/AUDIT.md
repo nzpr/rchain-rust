@@ -613,9 +613,9 @@ reuses §11's P0–P3 model. Findings are deduplicated across clusters.
 
 ## 14. Priority-issue remediation (pass 5)
 
-The GitHub issues #18–#25 were triaged; the three highest-severity bugs were fixed in this pass.
-Two were independent RSpace/reducer invariants that together explained the registry facet and block-
-production failures.
+The GitHub issues #18–#25 were triaged; the highest-severity bugs were fixed in this pass: one
+reducer RNG invariant (#19), one RSpace join invariant (#21/#22), and one runtime ownership
+invariant (#18/#23).
 
 ### Fixed
 
@@ -643,12 +643,19 @@ production failures.
   (`rspace/src/rspace.rs`), `contract_serves_repeated_calls_via_published_name`
   (`rholang/tests/execution.rs`).
 
+- **#18 / #23 — per-request memory retention in exploratory deploys.** Root cause: two `Arc`
+  reference cycles kept every forked exploratory runtime (and its whole RSpace/hot-store) alive
+  forever: (1) the dispatcher's dispatch-table handlers held a `ContractCall` that held a strong
+  `Arc` back to the same dispatcher; (2) the dispatcher's eval closure held a strong `Arc` to the
+  reducer, which held the dispatcher. Every `fork_play_runtime` therefore leaked one runtime core
+  per request (cancelled or successful). **Fix:** system-process handlers hold the dispatcher
+  **weakly** (`ContractCall<ChargingRSpace, Weak<RholangAndScalaDispatcher>>` +
+  `Dispatch for Weak<…>`), and the eval closure captures `Arc::downgrade(&reducer)` and upgrades at
+  dispatch time. **Pure bug fix.** Verified: `dropping_runtime_releases_its_space`
+  (`rholang/tests/execution.rs`) — a dropped `RhoRuntime` now releases its RSpace.
+
 ### Still open (triaged, not fixed in this pass)
 
-- **#18 / #23** — per-request memory retention in exploratory deploys (cancelled and successful).
-  Suspected retention in the per-request `fork_play_runtime` / `InMemHotStore` path; needs an RSS
-  measurement run against a live node. Not attempted in this pass (node run requires the release
-  binary and a fresh genesis; see §12/§13 for the related cancellation fix from #12).
 - **#24 / #25** — conformance test for qucalc/gov system processes; quoted-name lint. Enhancement,
   not a bug.
 
@@ -657,10 +664,10 @@ production failures.
 - `cargo check --workspace` — clean.
 - `tools/audit-type-system.sh` — zero hard production violations.
 - `cargo test -p rchain-rspace` — 54 passed (incl. the new join-persistence regression).
-- `cargo test -p rchain-rholang` — 83 lib + 16 execution + 1 rho_examples passed (incl. the new
-  nested-contract and repeated-call regressions).
+- `cargo test -p rchain-rholang` — 83 lib + 17 execution + 1 rho_examples passed (incl. the new
+  nested-contract, repeated-call, and runtime-drop regressions).
 - `cargo test -p rchain-casper --lib` — 113 passed; `cargo test -p rchain-casper --test determinism` —
-  3 passed.
+  4 passed.
 - `cargo clippy -p rchain-rspace -p rchain-rholang --all-targets` — no new warnings on the changed
   files (the pre-existing clone-on-copy / await-holding-lock warnings in test modules remain).
 

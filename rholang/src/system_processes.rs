@@ -5,7 +5,7 @@
 //! deployer-id ops, registry ops, sys-auth-token ops) that the runtime installs and dispatches to.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use rchain_crypto::hash::{blake2b256, keccak256, sha256};
 use rchain_crypto::public_key::PublicKey;
@@ -337,7 +337,7 @@ fn string_list(ss: &[String]) -> Par {
 
 /// The system-process context (port of `SystemProcesses[F]`).
 pub struct SystemProcesses {
-    contract_call: ContractCall<ChargingRSpace, Arc<RholangAndScalaDispatcher>>,
+    contract_call: ContractCall<ChargingRSpace, Weak<RholangAndScalaDispatcher>>,
     pretty_printer: PrettyPrinter,
     block_data: Arc<Mutex<BlockData>>,
     native_state: Arc<NativeSystemState>,
@@ -351,7 +351,10 @@ impl SystemProcesses {
         native_state: Arc<NativeSystemState>,
     ) -> Self {
         SystemProcesses {
-            contract_call: ContractCall::new(space, dispatcher),
+            // Weak: the dispatch table lives inside the dispatcher, and each handler holds a
+            // `ContractCall`. A strong self-reference there would keep the dispatcher (and with it
+            // the whole forked runtime/hot store) alive forever (issues #18/#23).
+            contract_call: ContractCall::new(space, Arc::downgrade(&dispatcher)),
             pretty_printer: PrettyPrinter::new(),
             block_data,
             native_state,

@@ -56,9 +56,18 @@ pub fn setup_reducer(
         BTreeMap::new(),
         mergeable_tag_name,
     ));
-    let reducer_for_eval = reducer.clone();
+    let reducer_for_eval = Arc::downgrade(&reducer);
     dispatcher.set_eval(Box::new(move |par, env, rand| {
-        let reducer = reducer_for_eval.clone();
+        let reducer = match reducer_for_eval.upgrade() {
+            Some(r) => r,
+            None => {
+                return Box::pin(async move {
+                    Err(RholangError::BugFoundError(
+                        "reducer has been dropped".to_string(),
+                    ))
+                })
+            }
+        };
         let cost = cost.clone();
         Box::pin(async move { reducer.reduce_par(par, env, rand, cost).await })
     }));
@@ -164,10 +173,21 @@ pub(crate) async fn build_runtime_core(
     );
     reducer.set_concurrent(concurrent);
     let reducer = Arc::new(reducer);
-    let reducer_for_eval = reducer.clone();
+    // Weak, not Arc: the dispatcher is stored inside the reducer, so a strong capture here would
+    // form a reducer→dispatcher→reducer cycle and leak the whole runtime (issues #18/#23).
+    let reducer_for_eval = Arc::downgrade(&reducer);
     let cost_for_eval = cost.clone();
     dispatcher.set_eval(Box::new(move |par, env, rand| {
-        let reducer = reducer_for_eval.clone();
+        let reducer = match reducer_for_eval.upgrade() {
+            Some(r) => r,
+            None => {
+                return Box::pin(async move {
+                    Err(RholangError::BugFoundError(
+                        "reducer has been dropped".to_string(),
+                    ))
+                })
+            }
+        };
         let cost = cost_for_eval.clone();
         Box::pin(async move { reducer.reduce_par(par, env, rand, cost).await })
     }));

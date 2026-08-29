@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use rchain_crypto::hash::blake2b512_random::Blake2b512Random;
@@ -115,5 +115,22 @@ impl Dispatch for Arc<RholangAndScalaDispatcher> {
         data_list: Vec<ListParWithRandom>,
     ) -> Result<(), RholangError> {
         self.as_ref().dispatch(continuation, data_list).await
+    }
+}
+
+#[async_trait]
+impl Dispatch for Weak<RholangAndScalaDispatcher> {
+    /// Upgrade the weak reference for the duration of the dispatch. System-process handlers hold the
+    /// dispatcher weakly so the dispatcher does not keep itself (and the whole forked runtime) alive
+    /// through its own dispatch table (issues #18/#23).
+    async fn dispatch(
+        &self,
+        continuation: TaggedContinuation,
+        data_list: Vec<ListParWithRandom>,
+    ) -> Result<(), RholangError> {
+        let dispatcher = self.upgrade().ok_or_else(|| {
+            RholangError::BugFoundError("system dispatcher has been dropped".to_string())
+        })?;
+        dispatcher.dispatch(continuation, data_list).await
     }
 }
