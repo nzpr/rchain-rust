@@ -263,6 +263,94 @@ async fn unbounded_recursion_hits_depth_limit_not_stack_overflow() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn nested_one_binder_contract_terminates() {
+    // Issue #19: a one-binder contract inside a nested `new` re-fired forever. Root cause: `new`
+    // passed the *pre-allocation* RNG to its body, so a nested `new` drew the same fresh-name bytes
+    // as its parent; `c` collided with the outer `out`, and the contract body re-sent on its own
+    // channel. The body must run with the RNG advanced past the freshly-allocated names.
+    let (rt, _) = build_runtime_pair().await;
+    rt.set_max_reduce_steps(2_000);
+    let res = rt
+        .evaluate(
+            r#"new out in { new c, r in { contract c(x) = { out!("ran") } | c!(*r) } }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate");
+    assert!(
+        res.succeeded(),
+        "nested one-binder contract should terminate, got: {:?}",
+        res.errors
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_one_binder_contract_terminates_sequentially() {
+    // The same issue #19 shape with the concurrent reducer disabled: the RNG bug is in the
+    // scheduler-independent `New` resolution, not in the fork-join layer.
+    let rt = build_runtime(false).await;
+    rt.set_max_reduce_steps(2_000);
+    let res = rt
+        .evaluate(
+            r#"new out in { new c, r in { contract c(x) = { out!("ran") } | c!(*r) } }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate");
+    assert!(
+        res.succeeded(),
+        "sequential nested one-binder contract should terminate, got: {:?}",
+        res.errors
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn flat_one_binder_contract_terminates() {
+    // Control for the issue #19 minimal pair: the same contract under a single `new`.
+    let (rt, _) = build_runtime_pair().await;
+    rt.set_max_reduce_steps(2_000);
+    let res = rt
+        .evaluate(
+            r#"new out, c, r in { contract c(x) = { out!("ran") } | c!(*r) }"#,
+            &fixed_rand(),
+        )
+        .await
+        .expect("evaluate");
+    assert!(
+        res.succeeded(),
+        "flat one-binder contract should terminate, got: {:?}",
+        res.errors
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn contract_serves_repeated_calls_via_published_name() {
+    // Issue #21: a persistent receive (contract) installed by one deploy became unreachable after
+    // its first produce-side COMM because RSpace removed its join records while leaving the
+    // continuation installed. Two calls to the same published contract must both be served.
+    let (rt, _) = build_runtime_pair().await;
+    let rand = fixed_rand();
+
+    let publish = r#"new c in { contract c(@x, ret) = { ret!(x) } | @"svc"!!(*c) }"#;
+    let res = rt.evaluate(publish, &rand).await.expect("publish evaluate");
+    assert!(res.succeeded(), "publish failed: {:?}", res.errors);
+
+    // Two separate programs each look the persistently-published name up and call it once. Both
+    // produce-side COMMs against the installed contract must be served (issue #21).
+    for n in [1, 2] {
+        let term = format!(
+            r#"for (c <- @"svc") {{ new r in {{ c!({n}, *r) | for (@v <- r) {{ @"seen{n}"!(v) }} }} }}"#
+        );
+        let res = rt.evaluate(&term, &rand).await.expect("call evaluate");
+        assert!(res.succeeded(), "call {n} failed: {:?}", res.errors);
+        assert_eq!(
+            rt.get_data_par(&chan(&format!("seen{n}"))).await.unwrap(),
+            vec![from_expr(Expr::GInt(n))]
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn cancellation_stops_runaway_reduction() {
     // Issue #12: dropping the outer evaluation future (a wall-clock timeout) does not stop the
     // spawned continuation tasks. The reducer's cooperative cancellation flag must make the

@@ -1377,7 +1377,10 @@ fn resolve_new(
     cost.charge(Costs::new_bindings_cost(new.bind_count as i64))?;
     let mut r = (*rand).clone();
     let new_env = alloc(new.bind_count, &new.uri, &new.injections, env, urn_map, &mut r)?;
-    Ok(Effect::Par((*new.p).clone(), new_env, (*rand).clone()))
+    // The body must run with the RNG state advanced past the freshly-allocated names: reusing the
+    // incoming state would make a *nested* `new` draw the same random bytes as its parent (colliding
+    // fresh names) — issue #19.
+    Ok(Effect::Par((*new.p).clone(), new_env, r))
 }
 
 fn alloc(

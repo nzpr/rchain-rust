@@ -307,9 +307,14 @@ where
             store
                 .remove_continuation(&channels, continuation_index)
                 .await?;
+            self.remove_matched_datum_and_join(&channels, &data_candidates)
+                .await?;
+        } else {
+            // A persistent continuation stays installed, so its join records must stay too; only the
+            // matched (non-persistent) data is consumed. Removing the joins here made a contract
+            // unreachable after its first produce-side COMM (issues #21/#22).
+            self.store_persistent_data(&data_candidates).await?;
         }
-        self.remove_matched_datum_and_join(&channels, &data_candidates)
-            .await?;
         self.wrap_result(&channels, &wk, &data_candidates)
     }
 
@@ -639,5 +644,41 @@ mod tests {
             s.get_data(&"c".to_string()).await.unwrap().is_empty(),
             "reverted produce must be gone"
         );
+    }
+
+    #[tokio::test]
+    async fn persistent_continuation_keeps_join_records_across_produces() {
+        // Regression for #21/#22: a produce-side match used to remove the join records of a
+        // persistent continuation, leaving the continuation installed but unreachable (the next
+        // produce found no join and simply stored its datum).
+        let s = space().await;
+        s.consume(
+            &["c".to_string()],
+            &["p".to_string()],
+            "k".to_string(),
+            true,
+            BTreeSet::new(),
+        )
+        .await
+        .unwrap();
+
+        let first = s
+            .produce("c".to_string(), "d1".to_string(), false)
+            .await
+            .unwrap();
+        assert!(first.is_some(), "persistent continuation must match the first produce");
+
+        let joins = s.get_joins(&"c".to_string()).await.unwrap();
+        assert_eq!(
+            joins,
+            vec![vec!["c".to_string()]],
+            "persistent continuation's join record must survive a produce-side COMM"
+        );
+
+        let second = s
+            .produce("c".to_string(), "d2".to_string(), false)
+            .await
+            .unwrap();
+        assert!(second.is_some(), "persistent continuation must match the second produce too");
     }
 }

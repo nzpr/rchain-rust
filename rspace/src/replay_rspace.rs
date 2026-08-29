@@ -389,10 +389,14 @@ where
             store
                 .remove_continuation(&channels, continuation_index)
                 .await?;
+            self.space
+                .remove_matched_datum_and_join(&channels, &data_candidates)
+                .await?;
+        } else {
+            // Keep the join records of a persistent continuation (it stays installed); only the
+            // matched data is consumed — mirrors `RSpace::process_match_found` (issues #21/#22).
+            self.space.store_persistent_data(&data_candidates).await?;
         }
-        self.space
-            .remove_matched_datum_and_join(&channels, &data_candidates)
-            .await?;
         self.remove_bindings_for(&comm_ref);
         self.space.wrap_result(&channels, &wk, &data_candidates)
     }
