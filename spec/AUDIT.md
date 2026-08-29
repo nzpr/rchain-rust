@@ -609,3 +609,73 @@ reuses §11's P0–P3 model. Findings are deduplicated across clusters.
 - **R36 (A7)** — the single `deploy_rate_limiter` is shared by deploy + explore-deploy, so explore floods starve deploys.
 - **R37 (E7)** — play sorts channel data by `Datum.source` but replay keeps store order; correct today, but an undocumented play-vs-replay fragility.
 
+---
+
+## 14. Priority-issue remediation (pass 5)
+
+The GitHub issues #18–#25 were triaged; the highest-severity bugs were fixed in this pass: one
+reducer RNG invariant (#19), one RSpace join invariant (#21/#22), and one runtime ownership
+invariant (#18/#23).
+
+### Fixed
+
+- **#19 — one-binder persistent receive in a nested `new` does not terminate.** Root cause:
+  `resolve_new` (`rholang/src/reduce.rs`) passed the **pre-allocation** RNG state to the new
+  body (`Effect::Par(body, new_env, (*rand).clone())`). A nested `new` therefore drew the same
+  fresh-name bytes as its parent — `c` collided with the outer `out`, the contract's body sent on
+  its own channel, and the persistent receive re-fired until the step budget tripped. **Fix:** the
+  body runs with the RNG state advanced past the freshly-allocated names (`Effect::Par(..., r)`).
+  **Pure bug fix** (the Scala oracle advances the RNG across `new`). Verified:
+  `nested_one_binder_contract_terminates` / `_sequentially`, `flat_one_binder_contract_terminates`
+  (`rholang/tests/execution.rs`). The `empty_state` golden vector in
+  `rholang/testdata/differential/execution.tsv` changed (`c6a92b38…` → `ece1d876…`) because the
+  registry bootstrap contains nested `new`s; the old vector pinned the collision.
+- **#21 / #22 — persistent continuations lost their join records after a produce-side COMM.**
+  Root cause: `RSpace::process_match_found` (`rspace/src/rspace.rs`) and
+  `ReplayRSpace::handle_match` (`rspace/src/replay_rspace.rs`) called
+  `remove_matched_datum_and_join` unconditionally. For a persistent continuation the continuation
+  itself was left installed while its join records were removed, so the next produce found no join
+  and simply stored its datum — a contract served exactly one produce-side call, and the post-state
+  diff then failed with `Tuple space inconsistency found: channel of consume does not contain join
+  record …`. **Fix:** only the linear path removes joins; the persistent path keeps them and uses
+  `store_persistent_data` (remove matched data only), mirroring the consume-side match path.
+  **Pure bug fix.** Verified: `persistent_continuation_keeps_join_records_across_produces`
+  (`rspace/src/rspace.rs`), `contract_serves_repeated_calls_via_published_name`
+  (`rholang/tests/execution.rs`).
+
+- **#18 / #23 — per-request memory retention in exploratory deploys.** Root cause: two `Arc`
+  reference cycles kept every forked exploratory runtime (and its whole RSpace/hot-store) alive
+  forever: (1) the dispatcher's dispatch-table handlers held a `ContractCall` that held a strong
+  `Arc` back to the same dispatcher; (2) the dispatcher's eval closure held a strong `Arc` to the
+  reducer, which held the dispatcher. Every `fork_play_runtime` therefore leaked one runtime core
+  per request (cancelled or successful). **Fix:** system-process handlers hold the dispatcher
+  **weakly** (`ContractCall<ChargingRSpace, Weak<RholangAndScalaDispatcher>>` +
+  `Dispatch for Weak<…>`), and the eval closure captures `Arc::downgrade(&reducer)` and upgrades at
+  dispatch time. **Pure bug fix.** Verified: `dropping_runtime_releases_its_space`
+  (`rholang/tests/execution.rs`) — a dropped `RhoRuntime` now releases its RSpace.
+- **#24 — conformance test for qucalc/gov/registry system processes.** Added
+  `rholang/tests/system_process_conformance.rs`: nine end-to-end tests call each process from
+  rholang by its `rho:*` urn, with the documented argument shapes, and assert the shape of the
+  answer — `qucalc:zfa` `(zfa, phase)`, `qucalc:grant` uri / `Nil`, `qucalc:verify` `Bool`,
+  `qucalc:fuse` `(geometry, cap)` / `Nil`, `gov:resolveWeights` weight map, `gov:trustLevels`
+  level map, `gov:censure` `(discredited, newLevels)`, `gov:tally` ranked + approval winner, and
+  `registry:insertArbitrary`/`insertSigned`/`lookup` round-trips. `insertSigned` binds
+  `rho:rchain:deployerId` through `evaluate_with_env` (the signed-deploy env shape).
+
+### Still open (triaged, not fixed in this pass)
+
+- **#25** — quoted-name lint. Enhancement, not a bug.
+
+### Verification (this pass)
+
+- `cargo check --workspace` — clean.
+- `tools/audit-type-system.sh` — zero hard production violations.
+- `cargo test -p rchain-rspace` — 54 passed (incl. the new join-persistence regression).
+- `cargo test -p rchain-rholang` — 83 lib + 17 execution + 1 rho_examples + 9
+  system_process_conformance passed (incl. the new nested-contract, repeated-call, runtime-drop,
+  and urn-conformance regressions).
+- `cargo test -p rchain-casper --lib` — 113 passed; `cargo test -p rchain-casper --test determinism` —
+  4 passed.
+- `cargo clippy -p rchain-rspace -p rchain-rholang --all-targets` — no new warnings on the changed
+  files (the pre-existing clone-on-copy / await-holding-lock warnings in test modules remain).
+
