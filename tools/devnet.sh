@@ -28,11 +28,13 @@ VALIDATOR_PRIV=(
   "a68a6e6cca30f81bd24a719f3145d20e8424bd7b396309b0708a16c7d8000b76"
   "b8a48b02757c0cfc9325498a93c3b28582e3967072f8fab0cdc8bd04d0d401ee"
   "d78ff60a424d71ce99d6b7d7f44a8c49b38a3757ff9e6fa9b32fcba8aa2c973b"
+  "0000000000000000000000000000000000000000000000000000000000000001"
 )
 VALIDATOR_PUB=(
   "04f700a417754b775d95421973bdbdadb2d23c8a5af46f1829b1431f5c136e549e8a0d61aa0c793f1a614f8e437711c7758473c6ceb0859ac7e9e07911ca66b5c4"
   "04dbe32c2062240a4ba0bcad01d7edd98c78b51c77765d5e1e5e9fa3743d2f12a1f82f42cd7dc4f41445979117d790f23e9b3d08d0aa06d527c236172043e747fc"
   "04d8b6c325ae12e89823866b2a292a62d7acee520954761890a1621fef79dca1c8e8df79dd8519480e5c015ae6cf3ba7de8669e260561616a36eb9c308b5983ab0"
+  "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"
 )
 MAX_VALIDATORS=${#VALIDATOR_PRIV[@]}
 
@@ -59,6 +61,8 @@ Commands:
   status                         docker ps for the network
   logs <node>                    tail a node's logs
   diagnose                       per-node health check (PASS/WARN/FAIL)
+  verify-resilience              stop validator 3 and prove 3/4 finalized convergence
+  verify-partition               isolate validators 2+3, prove 2/2 cannot finalize, then heal
   deploy <contract.rho> [--to N] signed deploy to the bootstrap (file lives in examples/)
   eval <file.rho>                thin-client REPL eval of a file on the bootstrap
   query <name>                   listen for data at a public name
@@ -68,7 +72,7 @@ Commands:
   help                           this message
 
 `up` options:
-  --validators N                 bonded validators (1..3, default 1)
+  --validators N                 bonded validators (1..4, default 1)
   --observers M                  unbonded observers (0..3, default 0)
   --nodes N                      bare network topology: 1 bootstrap + N-1 peers (1..5),
                                  shorthand for --validators 1 --observers N-1 --no-autopropose
@@ -379,6 +383,279 @@ cmd_diagnose() {
   return 0
 }
 
+# Return "blockNumber blockHash postStateHash" for a node's latest finalized block.
+finalized_fingerprint() {
+  local c="$1" port body number hash state
+  port="$(host_port_for "$c" 40403)"
+  [[ -n "$port" ]] || return 1
+  body="$(curl -fsS --max-time 5 "http://localhost:${port}/api/last-finalized-block")" || return 1
+  number="$(printf '%s' "$body" | sed -n 's/.*"blockNumber":\([0-9]*\).*/\1/p')"
+  hash="$(printf '%s' "$body" | sed -n 's/.*"blockHash":"\([^"]*\)".*/\1/p')"
+  state="$(printf '%s' "$body" | sed -n 's/.*"postStateHash":"\([^"]*\)".*/\1/p')"
+  [[ -n "$number" && -n "$hash" && -n "$state" ]] || return 1
+  printf '%s %s %s\n' "$number" "$hash" "$state"
+}
+
+# Container-local variant used while a node is deliberately disconnected from the devnet bridge;
+# Docker removes its published-port mapping together with that network endpoint.
+finalized_fingerprint_container() {
+  local c="$1" body number hash state
+  body="$(docker exec "$c" curl -fsS --max-time 5 http://127.0.0.1:40403/api/last-finalized-block)" || return 1
+  number="$(printf '%s' "$body" | sed -n 's/.*"blockNumber":\([0-9]*\).*/\1/p')"
+  hash="$(printf '%s' "$body" | sed -n 's/.*"blockHash":"\([^"]*\)".*/\1/p')"
+  state="$(printf '%s' "$body" | sed -n 's/.*"postStateHash":"\([^"]*\)".*/\1/p')"
+  [[ -n "$number" && -n "$hash" && -n "$state" ]] || return 1
+  printf '%s %s %s\n' "$number" "$hash" "$state"
+}
+
+latest_block_number_container() {
+  local c="$1" body number
+  body="$(docker exec "$c" curl -fsS --max-time 5 http://127.0.0.1:40403/api/v1/status)" || return 1
+  number="$(printf '%s' "$body" | sed -n 's/.*"latestBlockNumber":\([0-9]*\).*/\1/p')"
+  [[ -n "$number" ]] || return 1
+  printf '%s\n' "$number"
+}
+
+# End-to-end Law 14/15/17 smoke test. Requires a running four-validator devnet. It stops the fourth
+# validator, submits concurrent deploys to two survivors, and requires a subsequently finalized
+# block (and its post-state hash) to be accepted by all three surviving nodes.
+cmd_verify_resilience() {
+  local failed="$(validator_name 3)" baseline baseline_number
+  local survivors=("$BOOTSTRAP" "$(validator_name 1)" "$(validator_name 2)")
+  local c
+  for c in "$failed" "${survivors[@]}"; do
+    if [[ "$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || true)" != "running" ]]; then
+      echo "ERROR: $c must be running; start with 'tools/devnet.sh up --validators 4'." >&2
+      return 2
+    fi
+  done
+
+  local bootstrap_status
+  bootstrap_status="$(curl -fsS --max-time 5 "http://localhost:${HTTP_BASE}/api/v1/status")"
+  if [[ "$bootstrap_status" != *'"autopropose":false'* ]]; then
+    echo "ERROR: resilience verification requires paced proposals; restart with" >&2
+    echo "       tools/devnet.sh down -v && tools/devnet.sh up --validators 4 --no-autopropose" >&2
+    return 2
+  fi
+
+  echo "==> establishing an initial finalized fringe with paced round-robin proposals"
+  local initial_nodes=("${survivors[@]}" "$failed") port initial_hash initial_state common
+  for _ in $(seq 1 30); do
+    for c in "${initial_nodes[@]}"; do
+      port="$(host_port_for "$c" 40405)"
+      curl -fsS --max-time 30 -X POST "http://localhost:${port}/api/v1/propose" >/dev/null 2>&1 || true
+      sleep 3
+    done
+    baseline="$(finalized_fingerprint "$BOOTSTRAP" 2>/dev/null || true)"
+    if [[ -n "$baseline" ]]; then
+      read -r _ initial_hash initial_state <<<"$baseline"
+      common=true
+      for c in "${initial_nodes[@]}"; do
+        port="$(host_port_for "$c" 40403)"
+        finalized="$(curl -fsS --max-time 5 "http://localhost:${port}/api/is-finalized/${initial_hash}" 2>/dev/null || true)"
+        block_body="$(curl -fsS --max-time 5 "http://localhost:${port}/api/block/${initial_hash}" 2>/dev/null || true)"
+        observed_state="$(printf '%s' "$block_body" | sed -n 's/.*"postStateHash":"\([^"]*\)".*/\1/p')"
+        [[ "$finalized" == "true" && "$observed_state" == "$initial_state" ]] || common=false
+      done
+      $common && break
+    fi
+  done
+  if [[ -z "$baseline" ]] || ! $common; then
+    echo "FAIL: four live validators did not establish a common initial finalized fringe." >&2
+    return 1
+  fi
+  read -r baseline_number _ _ <<<"$baseline"
+  echo "==> baseline finalized block: $baseline_number"
+  echo "==> stopping $failed (remaining stake: 3/4)"
+  docker stop "$failed" >/dev/null
+
+  echo "==> submitting concurrent deploys through two surviving validators"
+  cmd_deploy hello.rho --to 1 >/dev/null &
+  local deploy_one=$!
+  cmd_deploy hello.rho --to 2 >/dev/null &
+  local deploy_two=$!
+  wait "$deploy_one"
+  wait "$deploy_two"
+
+  local candidate="" number hash state
+  local finalized block_body observed_state ok
+  # Pace one proposal per live validator per round. This both avoids outrunning block download and
+  # makes each validator publish a view that includes the others' preceding messages.
+  candidate=""
+  for _ in $(seq 1 60); do
+    for c in "${survivors[@]}"; do
+      port="$(host_port_for "$c" 40405)"
+      curl -fsS --max-time 30 -X POST "http://localhost:${port}/api/v1/propose" >/dev/null 2>&1 || true
+      sleep 3
+    done
+    candidate="$(finalized_fingerprint "$BOOTSTRAP" 2>/dev/null || true)"
+    if [[ -n "$candidate" ]]; then
+      read -r number hash state <<<"$candidate"
+      [[ "$number" -gt "$baseline_number" ]] && break
+    fi
+  done
+  if [[ -z "$candidate" || "$number" -le "$baseline_number" ]]; then
+    echo "FAIL: finality did not advance after $failed stopped." >&2
+    return 1
+  fi
+  echo "==> candidate finalized block: $number $hash"
+
+  for c in "${survivors[@]}"; do
+    port="$(host_port_for "$c" 40403)"
+    ok=false
+    for _ in $(seq 1 180); do
+      finalized="$(curl -fsS --max-time 5 "http://localhost:${port}/api/is-finalized/${hash}" 2>/dev/null || true)"
+      block_body="$(curl -fsS --max-time 5 "http://localhost:${port}/api/block/${hash}" 2>/dev/null || true)"
+      observed_state="$(printf '%s' "$block_body" | sed -n 's/.*"postStateHash":"\([^"]*\)".*/\1/p')"
+      if [[ "$finalized" == "true" && "$observed_state" == "$state" ]]; then
+        ok=true
+        break
+      fi
+      sleep 1
+    done
+    if ! $ok; then
+      echo "FAIL: $c did not finalize $hash with post-state $state." >&2
+      return 1
+    fi
+    echo "  PASS  $c finalized the common block and post-state"
+  done
+  echo "==> PASS: 3/4 live stake advanced finality and converged after concurrent deploys"
+}
+
+# Exercise the safety side of CAP: a 2–2 network partition must not finalize, while the healed
+# network must eventually converge again. This deliberately uses Docker network membership rather
+# than process failure so both sides continue creating local proposals.
+cmd_verify_partition() {
+  local isolated=($(validator_name 2) $(validator_name 3))
+  local all=($BOOTSTRAP $(validator_name 1) $(validator_name 2) $(validator_name 3))
+  local c baseline baseline_number current_number port
+  for c in "${all[@]}"; do
+    if [[ "$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || true)" != "running" ]]; then
+      echo "ERROR: $c must be running; start with 'tools/devnet.sh up --validators 4 --no-autopropose'." >&2
+      return 2
+    fi
+    # Recover cleanly from an interrupted prior partition run before establishing the baseline.
+    docker network connect "$NETWORK" "$c" >/dev/null 2>&1 || true
+  done
+  if [[ "$(curl -fsS --max-time 5 "http://localhost:${HTTP_BASE}/api/v1/status")" != *'"autopropose":false'* ]]; then
+    echo "ERROR: partition verification requires --no-autopropose." >&2
+    return 2
+  fi
+  for c in "${all[@]}"; do
+    local ready=false
+    for _ in $(seq 1 60); do
+      if docker exec "$c" curl -fsS --max-time 2 http://127.0.0.1:40403/api/v1/status >/dev/null 2>&1; then
+        ready=true
+        break
+      fi
+      sleep 1
+    done
+    $ready || { echo "FAIL: $c did not become API-ready." >&2; return 1; }
+  done
+  echo "==> establishing a finalized baseline"
+  local observed
+  # Create enough cross-validator observations to obtain a pre-cut finalized block.
+  baseline="$(finalized_fingerprint_container "$BOOTSTRAP" 2>/dev/null || true)"
+  if [[ -z "$baseline" ]]; then
+    for _ in $(seq 1 30); do
+      for c in "${all[@]}"; do
+        docker exec "$c" curl -fsS --max-time 10 -X POST http://127.0.0.1:40405/api/v1/propose >/dev/null 2>&1 || true
+        sleep 3
+      done
+      baseline="$(finalized_fingerprint_container "$BOOTSTRAP" 2>/dev/null || true)"
+      [[ -n "$baseline" ]] && break
+    done
+  fi
+  [[ -n "$baseline" ]] || { echo "FAIL: no finalized baseline before partitioning." >&2; return 1; }
+  read -r baseline_number _ _ <<<"$baseline"
+  echo "==> baseline finalized block: $baseline_number"
+  echo "==> isolating ${isolated[*]} (2–2 partition)"
+  for c in "${isolated[@]}"; do docker network disconnect "$NETWORK" "$c" >/dev/null; done
+  trap "docker network connect '$NETWORK' '${isolated[0]}' >/dev/null 2>&1 || true; docker network connect '$NETWORK' '${isolated[1]}' >/dev/null 2>&1 || true" EXIT
+
+  # Record the semantic boundary directly: any block above a node's current DAG tip was created
+  # after the cut. Pre-cut blocks may still finalize from certificates already in flight, but a 2/2
+  # side must never finalize one of its newly created blocks.
+  declare -A cut_tip
+  for c in "${all[@]}"; do
+    cut_tip["$c"]="$(latest_block_number_container "$c")"
+  done
+  echo "==> recorded cut-time DAG tips"
+
+  # Give both sides time to propose. Docker removes published ports when its bridge endpoint is
+  # disconnected, so drive one proposer per side through its container-local admin API. The other
+  # validator on each side remains responsive and observes whether that side finalized the new tip.
+  for c in "$BOOTSTRAP" "$(validator_name 2)"; do
+    docker exec "$c" curl -fsS --max-time 10 -X POST http://127.0.0.1:40405/api/v1/propose >/dev/null 2>&1 || true
+  done
+  sleep 3
+  for c in "$(validator_name 1)" "$(validator_name 3)"; do
+    observed=""
+    for _ in $(seq 1 30); do
+      observed="$(finalized_fingerprint_container "$c" 2>/dev/null || true)"
+      [[ -n "$observed" ]] && break
+      sleep 1
+    done
+    current_number="${observed%% *}"
+    # Pre-cut blocks may legitimately finish acquiring/processing an already-valid certificate
+    # after the cut. The safety property is that no block created by either 2/2 side (therefore
+    # above that node's cut-time tip) can finalize.
+    if [[ -z "$current_number" ]]; then
+      if docker exec "$c" curl -fsS --max-time 5 http://127.0.0.1:40403/api/v1/status >/dev/null 2>&1; then
+        # A node with no finalized block returns no fingerprint; that is finality height -1, not an
+        # availability failure and is safely below every non-negative cut-time tip.
+        current_number=-1
+      else
+        echo "FAIL: $c API remained unavailable after bounded partition load." >&2
+        return 1
+      fi
+    fi
+    if [[ "$current_number" -gt "${cut_tip[$c]}" ]]; then
+      echo "FAIL: $c finalized a post-cut block during the 2–2 partition (cut tip ${cut_tip[$c]}, finalized ${current_number:-unavailable})." >&2
+      return 1
+    fi
+  done
+  echo "  PASS neither 2/2 side finalized a post-cut block"
+
+  baseline="$(finalized_fingerprint_container "$BOOTSTRAP")"
+  read -r baseline_number _ _ <<<"$baseline"
+
+  echo "==> healing partition and pacing proposals"
+  for c in "${isolated[@]}"; do docker network connect "$NETWORK" "$c" >/dev/null; done
+  trap - EXIT
+  # Allow discovery/transport sessions and missing-dependency requests to re-establish before
+  # producing on top of the competing partition tips.
+  sleep 15
+  local healed="" hash state finalized block_body observed_state ok
+  for _ in $(seq 1 30); do
+    for c in "${all[@]}"; do
+      port="$(host_port_for "$c" 40405)"
+      curl -fsS --max-time 20 -X POST "http://localhost:${port}/api/v1/propose" >/dev/null 2>&1 || true
+      sleep 3
+    done
+    healed="$(finalized_fingerprint "$BOOTSTRAP" 2>/dev/null || true)"
+    [[ -n "$healed" ]] && read -r current_number _ _ <<<"$healed" && [[ "$current_number" -gt "$baseline_number" ]] && break
+  done
+  if [[ -z "$healed" || "$current_number" -le "$baseline_number" ]]; then
+    echo "FAIL: finality did not resume after partition heal." >&2
+    return 1
+  fi
+  read -r _ hash state <<<"$healed"
+  for c in "${all[@]}"; do
+    port="$(host_port_for "$c" 40403)"
+    ok=false
+    for _ in $(seq 1 60); do
+      finalized="$(curl -fsS --max-time 5 "http://localhost:${port}/api/is-finalized/${hash}" 2>/dev/null || true)"
+      block_body="$(curl -fsS --max-time 5 "http://localhost:${port}/api/block/${hash}" 2>/dev/null || true)"
+      observed_state="$(printf '%s' "$block_body" | sed -n 's/.*"postStateHash":"\([^"]*\)".*/\1/p')"
+      [[ "$finalized" == "true" && "$observed_state" == "$state" ]] && { ok=true; break; }
+      sleep 1
+    done
+    $ok || { echo "FAIL: $c did not accept healed finalized block $hash and state $state." >&2; return 1; }
+  done
+  echo "==> PASS finality resumed and all validators accepted block $current_number with one post-state"
+}
+
 # Run `rnode` inside a node container (reaches deploy 40401 + propose/repl 40402 via localhost).
 node_cli() {
   local node="$1"; shift
@@ -457,6 +734,8 @@ case "${1:-}" in
   status) cmd_status ;;
   logs) cmd_logs "${2:-}" ;;
   diagnose) cmd_diagnose ;;
+  verify-resilience) cmd_verify_resilience ;;
+  verify-partition) cmd_verify_partition ;;
   deploy) shift; cmd_deploy "$@" ;;
   eval) shift; cmd_eval "$@" ;;
   query) shift; cmd_query "$@" ;;

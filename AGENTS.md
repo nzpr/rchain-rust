@@ -4,6 +4,17 @@ This file is the **authoritative intent + formal specification** for rewriting t
 is written for both AI coding agents and humans: read it in full before writing or changing any Rust
 code, and treat its statements as binding constraints, not suggestions.
 
+## Mandatory coding and commit discipline
+
+- Before changing code, read `/Users/nzpr/dd/CODING_GUIDELINES.md` completely and follow its
+  meaning-first Rust workflow. This requirement must survive agent/context handoffs.
+- **Never mix formatting-only changes with meaningful code, test, specification, or documentation
+  changes in the same commit.** If repository formatting is needed, make a dedicated formatting-only
+  commit and verify that its diff contains no semantic changes. Keep subsequent meaningful changes
+  in separate commits.
+- Do not run whole-file or workspace formatting as a side effect of a semantic edit unless the
+  resulting formatting changes are isolated into that dedicated commit.
+
 ## Documentation map
 
 Single sources of truth (do not duplicate these). The curated book is `docs/src/` (built with

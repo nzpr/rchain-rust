@@ -1,5 +1,6 @@
 //! Block processing (port of `blocks/BlockProcessor.scala`).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rchain_block_storage::block_store::BlockStore;
@@ -21,6 +22,12 @@ fn max_parallel_block_validation() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
+}
+
+const MAX_DEPENDENCY_RETRIES: u8 = 100;
+
+fn dependency_retry_allowed(attempts: u8) -> bool {
+    attempts < MAX_DEPENDENCY_RETRIES
 }
 
 /// Validate a block and insert it into the DAG (port of `validateAndAddToDag`).
@@ -60,6 +67,7 @@ where
 /// notify the validated queue, and broadcast the block hash (port of `BlockProcessor.apply`).
 pub async fn apply<F, Fut>(
     mut input_blocks: mpsc::Receiver<BlockMessage>,
+    retry_tx: mpsc::Sender<BlockMessage>,
     validated_tx: mpsc::UnboundedSender<BlockMessage>,
     shard_id: String,
     min_phlo_price: i64,
@@ -74,6 +82,7 @@ pub async fn apply<F, Fut>(
     Fut: std::future::Future<Output = Result<BlockIndex, String>> + Send + 'static,
 {
     let source = LogSource::new("casper.blocks.BlockProcessor");
+    let mut dependency_retries: BTreeMap<BlockHash, u8> = BTreeMap::new();
     while let Some(first) = input_blocks.recv().await {
         // Drain a batch of dependency-free blocks, bounded by the concurrency cap.
         let mut batch = vec![first];
@@ -84,10 +93,60 @@ pub async fn apply<F, Fut>(
             }
         }
 
+        // Recheck the semantic prerequisite at the consumer boundary. Receiver readiness and DAG
+        // insertion are separate concurrent observations; a child can be queued while another
+        // validation batch has not made all of its parents visible yet. Defer such a child through
+        // the same bounded queue instead of dropping it as an internal validation error.
+        let mut ready = Vec::with_capacity(batch.len());
+        for block in batch {
+            let mut all_present = true;
+            for parent in &block.justifications {
+                match dag.lookup(parent).await {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        all_present = false;
+                        break;
+                    }
+                    Err(err) => {
+                        log.error(
+                            source,
+                            &format!("DAG lookup failed before validation: {err}"),
+                        );
+                        all_present = false;
+                        break;
+                    }
+                }
+            }
+            if all_present {
+                dependency_retries.remove(&block.block_hash);
+                ready.push(block);
+            } else {
+                let attempts = dependency_retries.entry(block.block_hash).or_default();
+                if !dependency_retry_allowed(*attempts) {
+                    log.error(
+                        source,
+                        &format!(
+                            "Block {} still lacks a DAG justification after {} bounded retries",
+                            block.block_hash.to_hex(),
+                            MAX_DEPENDENCY_RETRIES
+                        ),
+                    );
+                    dependency_retries.remove(&block.block_hash);
+                    continue;
+                }
+                *attempts += 1;
+                let retry_tx = retry_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    let _ = retry_tx.send(block).await;
+                });
+            }
+        }
+
         // Validate each block concurrently. Validation is verify-only (replay) and forks its own
         // replay runtime per block, so blocks in the batch are independent.
-        let mut handles = Vec::with_capacity(batch.len());
-        for block in &batch {
+        let mut handles = Vec::with_capacity(ready.len());
+        for block in &ready {
             let dag = dag.clone();
             let block_store = block_store.clone();
             let runtime = runtime.clone();
@@ -110,7 +169,7 @@ pub async fn apply<F, Fut>(
 
         // Insert serially in drained order (a valid topological order: parents are emitted before
         // children), then forward/broadcast only blocks that validated successfully.
-        for (block, handle) in batch.into_iter().zip(handles) {
+        for (block, handle) in ready.into_iter().zip(handles) {
             let result = match handle.await {
                 Ok(r) => r,
                 Err(e) => {
@@ -158,5 +217,17 @@ pub async fn apply<F, Fut>(
                 ),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dependency_retry_policy_is_bounded() {
+        assert!(dependency_retry_allowed(0));
+        assert!(dependency_retry_allowed(MAX_DEPENDENCY_RETRIES - 1));
+        assert!(!dependency_retry_allowed(MAX_DEPENDENCY_RETRIES));
     }
 }

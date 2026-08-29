@@ -47,6 +47,32 @@ holding at most one third of the stake can out-vote it.
 Concretely, the finalizer (`Finalizer` in the DAG layer) tracks the **support** each block has from
 the bonded validators, and advances the finalized fringe whenever that support crosses `> 2/3`.
 
+### Offline validators
+
+Losing a network connection does **not** eject a validator from consensus. Peer reachability is a
+local observation (and may only be a network partition), so using a timeout to change the bonded set
+would let honest nodes calculate different validator sets. The disconnected peer's last message stays
+in the DAG as its latest justification.
+
+The remaining validators continue producing and finalizing blocks when their combined stake is
+strictly greater than two thirds of the bonded stake. For example, three live validators out of four
+equal-stake validators can progress after the fourth dies. Two out of three equal-stake validators
+cannot finalize: exactly `2/3` deliberately does not satisfy the strict threshold.
+
+This safety statement uses the standard Byzantine assumption: less than one third of bonded stake
+equivocates, and an honest validator does not attest incompatible candidates. Every finalization
+certificate is checked against the exact bonded-validator set (not merely a set of the same size),
+and every candidate message needs strictly more than two thirds of bonded stake observing it. Thus
+two certificates overlap in more stake than the Byzantine bound. Concurrency does not change this:
+calculation is deterministic for a DAG snapshot, while independently calculated certificates remain
+subject to the same quorum-intersection rule.
+
+A validator leaves the consensus set only through a deterministic state transition: withdrawal, or a
+slash system deploy for protocol-invalid behavior. Silence alone is not slashable. Operationally,
+recover the node or finalize an authorized bond-set change while the surviving stake still exceeds
+the threshold; once more than one third of bonded stake is unavailable, the protocol intentionally
+halts finalization rather than weakening safety.
+
 ## Block validity (Laws 16–17)
 
 Before a block is added to the DAG, the node validates it:

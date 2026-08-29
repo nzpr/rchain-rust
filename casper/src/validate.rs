@@ -80,6 +80,18 @@ pub fn deploys_shard_identifier(b: &BlockMessage, shard_id: &str) -> BlockStatus
     }
 }
 
+/// Validate every user deploy signature carried by a block. The block signature authenticates the
+/// proposer, but it does not prove that each deploy was authorized by its claimed deployer. This
+/// check must run before replay so a Byzantine proposer cannot make forged deploys consume runtime
+/// resources or enter the DAG as valid.
+pub fn deploy_signatures(b: &BlockMessage) -> BlockStatus {
+    if b.state.deploys.iter().all(|d| d.deploy.verify_signature()) {
+        BlockStatus::Valid
+    } else {
+        BlockStatus::InvalidDeploySignature
+    }
+}
+
 /// Validate that all deploys meet the minimum phlo price (port of `phloPrice`).
 pub fn phlo_price(b: &BlockMessage, min_phlo_price: i64) -> BlockStatus {
     if b.state
@@ -332,6 +344,7 @@ pub async fn block_summary(
     // Pure deploy checks — including `phlo_price`, which must be rejected *before* the expensive
     // replay so an economically-free deploy cannot force every validator to replay it (R27).
     let pure = [
+        deploy_signatures(block),
         deploys_shard_identifier(block, shard_id),
         future_transaction(block),
         transaction_expiration(block, expiration_threshold),
@@ -438,6 +451,10 @@ mod tests {
         assert_eq!(transaction_expiration(&b, 100), BlockStatus::Valid);
         assert_eq!(deploys_shard_identifier(&b, "root"), BlockStatus::Valid);
         assert_eq!(phlo_price(&b, 10), BlockStatus::Valid);
+        assert_eq!(deploy_signatures(&b), BlockStatus::InvalidDeploySignature);
+
+        b.state.deploys.clear();
+        assert_eq!(deploy_signatures(&b), BlockStatus::Valid);
 
         b.state.deploys = vec![deploy(20, 10, "root")];
         assert_eq!(future_transaction(&b), BlockStatus::ContainsFutureDeploy);

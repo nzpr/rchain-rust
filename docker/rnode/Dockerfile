@@ -14,7 +14,10 @@ WORKDIR /app
 
 COPY . .
 
-RUN cargo build --release -p rchain-node --bin rnode
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p rchain-node --bin rnode \
+    && cp /app/target/release/rnode /tmp/rnode
 
 # --- Runtime stage -------------------------------------------------------------
 # Must match the builder's glibc (rust:1.95.0 = Debian trixie / glibc 2.41).
@@ -24,7 +27,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/rnode /usr/local/bin/rnode
+COPY --from=builder /tmp/rnode /usr/local/bin/rnode
 
 # `--profile docker` points `storage.data-dir` at /var/lib/rnode.
 RUN useradd --create-home rnode \

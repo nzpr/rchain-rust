@@ -536,6 +536,7 @@ pub fn wire_block_processing(
     let load_blocks = {
         let block_store = parts.block_store.clone();
         let mut validation_rx = validation_rx;
+        let load_tx = processor_input_tx.clone();
         async move {
             while let Some(hash) = validation_rx.recv().await {
                 if let Some(block) = block_store
@@ -545,7 +546,7 @@ pub fn wire_block_processing(
                     .and_then(|mut v| v.pop())
                     .flatten()
                 {
-                    let _ = processor_input_tx.send(block).await;
+                    let _ = load_tx.send(block).await;
                 }
             }
         }
@@ -564,6 +565,7 @@ pub fn wire_block_processing(
     };
     let processor = block_processor::apply(
         processor_input_rx,
+        processor_input_tx,
         validated_blocks_tx.clone(),
         shard_id.to_string(),
         min_phlo_price,

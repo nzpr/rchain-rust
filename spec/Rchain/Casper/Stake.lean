@@ -6,6 +6,8 @@ is `sdk/consensus/Stake.scala:8`; the Rust realization is `sdk::consensus::is_su
 exact integer comparison `3·stake > 2·total` (no floating-point precision loss).
 -/
 
+import Mathlib
+
 namespace Rchain
 
 /-- A bonded validator. -/
@@ -22,7 +24,19 @@ structure Bond where
 def isSuperMajority (stake total : Nat) : Prop := 3 * stake > 2 * total
 
 /-- Law 14: a supporting stake finalizes iff it is a supermajority of the total bonded stake. -/
-axiom finality_iff_supermajority (supporting total : Nat) :
+theorem finality_iff_supermajority (supporting total : Nat) :
   isSuperMajority supporting total ↔ supporting * 3 > total * 2
+  := by simp [isSuperMajority, Nat.mul_comm]
+
+/-- Any two strict supermajorities intersect in more than one third of total stake. `left + right ≤
+    total + intersection` is the weighted inclusion/exclusion premise. -/
+theorem supermajorities_intersect_above_byzantine_bound
+    (left right total intersection : Nat)
+    (hl : isSuperMajority left total)
+    (hr : isSuperMajority right total)
+    (hunion : left + right ≤ total + intersection) :
+    3 * intersection > total := by
+  simp only [isSuperMajority] at hl hr
+  omega
 
 end Rchain

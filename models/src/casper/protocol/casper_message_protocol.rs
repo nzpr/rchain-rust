@@ -14,10 +14,32 @@ fn decode_proto<P: prost::Message + Default>(content: &[u8]) -> PacketParseResul
     P::decode(content).map_err(|e| ModelsError::Decode(e.to_string()))
 }
 
+/// Absolute decoded-packet bounds, independent of transport configuration. Blocks and state-sync
+/// batches use the streamed path and may be large; control messages should remain small. Keeping a
+/// parser-level ceiling means an accidentally permissive transport setting cannot turn protobuf
+/// decoding into an unbounded allocation boundary.
+const MAX_BULK_PACKET_BYTES: usize = 256 * 1024 * 1024;
+const MAX_CONTROL_PACKET_BYTES: usize = 1024 * 1024;
+
+fn check_packet_size(tag: PacketTypeTag, len: usize) -> PacketParseResult<()> {
+    let limit = match tag {
+        PacketTypeTag::BlockMessage | PacketTypeTag::StoreItemsMessage => MAX_BULK_PACKET_BYTES,
+        _ => MAX_CONTROL_PACKET_BYTES,
+    };
+    if len > limit {
+        Err(ModelsError::Malformed(
+            "Casper packet exceeds its decoded size limit",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Parse a network packet into the casper message proto sum (port of `toCasperMessageProto`).
 pub fn to_casper_message_proto(packet: &Packet) -> PacketParseResult<CasperMessageProto> {
     let tag = PacketTypeTag::from_tag(&packet.type_id)
         .ok_or_else(|| ModelsError::Malformed("Unrecognized packet typeId"))?;
+    check_packet_size(tag, packet.content.len())?;
     match tag {
         PacketTypeTag::BlockHashMessage => Ok(CasperMessageProto::BlockHashMessage(
             decode_proto::<BlockHashMessageProto>(&packet.content)?,
@@ -78,5 +100,15 @@ mod tests {
         };
         let parsed = to_casper_message_proto(&packet).unwrap();
         assert!(matches!(parsed, CasperMessageProto::BlockHashMessage(_)));
+    }
+
+    #[test]
+    fn rejects_oversized_packets_before_protobuf_decode() {
+        assert!(check_packet_size(PacketTypeTag::BlockRequest, MAX_CONTROL_PACKET_BYTES).is_ok());
+        assert!(
+            check_packet_size(PacketTypeTag::BlockRequest, MAX_CONTROL_PACKET_BYTES + 1).is_err()
+        );
+        assert!(check_packet_size(PacketTypeTag::BlockMessage, MAX_BULK_PACKET_BYTES).is_ok());
+        assert!(check_packet_size(PacketTypeTag::BlockMessage, MAX_BULK_PACKET_BYTES + 1).is_err());
     }
 }
