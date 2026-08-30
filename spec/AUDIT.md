@@ -418,6 +418,52 @@ deviation) → verification.
   summed `NonNegI64` stakes into `i64` before the super-majority comparison. **Fix:** accumulate in
   `i128`; widen `sdk/src/consensus.rs::is_super_majority` to `(i128, i128)`. **Pure bug fix.**
   Verified: `i64_overflowing_stakes_do_not_wrap`.
+- **R7a — offline-validator liveness and exact fringe certificates.** Scala required every bonded
+  validator to appear in each observation set, so one silent validator could halt finalization even
+  when live stake was strictly greater than two thirds. **Fix/documented deviation:** candidate
+  messages require `> 2/3` observation stake, while the outer certificate still requires `> 2/3`
+  attesting stake. Candidate and minimum-message sender sets must equal the bonded set exactly;
+  duplicate, missing, and non-bonded identities are rejected rather than accepted by equal counts or
+  silently ignored. Safety is conditional on the Law 14 Byzantine assumption (less than one third
+  equivocating stake and no honest conflicting attestation). The opaque
+  `sdk::consensus::FinalityCertificate` capability centralizes both quorum checks against one
+  committee snapshot. Verified by property tests plus the offline-validator, wrong-partition,
+  duplicate-sender, and unknown-supporter finalizer tests. Unknown identities contribute zero stake
+  instead of poisoning the certificate. Weighted quorum intersection is proved in
+  `Rchain/Casper/Stake.lean`.
+- **R7b — synchronized-peer derived cache and dependency-order liveness.** Approved-state sync
+  imports the content-addressed RSpace and genesis DAG but not the derived mergeable-channel cache;
+  indexing a remote block therefore failed when its sidecar was absent. The index now regenerates a
+  missing sidecar by replaying the block from its pre-state, verifies that replay reproduces the
+  committed post-state hash, and persists the reconstructed channels; an empty genesis block uses
+  the exact empty sidecar without replay. Separately, the block receiver treated a parent present in
+  `BlockStore` as resolved even when it had not passed validation and entered the DAG, allowing a
+  concurrently received child to race ahead and be dropped for a missing justification. Dependency
+  resolution now means DAG presence. Verified by the four-validator `verify-resilience` network run:
+  all validators shared finalized height 10; after one stopped, the 3/4 live stake finalized height
+  16 with the same block and post-state hash on every survivor after concurrent deploys.
+- **R7c — signed-message ingress and decoded packet bounds.** Block ingress already verified the
+  content hash and proposer signature before `BlockStore`/DAG insertion, but it did not reject an
+  unsupported block version at that boundary and replay validation trusted the signatures of user
+  deploys embedded by the proposer. A Byzantine bonded proposer could therefore package a forged
+  deploy under its own valid block signature. **Fix:** block reception now requires field format,
+  supported version, content hash, and proposer signature before storage; `block_summary` verifies
+  every embedded user-deploy signature before replay; and Casper packet dispatch enforces a 1 MiB
+  decoded limit for control messages and a 256 MiB decoded limit for blocks/state-sync batches
+  before protobuf decoding. Casper control messages are not signed protocol objects and therefore
+  rely on the authenticated transport identity; that transport identity binding remains a separate
+  release gate. Verified by `cargo test -p rchain-models casper_message_protocol`,
+  `cargo test -p rchain-casper validate`, and `cargo test -p rchain-casper block_receiver`.
+- **R7d — dependency-ready observation race across partition recovery.** The block receiver and
+  processor are concurrent interpreters of the same prerequisite: every justification must already
+  be visible in the DAG before validation. Under healed-partition traffic a child could reach the
+  processor while a parent released by another batch was not yet visible, producing a transient
+  `missing justification` internal error and permanently dropping the child. **Fix:** the processor
+  rechecks DAG visibility immediately before replay and defers transiently unready blocks through
+  its existing bounded queue. Retries are capped at 100 with 100 ms spacing, so an unresolved or
+  malicious dependency cannot spin indefinitely. Verified by the live four-validator 2–2 test:
+  neither side finalized a post-cut block; after healing, all four validators accepted finalized
+  block 16 and the same post-state root.
 
 ### Medium (P2)
 
@@ -608,4 +654,3 @@ reuses §11's P0–P3 model. Findings are deduplicated across clusters.
 - **R35 (A6)** — a faucet drip is silently dropped once the tip passes `height+50` (`DEPLOY_LIFESPAN`), after `200` was already returned.
 - **R36 (A7)** — the single `deploy_rate_limiter` is shared by deploy + explore-deploy, so explore floods starve deploys.
 - **R37 (E7)** — play sorts channel data by `Datum.source` but replay keeps store order; correct today, but an undocumented play-vs-replay fragility.
-

@@ -2564,6 +2564,7 @@ dependencies = [
 name = "rchain-sdk"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "rchain-shared",
 ]
 

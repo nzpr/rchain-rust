@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
-use rchain_sdk::consensus::is_super_majority;
+use rchain_sdk::consensus::FinalityCertificate;
 use rchain_shared::refined::{BlockHeight, NonNegI64, SeqNum};
 
 use super::message_map;
@@ -80,9 +80,16 @@ where
     }
 
     /// Whether the minimum messages are enough for the next-fringe calculation.
-    pub fn check_min_messages(&self, min_msgs: &[Message<M, S>], bonds_map: &BTreeMap<S, NonNegI64>) -> bool {
-        // TODO: epoch changes need more than a sender-count comparison.
-        min_msgs.len() == bonds_map.len()
+    pub fn check_min_messages(
+        &self,
+        min_msgs: &[Message<M, S>],
+        bonds_map: &BTreeMap<S, NonNegI64>,
+    ) -> bool {
+        // Law 14 requires exactly one candidate per bonded validator. A count comparison is not
+        // sufficient: duplicate/non-bonded senders could otherwise replace a missing bonded sender.
+        let min_senders: BTreeSet<&S> = min_msgs.iter().map(|m| &m.sender).collect();
+        min_msgs.len() == min_senders.len()
+            && min_senders == bonds_map.keys().collect::<BTreeSet<_>>()
     }
 
     /// Find the top (most recent) message referenced from the minimum messages, per sender.
@@ -147,23 +154,16 @@ where
         next_fringe_support_map: &BTreeMap<S, BTreeMap<S, BTreeSet<S>>>,
         bonds_map: &BTreeMap<S, NonNegI64>,
     ) -> bool {
-        let bonded_senders: BTreeSet<S> = bonds_map.keys().cloned().collect();
-        let mut full_partition_stake: i128 = 0;
-        for (sender, seen_by) in next_fringe_support_map {
-            let all_bonded = !seen_by.is_empty() && seen_by.values().all(|v| v == &bonded_senders);
-            // Only bonded senders contribute stake. A non-bonded justification sender must not
-            // index `bonds_map` (it would panic) — skip it instead.
-            if all_bonded {
-                if let Some(stake) = bonds_map.get(sender) {
-                    full_partition_stake += i128::from(i64::from(*stake));
-                }
-            }
-        }
-        let total_stake: i128 = bonds_map
-            .values()
-            .map(|v| i128::from(i64::from(*v)))
-            .sum();
-        is_super_majority(full_partition_stake, total_stake)
+        self.finality_certificate(next_fringe_support_map, bonds_map)
+            .is_some()
+    }
+
+    fn finality_certificate(
+        &self,
+        next_fringe_support_map: &BTreeMap<S, BTreeMap<S, BTreeSet<S>>>,
+        bonds_map: &BTreeMap<S, NonNegI64>,
+    ) -> Option<FinalityCertificate<S>> {
+        FinalityCertificate::validate(next_fringe_support_map, bonds_map).ok()
     }
 
     fn next_fringe(
@@ -186,11 +186,9 @@ where
         let next_layer = self.calculate_next_layer(&min_msgs);
         let fringe_support_map =
             self.calculate_next_fringe_support_map(justifications, &next_layer, prev_fringe);
-        if self.calculate_fringe(&fringe_support_map, bonds_map) {
-            Some(next_layer.values().cloned().collect())
-        } else {
-            None
-        }
+        // The opaque value is the capability authorizing this state transition.
+        let _certificate = self.finality_certificate(&fringe_support_map, bonds_map)?;
+        Some(next_layer.values().cloned().collect())
     }
 
     /// Compute the fringe from joined justifications and any newly detected fringe.
@@ -218,6 +216,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rchain_sdk::consensus::is_super_majority;
 
     fn msg(id: i32, sender: i32, sender_seq: i64, parents: &[i32], seen: &[i32]) -> Message<i32, i32> {
         Message {
@@ -268,6 +267,52 @@ mod tests {
     }
 
     #[test]
+    fn partitioned_two_of_four_cannot_finalize() {
+        // A 2–2 network partition must halt finality: neither side has >2/3 of bonded stake.
+        let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let bonds: BTreeMap<i32, NonNegI64> = (0..4)
+            .map(|id| (id, NonNegI64::try_from(1).unwrap()))
+            .collect();
+        let bonded_senders: BTreeSet<i32> = bonds.keys().copied().collect();
+
+        assert!(!finalizer.calculate_fringe(&support_with_full(&[0, 1], &bonded_senders), &bonds));
+        assert!(!finalizer.calculate_fringe(&support_with_full(&[2, 3], &bonded_senders), &bonds));
+    }
+
+    #[test]
+    fn law14_two_supermajorities_intersect_above_the_byzantine_bound() {
+        // Exhaust all quorums for an uneven stake distribution. Two strict supermajorities share
+        // more than one third of total stake, so they cannot attest incompatible fringes when at
+        // most one third equivocates and honest stake attests only one of the two candidates.
+        let stakes = [4i128, 7, 11, 19, 23];
+        let total: i128 = stakes.iter().sum();
+        let quorums: Vec<u32> = (0..(1u32 << stakes.len()))
+            .filter(|mask| {
+                let stake: i128 = stakes
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| mask & (1 << i) != 0)
+                    .map(|(_, stake)| *stake)
+                    .sum();
+                is_super_majority(stake, total)
+            })
+            .collect();
+
+        for left in &quorums {
+            for right in &quorums {
+                let intersection_stake: i128 = stakes
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| left & right & (1 << i) != 0)
+                    .map(|(_, stake)| *stake)
+                    .sum();
+                assert!(intersection_stake * 3 > total);
+            }
+        }
+    }
+
+    #[test]
     fn calculate_fringe_ignores_non_bonded_sender() {
         let map: BTreeMap<i32, Message<i32, i32>> = BTreeMap::new();
         let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
@@ -291,6 +336,60 @@ mod tests {
         let bonds = bonded();
         assert!(finalizer.check_min_messages(&[msg(0, 0, 0, &[], &[]), msg(1, 1, 0, &[], &[]), msg(2, 2, 0, &[], &[])], &bonds));
         assert!(!finalizer.check_min_messages(&[msg(0, 0, 0, &[], &[])], &bonds));
+        assert!(!finalizer.check_min_messages(
+            &[
+                msg(0, 0, 0, &[], &[]),
+                msg(1, 0, 1, &[], &[]),
+                msg(99, 99, 0, &[], &[])
+            ],
+            &bonds,
+        ));
+    }
+
+    #[test]
+    fn calculate_fringe_rejects_a_same_size_non_bonded_partition() {
+        let map = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let bonds = bonded();
+        let supporters: BTreeSet<i32> = [0, 1, 2].into_iter().collect();
+        let wrong_partition: BTreeMap<i32, BTreeSet<i32>> = [
+            (0, supporters.clone()),
+            (1, supporters.clone()),
+            (99, supporters),
+        ]
+        .into_iter()
+        .collect();
+        let support = [
+            (0, wrong_partition.clone()),
+            (1, wrong_partition.clone()),
+            (2, wrong_partition),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(!finalizer.calculate_fringe(&support, &bonds));
+    }
+
+    #[test]
+    fn calculate_fringe_ignores_unknown_supporters_without_counting_them() {
+        let map = BTreeMap::new();
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let bonds = bonded();
+        let candidate_senders: BTreeSet<i32> = bonds.keys().copied().collect();
+        let supporters: BTreeSet<i32> = [0, 1, 2, 99].into_iter().collect();
+        let certificate: BTreeMap<i32, BTreeSet<i32>> = candidate_senders
+            .iter()
+            .map(|sender| (*sender, supporters.clone()))
+            .collect();
+        let support = [
+            (0, certificate.clone()),
+            (1, certificate.clone()),
+            (2, certificate),
+        ]
+        .into_iter()
+        .collect();
+
+        assert!(finalizer.calculate_fringe(&support, &bonds));
     }
 
     #[test]
@@ -344,6 +443,96 @@ mod tests {
         let (_parent, new_fringe) = finalizer.calculate_finalization(&justifications, &bonds);
         let ids: BTreeSet<i32> = new_fringe.expect("fringe should advance").into_iter().map(|m| m.id).collect();
         assert_eq!(ids, [10, 11, 12].into_iter().collect());
+    }
+
+    #[test]
+    fn finalization_progresses_with_one_offline_validator_when_live_stake_is_supermajority() {
+        // Four equally bonded validators first publish one message each. Validator 3 then goes
+        // offline: its last message remains in every later justification set, while validators
+        // 0/1/2 continue building. Their 3/4 live stake is strictly greater than 2/3, so the stale
+        // latest message from validator 3 must not prevent fringe advancement.
+        let genesis = msg(99, 99, 0, &[], &[99]);
+        let a1 = msg(10, 0, 1, &[99], &[99, 10]);
+        let b1 = msg(11, 1, 1, &[99], &[99, 11]);
+        let c1 = msg(12, 2, 1, &[99], &[99, 12]);
+        let d1 = msg(13, 3, 1, &[99], &[99, 13]);
+
+        let layer1 = [10, 11, 12, 13];
+        let a2 = msg(20, 0, 2, &layer1, &[99, 10, 11, 12, 13, 20]);
+        let b2 = msg(21, 1, 2, &layer1, &[99, 10, 11, 12, 13, 21]);
+        let c2 = msg(22, 2, 2, &layer1, &[99, 10, 11, 12, 13, 22]);
+
+        // The live validators converge for another layer. The dead validator's d1 remains a latest
+        // justification, exactly as DagMessageState::latest_msgs retains a sender's last message.
+        let layer2 = [20, 21, 22, 13];
+        let mut a3 = msg(30, 0, 3, &layer2, &[99, 10, 11, 12, 13, 20, 21, 22, 30]);
+        let mut b3 = msg(31, 1, 3, &layer2, &[99, 10, 11, 12, 13, 20, 21, 22, 31]);
+        let mut c3 = msg(32, 2, 3, &layer2, &[99, 10, 11, 12, 13, 20, 21, 22, 32]);
+        let finalized_layer: BTreeSet<i32> = layer1.into_iter().collect();
+        a3.fringe = finalized_layer.clone();
+        b3.fringe = finalized_layer.clone();
+        c3.fringe = finalized_layer.clone();
+        let mut d1 = d1;
+        d1.fringe = finalized_layer;
+        let layer3 = [30, 31, 32, 13];
+        let mut a4 = msg(
+            40,
+            0,
+            4,
+            &layer3,
+            &[99, 10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40],
+        );
+        let mut b4 = msg(
+            41,
+            1,
+            4,
+            &layer3,
+            &[99, 10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 41],
+        );
+        let mut c4 = msg(
+            42,
+            2,
+            4,
+            &layer3,
+            &[99, 10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 42],
+        );
+        a4.fringe = a3.fringe.clone();
+        b4.fringe = b3.fringe.clone();
+        c4.fringe = c3.fringe.clone();
+
+        let map: BTreeMap<i32, Message<i32, i32>> = [
+            genesis,
+            a1.clone(),
+            b1.clone(),
+            c1.clone(),
+            d1.clone(),
+            a2,
+            b2,
+            c2,
+            a3.clone(),
+            b3.clone(),
+            c3.clone(),
+            a4.clone(),
+            b4.clone(),
+            c4.clone(),
+        ]
+        .into_iter()
+        .map(|m| (m.id, m))
+        .collect();
+        let bonds: BTreeMap<i32, NonNegI64> = [(0, 10), (1, 10), (2, 10), (3, 10)]
+            .into_iter()
+            .map(|(k, v)| (k, NonNegI64::try_from(v).unwrap()))
+            .collect();
+        let justifications: BTreeSet<Message<i32, i32>> = [a4, b4, c4, d1].into_iter().collect();
+
+        let finalizer: Finalizer<i32, i32> = Finalizer::new(&map);
+        let (_parent, new_fringe) = finalizer.calculate_finalization(&justifications, &bonds);
+        let ids: BTreeSet<i32> = new_fringe
+            .expect("3/4 live stake must advance the fringe")
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, layer2.iter().copied().collect());
     }
 
     #[test]

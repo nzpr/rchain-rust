@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use crate::blocks::block_retriever::{AdmitHashReason, BlockRetriever};
 use crate::engine::node_running::MAX_PENDING_BLOCKS;
-use crate::validate::{block_hash, block_signature, format_of_fields};
+use crate::validate::{block_hash, block_signature, format_of_fields, version};
 
 /// Block-receive status (port of `RecvStatus`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +265,7 @@ async fn check_if_of_interest(
     }
     valid_shard
         && format_of_fields(block)
+        && version(block)
         && block_hash(block)
         && block_signature(block)
 }
@@ -376,16 +377,14 @@ async fn incoming_blocks(
             }
         }
 
+        let repr = dag.get_representation().await;
         let mut parents = Vec::new();
         for hash in &block.justifications {
-            let not_stored = !block_store
-                .contains(&[*hash])
-                .await
-                .unwrap_or_default()
-                .first()
-                .copied()
-                .unwrap_or(false);
-            parents.push((*hash, not_stored));
+            // A parent is resolved only after validation and DAG insertion. Merely having its bytes
+            // in BlockStore is not enough: under concurrent gossip children commonly arrive while
+            // their stored parents are still awaiting validation. Treating "stored" as "resolved"
+            // lets the child race ahead and fail with a missing justification.
+            parents.push((*hash, !repr.contains(hash)));
         }
 
         let pending_requests = {

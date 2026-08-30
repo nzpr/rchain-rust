@@ -197,3 +197,6 @@ No `--grpc-port` is passed: the client defaults to the right port per subcommand
 docker cp demo.rho devnet-bootstrap:/tmp/demo.rho
 tools/devnet.sh cli devnet-bootstrap deploy /tmp/demo.rho
 ```
+
+The release gates for Byzantine assumptions, partitions, chaos testing, and operations are tracked
+in the [production-readiness plan](production-readiness.md).

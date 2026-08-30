@@ -1,7 +1,7 @@
 # Local devnet (Docker)
 
 A local Docker **testnet** for deploying and testing rholang smart contracts, driven by the
-`tools/devnet.sh` script. It brings up 1–3 bonded validators (full consensus, autopropose) plus optional
+`tools/devnet.sh` script. It brings up 1–4 bonded validators (full consensus, autopropose) plus optional
 unbonded observers, seeds genesis with a funded deployer wallet, and exposes `deploy`/`query` helpers.
 
 The same script's `up --nodes N` mode is the bare 1–5 node *network-topology* harness (no autopropose,
@@ -28,6 +28,7 @@ tools/devnet.sh propose                      force the bootstrap to propose a bl
 tools/devnet.sh status                       docker ps for the devnet
 tools/devnet.sh logs <node>                  tail a node's logs
 tools/devnet.sh diagnose                     per-node health check (PASS/FAIL)
+tools/devnet.sh verify-resilience            stop validator 3; verify 3/4 finality + convergence
 tools/devnet.sh down [-v]                    stop the devnet (+ drop volumes)
 ```
 
@@ -44,6 +45,9 @@ tools/devnet.sh up --validators 1 --no-propose-on-deploy
 (*force a block*) — deploys always go through the public `40403` surface or the deploy gRPC, never
 `40405`. Run `tools/devnet.sh help` for the full matrix (autopropose / propose-on-deploy / admin /
 deployer-key / nodes).
+
+The resilience check is destructive to the local devnet: it stops `devnet-validator-3`. Recreate the
+four-node network before repeating it.
 
 ## Worked example
 
@@ -71,7 +75,7 @@ tools/devnet.sh down -v
 
 ## Node roles
 
-- **Validators (1–3)** — each has its own keypair, is bonded in the shared `bonds.txt`, and runs
+- **Validators (1–4)** — each has its own keypair, is bonded in the shared `bonds.txt`, and runs
   `--autopropose`. Validator 0 (`devnet-bootstrap`) is the genesis ceremony-master (`--standalone`);
   validators 1–2 bootstrap from it.
 - **Observers (0–3)** — unbonded, no autopropose; they bootstrap and replicate the chain.
@@ -90,14 +94,18 @@ The devnet runs the real CBC-Casper data path — genesis bonding, deploy-driven
 cross-justified block-DAG, the monotone fringe estimator, and `> 2/3`-stake finality — with these
 inputs simplified (theory in [Consensus (Casper)](consensus.md)):
 
-- **Equal stake ⇒ unanimous finality.** The validators have equal stake `100` each (total `300`), so
-  the strict `> 2/3` threshold requires *all* validators to attest before a block finalizes (2 of 3 is
-  exactly 2/3, not a supermajority). Production's uneven stakes let a proper subset reach `> 2/3`.
+- **Threshold-dependent availability.** Validators have equal stake `100`. A three-validator devnet
+  requires all three to finalize because two is exactly `2/3`. A four-validator devnet tolerates one
+  stopped validator because the remaining `3/4` is a strict supermajority. Run
+  Start with `tools/devnet.sh up --validators 4 --no-autopropose`, then run
+  `tools/devnet.sh verify-resilience` to exercise that path end to end with paced round-robin
+  proposals. Pacing is intentional: it ensures each proposal incorporates the preceding peer views
+  instead of using the continuous dev-mode timer as a throughput stress test.
 - **Dummy `Nil` deploys** stand in for real user traffic, and **autopropose is a tight loop** (no
   backoff), so the block rate is unbounded rather than a production cadence.
 - **Single shard** (`root`); **no Byzantine behavior** (all validators honest — the slash path exists
   but is never exercised); **no partitions/latency** (local Docker bridge); **throwaway keys** with no
-  economic security; a small fixed validator set (≤3).
+  economic security; a small fixed validator set (≤4).
 
 ## Ports
 

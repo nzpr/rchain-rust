@@ -8,6 +8,7 @@ pub enum BlockStatus {
     InvalidRepeatDeploy,
     InvalidSequenceNumber,
     InvalidDeployShardId,
+    InvalidDeploySignature,
     JustificationRegression,
     NeglectedInvalidBlock,
     InvalidStateHash,
@@ -32,6 +33,7 @@ impl std::fmt::Display for BlockStatus {
             BlockStatus::InvalidRepeatDeploy => "a deploy was repeated across blocks",
             BlockStatus::InvalidSequenceNumber => "invalid sender sequence number",
             BlockStatus::InvalidDeployShardId => "deploy shard id does not match the block's shard",
+            BlockStatus::InvalidDeploySignature => "a deploy signature is invalid",
             BlockStatus::JustificationRegression => "a justification regressed from its parent",
             BlockStatus::NeglectedInvalidBlock => "an invalid block was used as a justification",
             BlockStatus::InvalidStateHash => {
